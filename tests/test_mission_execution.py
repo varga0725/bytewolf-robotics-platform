@@ -46,3 +46,17 @@ class MissionExecutionTests(unittest.TestCase):
         self.assertEqual(initial.events, ())
         self.assertEqual(updated.phase, MissionPhase.ARMING)
         self.assertIsInstance(updated.events, tuple)
+
+    def test_records_a_return_to_home_lifecycle(self) -> None:
+        execution = MissionExecution.empty()
+
+        for phase in (
+            MissionPhase.ARMING,
+            MissionPhase.TAKING_OFF,
+            MissionPhase.HOVERING,
+            MissionPhase.RETURNING,
+            MissionPhase.COMPLETED,
+        ):
+            execution = execution.transition(phase)
+
+        self.assertEqual(execution.phase, MissionPhase.COMPLETED)

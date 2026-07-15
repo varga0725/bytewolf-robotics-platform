@@ -1,9 +1,14 @@
+import asyncio
 import unittest
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.mission.commands import TakeoffCommand, WaypointCommand
 from brain.mission.execution import MissionPhase
-from brain.mission.flight import TakeoffHoverLandMission, TakeoffWaypointLandMission
+from brain.mission.flight import (
+    TakeoffHoverLandMission,
+    TakeoffReturnToHomeMission,
+    TakeoffWaypointLandMission,
+)
 
 
 class ConnectedState:
@@ -22,6 +27,9 @@ class FakeAction:
     async def set_takeoff_altitude(self, altitude_m: float) -> None:
         self._events.append(("set_takeoff_altitude", altitude_m))
 
+    async def set_return_to_launch_altitude(self, altitude_m: float) -> None:
+        self._events.append(("set_return_to_launch_altitude", altitude_m))
+
     async def arm(self) -> None:
         self._events.append("arm")
 
@@ -30,6 +38,9 @@ class FakeAction:
 
     async def land(self) -> None:
         self._events.append("land")
+
+    async def return_to_launch(self) -> None:
+        self._events.append("return_to_launch")
 
     async def goto_location(self, latitude: float, longitude: float, altitude: float, yaw: float) -> None:
         self._events.append(("goto_location", latitude, longitude, altitude, yaw))
@@ -54,6 +65,10 @@ class FakeTelemetry:
         else:
             yield Position(latitude=47.5000449)
 
+    async def in_air(self):
+        yield True
+        yield False
+
 
 class FakeDrone:
     def __init__(self) -> None:
@@ -64,6 +79,19 @@ class FakeDrone:
 
     async def connect(self, system_address: str) -> None:
         self.events.append(("connect", system_address))
+
+
+class NeverLandingTelemetry(FakeTelemetry):
+    async def in_air(self):
+        while True:
+            yield True
+            await asyncio.sleep(0.001)
+
+
+class NeverLandingDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = NeverLandingTelemetry()
 
 
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
@@ -140,4 +168,50 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(drone.events[0:3], [("set_takeoff_altitude", 2.0), "arm", "takeoff"])
+        self.assertEqual(drone.events[-1], "land")
+
+    async def test_executes_return_to_home_and_confirms_landing(self) -> None:
+        drone = FakeDrone()
+
+        async def fake_sleep(seconds: float) -> None:
+            drone.events.append(("wait", seconds))
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffReturnToHomeMission(
+            takeoff=TakeoffCommand(2.0), hover_duration_s=3.0
+        )
+
+        execution = await adapter.execute_return_to_home_mission(mission)
+
+        self.assertEqual(
+            tuple(event.phase for event in execution.events),
+            (
+                MissionPhase.ARMING,
+                MissionPhase.TAKING_OFF,
+                MissionPhase.HOVERING,
+                MissionPhase.RETURNING,
+                MissionPhase.COMPLETED,
+            ),
+        )
+        self.assertIn("return_to_launch", drone.events)
+        self.assertNotIn("land", drone.events)
+        self.assertIn(("set_return_to_launch_altitude", 2.0), drone.events)
+
+    async def test_lands_as_a_fallback_when_return_to_home_times_out(self) -> None:
+        drone = NeverLandingDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffReturnToHomeMission(
+            takeoff=TakeoffCommand(2.0),
+            hover_duration_s=1.0,
+            landing_timeout_s=0.01,
+        )
+
+        with self.assertRaises(TimeoutError):
+            await adapter.execute_return_to_home_mission(mission)
+
+        self.assertIn("return_to_launch", drone.events)
         self.assertEqual(drone.events[-1], "land")

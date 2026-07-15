@@ -3,6 +3,7 @@ import unittest
 from brain.mission.flight import (
     MissionValidationError,
     authorize_takeoff_hover_land,
+    authorize_takeoff_return_to_home,
     authorize_takeoff_waypoint_land,
 )
 from brain.safety.gate import FlightLimits, SafetyGate, SafetyViolation
@@ -40,3 +41,13 @@ class TakeoffHoverLandMissionTests(unittest.TestCase):
 
         self.assertEqual(mission.waypoint.north_m, 5.0)
         self.assertEqual(mission.waypoint.target_altitude_m, 2.0)
+
+    def test_authorizes_a_bounded_return_to_home_mission(self) -> None:
+        mission = authorize_takeoff_return_to_home(
+            self.gate,
+            takeoff_altitude_m=2.0,
+            hover_duration_s=3.0,
+        )
+
+        self.assertEqual(mission.takeoff.target_altitude_m, 2.0)
+        self.assertEqual(mission.hover_duration_s, 3.0)

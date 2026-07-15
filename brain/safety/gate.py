@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from math import hypot, isfinite
 
-from brain.mission.commands import TakeoffCommand, WaypointCommand
+from brain.mission.commands import ReturnToHomeCommand, TakeoffCommand, WaypointCommand
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class FlightLimits:
 @dataclass(frozen=True)
 class SafetyDecision:
     approved: bool
-    command: TakeoffCommand | WaypointCommand
+    command: TakeoffCommand | WaypointCommand | ReturnToHomeCommand
 
 
 class SafetyViolation(ValueError):
@@ -28,9 +28,14 @@ class SafetyGate:
     def __init__(self, limits: FlightLimits) -> None:
         self._limits = limits
 
-    def evaluate(self, command: TakeoffCommand | WaypointCommand) -> SafetyDecision:
+    def evaluate(
+        self, command: TakeoffCommand | WaypointCommand | ReturnToHomeCommand
+    ) -> SafetyDecision:
         if isinstance(command, WaypointCommand):
             self._validate_waypoint(command)
+            return SafetyDecision(approved=True, command=command)
+        if isinstance(command, ReturnToHomeCommand):
+            self._validate_altitude(command.target_altitude_m, "Return-to-Home")
             return SafetyDecision(approved=True, command=command)
         self._validate_altitude(command.target_altitude_m, "Takeoff")
         return SafetyDecision(approved=True, command=command)

@@ -6,7 +6,11 @@ from typing import Protocol
 
 from brain.mission.commands import WaypointCommand
 from brain.mission.execution import MissionExecution, MissionPhase
-from brain.mission.flight import TakeoffHoverLandMission, TakeoffWaypointLandMission
+from brain.mission.flight import (
+    TakeoffHoverLandMission,
+    TakeoffReturnToHomeMission,
+    TakeoffWaypointLandMission,
+)
 from brain.navigation.waypoints import (
     GlobalPosition,
     horizontal_distance_m,
@@ -17,11 +21,15 @@ from brain.navigation.waypoints import (
 class MavsdkAction(Protocol):
     async def set_takeoff_altitude(self, altitude_m: float) -> None: ...
 
+    async def set_return_to_launch_altitude(self, altitude_m: float) -> None: ...
+
     async def arm(self) -> None: ...
 
     async def takeoff(self) -> None: ...
 
     async def land(self) -> None: ...
+
+    async def return_to_launch(self) -> None: ...
 
     async def goto_location(
         self, latitude_deg: float, longitude_deg: float, absolute_altitude_m: float, yaw_deg: float
@@ -34,6 +42,8 @@ class MavsdkCore(Protocol):
 
 class MavsdkTelemetry(Protocol):
     def position(self): ...
+
+    def in_air(self): ...
 
 
 class MavsdkDrone(Protocol):
@@ -159,3 +169,43 @@ class MavsdkMissionAdapter:
                 execution = execution.transition(MissionPhase.FAILED)
                 raise
             return execution.transition(MissionPhase.COMPLETED)
+
+    async def wait_until_landed(self, timeout_s: float) -> None:
+        """Wait until telemetry observes PX4's return-and-land sequence finish."""
+        async def wait_for_landing() -> None:
+            observed_in_air = False
+            async for is_in_air in self._drone.telemetry.in_air():
+                observed_in_air = observed_in_air or is_in_air
+                if observed_in_air and not is_in_air:
+                    return
+            raise RuntimeError("PX4 in-air telemetry ended before confirming landing.")
+
+        await asyncio.wait_for(wait_for_landing(), timeout=timeout_s)
+
+    async def execute_return_to_home_mission(
+        self, mission: TakeoffReturnToHomeMission
+    ) -> MissionExecution:
+        """Take off, then delegate return and landing entirely to PX4 RTL mode."""
+        execution = MissionExecution.empty().transition(MissionPhase.ARMING)
+        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+        await self._drone.action.set_return_to_launch_altitude(
+            mission.return_to_home.target_altitude_m
+        )
+        try:
+            await self._drone.action.arm()
+            execution = execution.transition(MissionPhase.TAKING_OFF)
+            await self._drone.action.takeoff()
+            await self._sleep(mission.takeoff_settle_seconds)
+            execution = execution.transition(MissionPhase.HOVERING)
+            await self._sleep(mission.hover_duration_s)
+            execution = execution.transition(MissionPhase.RETURNING)
+            await self._drone.action.return_to_launch()
+            await self.wait_until_landed(mission.landing_timeout_s)
+        except BaseException:
+            execution = execution.transition(MissionPhase.LANDING)
+            try:
+                await self._drone.action.land()
+            finally:
+                execution = execution.transition(MissionPhase.FAILED)
+            raise
+        return execution.transition(MissionPhase.COMPLETED)

@@ -17,3 +17,10 @@ class WaypointCommand:
     north_m: float
     east_m: float
     target_altitude_m: float
+
+
+@dataclass(frozen=True)
+class ReturnToHomeCommand:
+    """Request PX4 to return to the recorded launch position and land."""
+
+    target_altitude_m: float

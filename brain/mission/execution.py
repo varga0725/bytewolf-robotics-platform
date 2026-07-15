@@ -12,6 +12,7 @@ class MissionPhase(StrEnum):
     TAKING_OFF = "taking_off"
     NAVIGATING = "navigating"
     HOVERING = "hovering"
+    RETURNING = "returning"
     LANDING = "landing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -58,7 +59,8 @@ _ALLOWED_TRANSITIONS: dict[MissionPhase | None, frozenset[MissionPhase]] = {
         {MissionPhase.NAVIGATING, MissionPhase.HOVERING, MissionPhase.LANDING}
     ),
     MissionPhase.NAVIGATING: frozenset({MissionPhase.HOVERING, MissionPhase.LANDING}),
-    MissionPhase.HOVERING: frozenset({MissionPhase.LANDING}),
+    MissionPhase.HOVERING: frozenset({MissionPhase.RETURNING, MissionPhase.LANDING}),
+    MissionPhase.RETURNING: frozenset({MissionPhase.LANDING, MissionPhase.COMPLETED}),
     MissionPhase.LANDING: frozenset({MissionPhase.COMPLETED, MissionPhase.FAILED}),
     MissionPhase.COMPLETED: frozenset(),
     MissionPhase.FAILED: frozenset(),

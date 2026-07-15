@@ -85,3 +85,16 @@ target (or the mission times out and lands):
 .venv/bin/python -m brain.cli.fly_waypoint_land \\
   --north 5 --east 0 --takeoff-altitude 2 --waypoint-altitude 2
 ```
+
+## Run a Return-to-Home mission
+
+With PX4 SITL already running, this validates PX4's own return-to-launch mode:
+take off to 2 m, hover for 3 seconds, return to the launch position, and land.
+Completion is reported only after the `in_air` telemetry confirms landing. If
+the confirmation times out, the adapter sends a separate land command. The
+PX4 RTL altitude is explicitly set to the same safety-approved altitude as the
+takeoff command.
+
+```zsh
+.venv/bin/python -m brain.cli.fly_return_to_home
+```
