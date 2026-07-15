@@ -36,15 +36,23 @@ class FakeAction:
 
 
 class Position:
-    latitude_deg = 47.5
-    longitude_deg = 19.1
-    absolute_altitude_m = 120.0
-    relative_altitude_m = 2.0
+    def __init__(self, latitude: float = 47.5, longitude: float = 19.1, altitude: float = 120.0) -> None:
+        self.latitude_deg = latitude
+        self.longitude_deg = longitude
+        self.absolute_altitude_m = altitude
+        self.relative_altitude_m = 2.0
 
 
 class FakeTelemetry:
+    def __init__(self) -> None:
+        self._calls = 0
+
     async def position(self):
-        yield Position()
+        self._calls += 1
+        if self._calls == 1:
+            yield Position()
+        else:
+            yield Position(latitude=47.5000449)
 
 
 class FakeDrone:

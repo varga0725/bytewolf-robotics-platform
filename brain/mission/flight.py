@@ -27,6 +27,8 @@ class TakeoffWaypointLandMission:
     waypoint: WaypointCommand
     hover_duration_s: float
     takeoff_settle_seconds: float = 4.0
+    waypoint_tolerance_m: float = 1.0
+    waypoint_timeout_s: float = 30.0
 
 
 def authorize_takeoff_hover_land(
@@ -48,10 +50,16 @@ def authorize_takeoff_waypoint_land(
     east_m: float,
     waypoint_altitude_m: float,
     hover_duration_s: float,
+    waypoint_tolerance_m: float = 1.0,
+    waypoint_timeout_s: float = 30.0,
 ) -> TakeoffWaypointLandMission:
     """Build a single-waypoint mission only after every command is approved."""
     if not isfinite(hover_duration_s) or hover_duration_s <= 0.0:
         raise MissionValidationError("Hover duration must be a positive, finite number of seconds.")
+    if not isfinite(waypoint_tolerance_m) or waypoint_tolerance_m <= 0.0:
+        raise MissionValidationError("Waypoint tolerance must be a positive, finite number of metres.")
+    if not isfinite(waypoint_timeout_s) or waypoint_timeout_s <= 0.0:
+        raise MissionValidationError("Waypoint timeout must be a positive, finite number of seconds.")
     takeoff = TakeoffCommand(target_altitude_m=takeoff_altitude_m)
     waypoint = WaypointCommand(
         north_m=north_m,
@@ -64,4 +72,6 @@ def authorize_takeoff_waypoint_land(
         takeoff=takeoff,
         waypoint=waypoint,
         hover_duration_s=hover_duration_s,
+        waypoint_tolerance_m=waypoint_tolerance_m,
+        waypoint_timeout_s=waypoint_timeout_s,
     )

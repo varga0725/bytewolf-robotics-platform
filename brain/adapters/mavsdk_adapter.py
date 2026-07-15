@@ -7,7 +7,11 @@ from typing import Protocol
 from brain.mission.commands import WaypointCommand
 from brain.mission.execution import MissionExecution, MissionPhase
 from brain.mission.flight import TakeoffHoverLandMission, TakeoffWaypointLandMission
-from brain.navigation.waypoints import GlobalPosition, relative_waypoint_to_global
+from brain.navigation.waypoints import (
+    GlobalPosition,
+    horizontal_distance_m,
+    relative_waypoint_to_global,
+)
 
 
 class MavsdkAction(Protocol):
@@ -101,6 +105,25 @@ class MavsdkMissionAdapter:
         )
         return target
 
+    async def wait_until_waypoint_reached(
+        self, target: GlobalPosition, tolerance_m: float, timeout_s: float
+    ) -> None:
+        """Wait for GPS telemetry to confirm horizontal and altitude arrival."""
+        async def wait_for_match() -> None:
+            async for position in self._drone.telemetry.position():
+                current = GlobalPosition(
+                    latitude_deg=position.latitude_deg,
+                    longitude_deg=position.longitude_deg,
+                    absolute_altitude_m=position.absolute_altitude_m,
+                )
+                horizontal_error = horizontal_distance_m(current, target)
+                altitude_error = abs(current.absolute_altitude_m - target.absolute_altitude_m)
+                if horizontal_error <= tolerance_m and altitude_error <= tolerance_m:
+                    return
+            raise RuntimeError("PX4 position telemetry ended before reaching the waypoint.")
+
+        await asyncio.wait_for(wait_for_match(), timeout=timeout_s)
+
     async def execute_waypoint_mission(
         self, mission: TakeoffWaypointLandMission
     ) -> MissionExecution:
@@ -113,7 +136,12 @@ class MavsdkMissionAdapter:
             await self._drone.action.takeoff()
             await self._sleep(mission.takeoff_settle_seconds)
             execution = execution.transition(MissionPhase.NAVIGATING)
-            await self.goto_relative_waypoint(mission.waypoint)
+            target = await self.goto_relative_waypoint(mission.waypoint)
+            await self.wait_until_waypoint_reached(
+                target,
+                tolerance_m=mission.waypoint_tolerance_m,
+                timeout_s=mission.waypoint_timeout_s,
+            )
             execution = execution.transition(MissionPhase.HOVERING)
             await self._sleep(mission.hover_duration_s)
         except BaseException:

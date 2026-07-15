@@ -18,6 +18,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--hover-seconds", type=float, default=3.0)
     parser.add_argument("--max-altitude", type=float, default=20.0)
     parser.add_argument("--max-distance", type=float, default=500.0)
+    parser.add_argument("--waypoint-timeout", type=float, default=30.0)
     parser.add_argument("--endpoint", default="udpin://0.0.0.0:14540")
     parser.add_argument("--connection-timeout", type=float, default=15.0)
     return parser.parse_args(arguments)
@@ -39,6 +40,7 @@ async def run(arguments: argparse.Namespace) -> None:
         east_m=arguments.east,
         waypoint_altitude_m=arguments.waypoint_altitude,
         hover_duration_s=arguments.hover_seconds,
+        waypoint_timeout_s=arguments.waypoint_timeout,
     )
     adapter = MavsdkMissionAdapter(System())
     print(f"Connecting to PX4 at {arguments.endpoint}...")

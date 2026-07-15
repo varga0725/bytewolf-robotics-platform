@@ -1,7 +1,11 @@
 import unittest
 
 from brain.mission.commands import WaypointCommand
-from brain.navigation.waypoints import GlobalPosition, relative_waypoint_to_global
+from brain.navigation.waypoints import (
+    GlobalPosition,
+    horizontal_distance_m,
+    relative_waypoint_to_global,
+)
 
 
 class RelativeWaypointTests(unittest.TestCase):
@@ -14,3 +18,9 @@ class RelativeWaypointTests(unittest.TestCase):
         self.assertAlmostEqual(target.latitude_deg, 47.501, places=5)
         self.assertAlmostEqual(target.longitude_deg, 19.1, places=7)
         self.assertAlmostEqual(target.absolute_altitude_m, 123.0, places=5)
+
+    def test_measures_horizontal_distance_between_global_positions(self) -> None:
+        origin = GlobalPosition(latitude_deg=47.5, longitude_deg=19.1, absolute_altitude_m=120.0)
+        target = GlobalPosition(latitude_deg=47.50009, longitude_deg=19.1, absolute_altitude_m=120.0)
+
+        self.assertAlmostEqual(horizontal_distance_m(origin, target), 10.0, delta=0.2)

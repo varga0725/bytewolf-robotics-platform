@@ -1,7 +1,7 @@
 """Conversion of bounded local waypoints into MAVSDK global coordinates."""
 
 from dataclasses import dataclass
-from math import cos, radians
+from math import asin, cos, radians, sin, sqrt
 
 from brain.mission.commands import WaypointCommand
 
@@ -33,3 +33,16 @@ def relative_waypoint_to_global(
         longitude_deg=origin.longitude_deg + longitude_delta,
         absolute_altitude_m=origin.absolute_altitude_m + altitude_delta,
     )
+
+
+def horizontal_distance_m(first: GlobalPosition, second: GlobalPosition) -> float:
+    """Return the WGS84 great-circle horizontal separation in metres."""
+    latitude_delta = radians(second.latitude_deg - first.latitude_deg)
+    longitude_delta = radians(second.longitude_deg - first.longitude_deg)
+    first_latitude = radians(first.latitude_deg)
+    second_latitude = radians(second.latitude_deg)
+    haversine = (
+        sin(latitude_delta / 2) ** 2
+        + cos(first_latitude) * cos(second_latitude) * sin(longitude_delta / 2) ** 2
+    )
+    return 2 * _EARTH_RADIUS_M * asin(sqrt(haversine))

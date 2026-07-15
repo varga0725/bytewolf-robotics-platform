@@ -77,7 +77,9 @@ move 5 m north, hover for 3 seconds, then land.
 ```
 
 The target is configurable, but it is always validated against the explicit
-altitude and distance limits before PX4 receives a command:
+altitude and distance limits before PX4 receives a command. Completion is only
+reported once the GPS telemetry is within 1 m horizontally and vertically of the
+target (or the mission times out and lands):
 
 ```zsh
 .venv/bin/python -m brain.cli.fly_waypoint_land \\
