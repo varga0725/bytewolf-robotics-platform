@@ -60,3 +60,10 @@ possible.
 The mission layer creates high-level immutable commands only. PX4 remains
 responsible for stabilization and motor control. Each completed mission returns
 an immutable audit trail: `arming -> taking_off -> hovering -> landing -> completed`.
+
+## Waypoint foundation
+
+The navigation layer now accepts a safety-validated relative waypoint (north,
+east, target altitude). At execution time it converts that local target using
+the drone's current GPS telemetry into the global coordinate format PX4 expects.
+The next slice will combine it into a full takeoff–waypoint–land scenario.

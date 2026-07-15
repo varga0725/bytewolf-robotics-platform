@@ -1,6 +1,6 @@
 import unittest
 
-from brain.mission.commands import TakeoffCommand
+from brain.mission.commands import TakeoffCommand, WaypointCommand
 from brain.safety.gate import FlightLimits, SafetyGate, SafetyViolation
 
 
@@ -33,6 +33,20 @@ class TakeoffSafetyTests(unittest.TestCase):
             with self.subTest(altitude=altitude):
                 with self.assertRaises(SafetyViolation):
                     self.gate.evaluate(TakeoffCommand(target_altitude_m=altitude))
+
+    def test_accepts_a_waypoint_inside_the_distance_and_altitude_limits(self) -> None:
+        command = WaypointCommand(north_m=12.0, east_m=-5.0, target_altitude_m=3.0)
+
+        decision = self.gate.evaluate(command)
+
+        self.assertTrue(decision.approved)
+        self.assertEqual(decision.command, command)
+
+    def test_rejects_a_waypoint_beyond_the_distance_limit(self) -> None:
+        command = WaypointCommand(north_m=500.0, east_m=1.0, target_altitude_m=3.0)
+
+        with self.assertRaises(SafetyViolation):
+            self.gate.evaluate(command)
 
 
 if __name__ == "__main__":

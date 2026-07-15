@@ -8,3 +8,12 @@ class TakeoffCommand:
     """Request a controlled PX4 takeoff to a relative altitude in metres."""
 
     target_altitude_m: float
+
+
+@dataclass(frozen=True)
+class WaypointCommand:
+    """Request a relative north/east movement at a bounded target altitude."""
+
+    north_m: float
+    east_m: float
+    target_altitude_m: float

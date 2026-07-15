@@ -4,8 +4,10 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
+from brain.mission.commands import WaypointCommand
 from brain.mission.execution import MissionExecution, MissionPhase
 from brain.mission.flight import TakeoffHoverLandMission
+from brain.navigation.waypoints import GlobalPosition, relative_waypoint_to_global
 
 
 class MavsdkAction(Protocol):
@@ -17,14 +19,23 @@ class MavsdkAction(Protocol):
 
     async def land(self) -> None: ...
 
+    async def goto_location(
+        self, latitude_deg: float, longitude_deg: float, absolute_altitude_m: float, yaw_deg: float
+    ) -> None: ...
+
 
 class MavsdkCore(Protocol):
     def connection_state(self): ...
 
 
+class MavsdkTelemetry(Protocol):
+    def position(self): ...
+
+
 class MavsdkDrone(Protocol):
     action: MavsdkAction
     core: MavsdkCore
+    telemetry: MavsdkTelemetry
 
     async def connect(self, system_address: str) -> None: ...
 
@@ -72,4 +83,20 @@ class MavsdkMissionAdapter:
                 execution = execution.transition(MissionPhase.FAILED)
                 raise
             return execution.transition(MissionPhase.COMPLETED)
-            await self._drone.action.land()
+
+    async def goto_relative_waypoint(self, command: WaypointCommand) -> GlobalPosition:
+        """Send an already safety-approved local waypoint to PX4 as a global target."""
+        position = await anext(self._drone.telemetry.position())
+        target = relative_waypoint_to_global(
+            GlobalPosition(
+                latitude_deg=position.latitude_deg,
+                longitude_deg=position.longitude_deg,
+                absolute_altitude_m=position.absolute_altitude_m,
+            ),
+            command,
+            current_relative_altitude_m=position.relative_altitude_m,
+        )
+        await self._drone.action.goto_location(
+            target.latitude_deg, target.longitude_deg, target.absolute_altitude_m, 0.0
+        )
+        return target

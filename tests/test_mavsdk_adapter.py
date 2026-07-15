@@ -1,7 +1,7 @@
 import unittest
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
-from brain.mission.commands import TakeoffCommand
+from brain.mission.commands import TakeoffCommand, WaypointCommand
 from brain.mission.execution import MissionPhase
 from brain.mission.flight import TakeoffHoverLandMission
 
@@ -31,12 +31,28 @@ class FakeAction:
     async def land(self) -> None:
         self._events.append("land")
 
+    async def goto_location(self, latitude: float, longitude: float, altitude: float, yaw: float) -> None:
+        self._events.append(("goto_location", latitude, longitude, altitude, yaw))
+
+
+class Position:
+    latitude_deg = 47.5
+    longitude_deg = 19.1
+    absolute_altitude_m = 120.0
+    relative_altitude_m = 2.0
+
+
+class FakeTelemetry:
+    async def position(self):
+        yield Position()
+
 
 class FakeDrone:
     def __init__(self) -> None:
         self.events: list[object] = []
         self.action = FakeAction(self.events)
         self.core = FakeCore()
+        self.telemetry = FakeTelemetry()
 
     async def connect(self, system_address: str) -> None:
         self.events.append(("connect", system_address))
@@ -76,3 +92,15 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
                 MissionPhase.COMPLETED,
             ),
         )
+
+    async def test_converts_and_sends_an_authorized_relative_waypoint(self) -> None:
+        drone = FakeDrone()
+        adapter = MavsdkMissionAdapter(drone)
+
+        target = await adapter.goto_relative_waypoint(
+            WaypointCommand(north_m=0.0, east_m=10.0, target_altitude_m=3.0)
+        )
+
+        self.assertAlmostEqual(target.absolute_altitude_m, 121.0)
+        self.assertEqual(drone.events[-1][0], "goto_location")
+        self.assertAlmostEqual(drone.events[-1][3], 121.0)
