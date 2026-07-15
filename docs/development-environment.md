@@ -18,12 +18,19 @@ A projektmappában látható `PX4-Autopilot` erre mutató hivatkozás.
 ## Indítás
 
 ```zsh
-cd ~/bytewolf-robotics/PX4-Autopilot
-source .venv/bin/activate
-PX4_GZ_WORLD=budapest_arpadfold_matyasfold \\
-CMAKE_PREFIX_PATH="$(brew --prefix qt@5)" \\
-make px4_sitl gz_x500
+cd "/Users/vargaferenc/Documents/ByteWolf Robotics Platform"
+./simulation/launch/validate_px4_gazebo.zsh
+./simulation/launch/run_px4_gazebo.zsh base
 ```
+
+A launcher az `PX4_ROOT` változóval más PX4 checkoutot is fogad. Alapértelmezésben
+a projekt `PX4-Autopilot` hivatkozását használja, majd annak szóközmentes fizikai
+célútvonalára oldja fel. A `platforms/x500v2/config/twin.yaml`
+tartja a verziózott profil- és safety-baseline-t; a még nem mért fizikai paraméterek
+szándékosan `null` értékűek.
+
+Elérhető profilok: `base`, `vision`, `depth`, `mono-front`, `mono-down`,
+`lidar-down`, `lidar-front`, `lidar-2d`.
 
 ## Linux VM
 

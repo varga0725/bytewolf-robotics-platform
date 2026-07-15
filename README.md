@@ -7,19 +7,25 @@ Safety-first digital twin platform for a PX4-powered multicopter.
 - Primary simulation environment: native Apple Silicon macOS.
 - Flight controller: PX4 SITL v1.17.0.
 - Simulator: Gazebo Harmonic.
-- First city scene: Árpádföld–Mátyásföld, Budapest.
+- Baseline world: PX4's built-in `default` world.
 
 The Linux VM remains optional for future ROS 2 development; it is not needed to
 run the native macOS PX4/Gazebo simulator.
 
-## Run the Budapest simulator
+## Run the simulator
 
 ```zsh
-cd ~/bytewolf-robotics/PX4-Autopilot
-source .venv/bin/activate
-PX4_GZ_WORLD=budapest_arpadfold_matyasfold \\
-CMAKE_PREFIX_PATH="$(brew --prefix qt@5)" \\
-make px4_sitl gz_x500
+./simulation/launch/validate_px4_gazebo.zsh
+./simulation/launch/run_px4_gazebo.zsh base
+```
+
+The launcher keeps PX4's source tree untouched and accepts the official X500
+sensor profiles: `vision`, `depth`, `mono-front`, `mono-down`, `lidar-down`,
+`lidar-front`, and `lidar-2d`. To choose another installed Gazebo world, set
+`PX4_GZ_WORLD`, for example:
+
+```zsh
+PX4_GZ_WORLD=empty ./simulation/launch/run_px4_gazebo.zsh base
 ```
 
 ## Run the safety-core tests
