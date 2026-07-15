@@ -3,7 +3,7 @@ import unittest
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.mission.commands import TakeoffCommand, WaypointCommand
 from brain.mission.execution import MissionPhase
-from brain.mission.flight import TakeoffHoverLandMission
+from brain.mission.flight import TakeoffHoverLandMission, TakeoffWaypointLandMission
 
 
 class ConnectedState:
@@ -104,3 +104,32 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(target.absolute_altitude_m, 121.0)
         self.assertEqual(drone.events[-1][0], "goto_location")
         self.assertAlmostEqual(drone.events[-1][3], 121.0)
+
+    async def test_executes_takeoff_waypoint_hover_and_landing(self) -> None:
+        drone = FakeDrone()
+
+        async def fake_sleep(seconds: float) -> None:
+            drone.events.append(("wait", seconds))
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffWaypointLandMission(
+            takeoff=TakeoffCommand(2.0),
+            waypoint=WaypointCommand(north_m=5.0, east_m=0.0, target_altitude_m=2.0),
+            hover_duration_s=3.0,
+        )
+
+        execution = await adapter.execute_waypoint_mission(mission)
+
+        self.assertEqual(
+            tuple(event.phase for event in execution.events),
+            (
+                MissionPhase.ARMING,
+                MissionPhase.TAKING_OFF,
+                MissionPhase.NAVIGATING,
+                MissionPhase.HOVERING,
+                MissionPhase.LANDING,
+                MissionPhase.COMPLETED,
+            ),
+        )
+        self.assertEqual(drone.events[0:3], [("set_takeoff_altitude", 2.0), "arm", "takeoff"])
+        self.assertEqual(drone.events[-1], "land")

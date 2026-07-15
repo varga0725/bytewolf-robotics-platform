@@ -6,7 +6,7 @@ from typing import Protocol
 
 from brain.mission.commands import WaypointCommand
 from brain.mission.execution import MissionExecution, MissionPhase
-from brain.mission.flight import TakeoffHoverLandMission
+from brain.mission.flight import TakeoffHoverLandMission, TakeoffWaypointLandMission
 from brain.navigation.waypoints import GlobalPosition, relative_waypoint_to_global
 
 
@@ -100,3 +100,34 @@ class MavsdkMissionAdapter:
             target.latitude_deg, target.longitude_deg, target.absolute_altitude_m, 0.0
         )
         return target
+
+    async def execute_waypoint_mission(
+        self, mission: TakeoffWaypointLandMission
+    ) -> MissionExecution:
+        """Take off, visit one approved waypoint, hover, and land."""
+        execution = MissionExecution.empty().transition(MissionPhase.ARMING)
+        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+        try:
+            await self._drone.action.arm()
+            execution = execution.transition(MissionPhase.TAKING_OFF)
+            await self._drone.action.takeoff()
+            await self._sleep(mission.takeoff_settle_seconds)
+            execution = execution.transition(MissionPhase.NAVIGATING)
+            await self.goto_relative_waypoint(mission.waypoint)
+            execution = execution.transition(MissionPhase.HOVERING)
+            await self._sleep(mission.hover_duration_s)
+        except BaseException:
+            execution = execution.transition(MissionPhase.LANDING)
+            try:
+                await self._drone.action.land()
+            finally:
+                execution = execution.transition(MissionPhase.FAILED)
+            raise
+        else:
+            execution = execution.transition(MissionPhase.LANDING)
+            try:
+                await self._drone.action.land()
+            except BaseException:
+                execution = execution.transition(MissionPhase.FAILED)
+                raise
+            return execution.transition(MissionPhase.COMPLETED)

@@ -66,4 +66,20 @@ an immutable audit trail: `arming -> taking_off -> hovering -> landing -> comple
 The navigation layer now accepts a safety-validated relative waypoint (north,
 east, target altitude). At execution time it converts that local target using
 the drone's current GPS telemetry into the global coordinate format PX4 expects.
-The next slice will combine it into a full takeoff–waypoint–land scenario.
+
+## Run a complete waypoint mission
+
+With PX4 SITL already running, execute a small, safe test: take off to 2 m,
+move 5 m north, hover for 3 seconds, then land.
+
+```zsh
+.venv/bin/python -m brain.cli.fly_waypoint_land
+```
+
+The target is configurable, but it is always validated against the explicit
+altitude and distance limits before PX4 receives a command:
+
+```zsh
+.venv/bin/python -m brain.cli.fly_waypoint_land \\
+  --north 5 --east 0 --takeoff-altitude 2 --waypoint-altitude 2
+```
