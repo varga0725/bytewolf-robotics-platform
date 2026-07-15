@@ -1,1 +1,2 @@
 mavsdk
+jsonschema>=4,<5

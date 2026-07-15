@@ -1,6 +1,6 @@
 import unittest
 
-from brain.mission.commands import ReturnToHomeCommand, TakeoffCommand, WaypointCommand
+from brain.mission.commands import LandCommand, ReturnToHomeCommand, TakeoffCommand, WaypointCommand
 from brain.safety.gate import FlightLimits, SafetyGate, SafetyViolation
 
 
@@ -56,6 +56,11 @@ class TakeoffSafetyTests(unittest.TestCase):
     def test_rejects_return_to_home_above_the_configured_limit(self) -> None:
         with self.assertRaises(SafetyViolation):
             self.gate.evaluate(ReturnToHomeCommand(target_altitude_m=20.1))
+
+    def test_accepts_an_explicit_land_command(self) -> None:
+        decision = self.gate.evaluate(LandCommand())
+
+        self.assertTrue(decision.approved)
 
 
 if __name__ == "__main__":

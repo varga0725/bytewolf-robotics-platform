@@ -24,3 +24,8 @@ class ReturnToHomeCommand:
     """Request PX4 to return to the recorded launch position and land."""
 
     target_altitude_m: float
+
+
+@dataclass(frozen=True)
+class LandCommand:
+    """Request a controlled PX4 landing without direct motor control."""
