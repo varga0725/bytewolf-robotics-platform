@@ -30,6 +30,14 @@ def _mission() -> SimpleNamespace:
 
 
 class CliMissionArtifactTests(unittest.TestCase):
+    def test_takeoff_cli_enables_the_local_live_dashboard_by_default(self) -> None:
+        arguments = fly_takeoff_hover_land.parse_arguments(())
+
+        self.assertEqual(
+            arguments.dashboard_snapshot,
+            Path("simulation/artifacts/dashboard/live-telemetry.json"),
+        )
+
     def test_takeoff_cli_relays_dashboard_telemetry_on_its_existing_system_connection(self) -> None:
         execution = MissionExecution.empty().transition(MissionPhase.ARMING)
         relay = MagicMock()

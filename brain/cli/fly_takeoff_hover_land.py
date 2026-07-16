@@ -56,8 +56,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--dashboard-snapshot",
         type=Path,
-        default=None,
-        help="Optional read-only telemetry JSON snapshot, updated during this mission.",
+        default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
+        help="Read-only telemetry JSON snapshot, updated during this mission.",
     )
     return parser.parse_args(arguments)
 
@@ -88,10 +88,9 @@ async def run(arguments: argparse.Namespace) -> None:
 
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
-        if arguments.dashboard_snapshot is not None:
-            dashboard_stop_event = asyncio.Event()
-            relay = MavsdkTelemetryRelay(system, arguments.dashboard_snapshot)
-            dashboard_relay_task = asyncio.create_task(relay.run(dashboard_stop_event))
+        dashboard_stop_event = asyncio.Event()
+        relay = MavsdkTelemetryRelay(system, arguments.dashboard_snapshot)
+        dashboard_relay_task = asyncio.create_task(relay.run(dashboard_stop_event))
         print(
             f"Approved: take off to {mission.takeoff.target_altitude_m:g} m, "
             f"hover for {mission.hover_duration_s:g} s, then land."
