@@ -99,6 +99,7 @@ class MavsdkMissionAdapter:
 
     async def goto_relative_waypoint(self, command: WaypointCommand) -> GlobalPosition:
         position = await anext(self._drone.telemetry.position())
+        self._require_runtime_global_position(position, "waypoint origin")
         target = relative_waypoint_to_global(
             GlobalPosition(position.latitude_deg, position.longitude_deg, position.absolute_altitude_m),
             command,
@@ -114,6 +115,7 @@ class MavsdkMissionAdapter:
     ) -> None:
         async def wait_for_match() -> None:
             async for position in self._drone.telemetry.position():
+                self._require_runtime_global_position(position, "waypoint progress")
                 current = GlobalPosition(
                     position.latitude_deg, position.longitude_deg, position.absolute_altitude_m
                 )
@@ -277,6 +279,17 @@ class MavsdkMissionAdapter:
             or not -180.0 <= longitude <= 180.0
         ):
             raise MissionPreflightError(f"Preflight rejected: {label} telemetry is invalid.")
+
+    @classmethod
+    def _require_runtime_global_position(cls, position: object, label: str) -> None:
+        """Reject invalid in-flight GNSS samples before they can command navigation."""
+        try:
+            cls._require_global_position(position, label)
+        except MissionPreflightError as error:
+            message = str(error).replace(
+                "Preflight rejected:", "Runtime position telemetry rejected:"
+            )
+            raise RuntimeError(message) from error
 
     @staticmethod
     def _battery_percent(battery: object) -> float:

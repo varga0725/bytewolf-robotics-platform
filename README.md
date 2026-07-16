@@ -93,7 +93,10 @@ move 5 m north, hover for 3 seconds, then land.
 The target is configurable, but it is always validated against the explicit
 altitude and distance limits before PX4 receives a command. Completion is only
 reported once the GPS telemetry is within 1 m horizontally and vertically of the
-target (or the mission times out and lands):
+target (or the mission times out and lands). An invalid in-flight GPS sample
+(missing, non-finite, or out-of-range latitude, longitude, or altitude) is
+rejected before it can produce a navigation command; if the vehicle is already
+airborne, the mission performs its one bounded landing fallback:
 
 ```zsh
 .venv/bin/python -m brain.cli.fly_waypoint_land \\

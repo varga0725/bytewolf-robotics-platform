@@ -62,4 +62,6 @@ küldetés a PX4 saját RTL módját használja. Sikeres futásnál az `in_air` 
 előbb repülést, majd leszállást jelez; timeout vagy RTL-hiba esetén az adapter
 külön land parancsot kísérel meg, a küldetés pedig hibásként zárul. Mindkét
 küldetés a determinisztikus SafetyGate-en halad át, mielőtt parancs kerülne a
-PX4-hez.
+PX4-hez. A waypoint közbeni érvénytelen GPS-minta (hiányzó, nem véges vagy
+tartományon kívüli koordináta) nem válhat új navigációs paranccsá; levegőben a
+futás egyetlen korlátozott land fallbackkel zárul.

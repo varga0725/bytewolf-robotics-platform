@@ -151,6 +151,23 @@ class MissingHomeDrone(FakeDrone):
         self.telemetry = MissingHomeTelemetry()
 
 
+class GnssDropoutTelemetry(FakeTelemetry):
+    """Reports a valid preflight fix, then loses the position estimate in flight."""
+
+    async def position(self):
+        self._calls += 1
+        if self._calls == 1:
+            yield Position()
+        else:
+            yield Position(latitude=float("nan"))
+
+
+class GnssDropoutDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = GnssDropoutTelemetry()
+
+
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_unhealthy_vehicle_before_any_action(self) -> None:
         drone = UnhealthyDrone()
@@ -259,6 +276,25 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "navigation command rejected"):
             await adapter.execute_waypoint_mission(mission)
 
+        self.assertEqual(drone.events.count("land"), 1)
+
+    async def test_lands_once_when_gnss_becomes_invalid_during_waypoint_navigation(self) -> None:
+        drone = GnssDropoutDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffWaypointLandMission(
+            takeoff=TakeoffCommand(2.0),
+            waypoint=WaypointCommand(north_m=5.0, east_m=0.0, target_altitude_m=2.0),
+            hover_duration_s=1.0,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Runtime position telemetry rejected"):
+            await adapter.execute_waypoint_mission(mission)
+
+        self.assertNotIn("goto_location", [event[0] if isinstance(event, tuple) else event for event in drone.events])
         self.assertEqual(drone.events.count("land"), 1)
 
     async def test_converts_and_sends_an_authorized_relative_waypoint(self) -> None:
