@@ -348,9 +348,12 @@ class ScenarioRunner:
             self.sitl_command,
             cwd=self._project_root,
             start_new_session=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+            # The process is intentionally long-lived and its output is never
+            # consumed here.  Keeping it in pipes can block PX4 once a pipe
+            # fills, preventing MAVLink from ever becoming available.
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
     def _stop_sitl(self, process: ManagedProcess) -> None:

@@ -51,6 +51,13 @@ class SimulationConfigurationTests(unittest.TestCase):
         self.assertIn("GZ_IP=127.0.0.1", launcher)
         self.assertIn("trap cleanup EXIT INT TERM", launcher)
 
+    def test_headless_launcher_runs_px4_without_an_interactive_shell(self) -> None:
+        """A piped headless process must not emit an unbounded PX4 prompt stream."""
+        launcher = (ROOT / "simulation/launch/run_px4_gazebo_headless.zsh").read_text()
+
+        self.assertIn('PX4_BINARY="$PX4_BUILD_DIR/bin/px4"', launcher)
+        self.assertIn('"$PX4_BINARY" -d', launcher)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock
@@ -136,6 +137,9 @@ class HeadlessScenarioTests(unittest.TestCase):
 
         self.assertEqual(process_starter.call_args.args[0], runner.sitl_command)
         self.assertTrue(process_starter.call_args.kwargs["start_new_session"])
+        self.assertIs(process_starter.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertIs(process_starter.call_args.kwargs["stdout"], subprocess.DEVNULL)
+        self.assertIs(process_starter.call_args.kwargs["stderr"], subprocess.DEVNULL)
         readiness_check.assert_called_once_with(sitl_process)
         sleep.assert_called_once_with(45.0)
         terminate_group.assert_called_once_with(90210)

@@ -85,6 +85,13 @@ a `simulation/artifacts/headless/p0-*.json` riportban is szerepel. A timeoutolt
 folyamatcsoport garantáltan leáll. A 9/10 ismételhetőségi méréshez több, megőrzött
 riport szükséges; ez külön elfogadási mérés, nem az egyszeri runner smoke test.
 
+A headless launcher a már lefordított `px4_sitl_default/bin/px4` binárist PX4
+daemon módban (`-d`) indítja. Ez szándékos: a nem olvasott kimeneti csőbe írt
+interaktív PX4 prompt korábban meg tudta állítani a SITL-t még a MAVLink
+kapcsolat létrejötte előtt. A launcher ezért hibával leáll, ha a SITL bináris
+hiányzik; egyszeri felépítéshez a PX4 checkoutban futtasd a
+`make px4_sitl gz_x500` parancsot.
+
 A kapu automatizált mérése:
 
 ```zsh
