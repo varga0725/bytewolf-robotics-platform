@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 import yaml
 
-from brain.safety.gate import FlightLimits
+from brain.safety.gate import FlightLimits, LocalPolygonGeofence
 
 
 DEFAULT_SAFETY_PROFILE_PATH = (
@@ -30,11 +30,13 @@ class SafetyProfile:
     minimum_battery_percent_to_start: float
     loss_of_link_action: str
     allow_missing_battery_telemetry: bool = False
+    allowed_geofence: LocalPolygonGeofence | None = None
 
     def flight_limits(self) -> FlightLimits:
         return FlightLimits(
             max_altitude_m=self.max_altitude_m,
             max_distance_m=self.max_radius_m,
+            allowed_geofence=self.allowed_geofence,
         )
 
 
@@ -68,6 +70,7 @@ def load_safety_profile(path: Path | str = DEFAULT_SAFETY_PROFILE_PATH) -> Safet
         allow_missing_battery_telemetry=_optional_boolean(
             simulation, "allow_missing_battery_telemetry", default=False
         ),
+        allowed_geofence=_optional_geofence(safety),
     )
 
 
@@ -107,3 +110,32 @@ def _optional_boolean(source: Mapping[str, Any], field: str, default: bool) -> b
     if not isinstance(value, bool):
         raise SafetyProfileError(f"Safety profile field '{field}' must be a boolean.")
     return value
+
+
+def _optional_geofence(source: Mapping[str, Any]) -> LocalPolygonGeofence | None:
+    value = source.get("allowed_geofence")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise SafetyProfileError("Safety profile field 'allowed_geofence' must be a mapping.")
+    vertices = value.get("vertices_m")
+    if not isinstance(vertices, list):
+        raise SafetyProfileError("Safety profile geofence field 'vertices_m' must be a list.")
+    try:
+        normalized = tuple(_geofence_vertex(vertex) for vertex in vertices)
+        return LocalPolygonGeofence(vertices_m=normalized)
+    except (TypeError, ValueError) as error:
+        raise SafetyProfileError(f"Safety profile geofence is invalid: {error}") from error
+
+
+def _geofence_vertex(value: Any) -> tuple[float, float]:
+    if not isinstance(value, list) or len(value) != 2:
+        raise ValueError("Each geofence vertex must be a two-value [north_m, east_m] list.")
+    north_m, east_m = value
+    if isinstance(north_m, bool) or isinstance(east_m, bool):
+        raise ValueError("Geofence coordinates must be finite numbers.")
+    if not isinstance(north_m, (int, float)) or not isinstance(east_m, (int, float)):
+        raise ValueError("Geofence coordinates must be finite numbers.")
+    if not isfinite(float(north_m)) or not isfinite(float(east_m)):
+        raise ValueError("Geofence coordinates must be finite numbers.")
+    return float(north_m), float(east_m)

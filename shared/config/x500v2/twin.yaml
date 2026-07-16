@@ -59,6 +59,14 @@ safety:
   max_altitude_m: 20
   max_speed_m_s: 3
   max_radius_m: 50
+  # Local north/east metres relative to launch. This guard is evaluated before
+  # arming; PX4's runtime fence remains an additional future integration.
+  allowed_geofence:
+    vertices_m:
+      - [-30, -30]
+      - [30, -30]
+      - [30, 30]
+      - [-30, 30]
   minimum_battery_percent_to_start: 40
   loss_of_link_action: RTL
 

@@ -51,6 +51,15 @@ class HeadlessScenarioTests(unittest.TestCase):
             P0_V2_SCENARIOS[1].arguments,
             ("--altitude", "2", "--hover-seconds", "10", "--preflight-wait-seconds", "60"),
         )
+        self.assertIn(
+            "reject-geofence-violation",
+            tuple(scenario.identifier for scenario in P0_V2_SCENARIOS),
+        )
+        geofence_scenario = next(
+            scenario for scenario in P0_V2_SCENARIOS if scenario.identifier == "reject-geofence-violation"
+        )
+        self.assertEqual(geofence_scenario.module, "brain.cli.check_geofence_violation")
+        self.assertEqual(geofence_scenario.fallback_expectation, "no-flight-command")
         self.assertTrue(all(scenario.version == "p0.v2" for scenario in P0_V2_SCENARIOS))
         self.assertEqual(
             tuple(scenario.identifier for scenario in P0_SCENARIOS),

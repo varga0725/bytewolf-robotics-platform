@@ -162,6 +162,13 @@ P0_V2_SCENARIOS: tuple[Scenario, ...] = (
         version="p0.v2",
         fallback_expectation="command-land-once-after-interrupt",
     ),
+    Scenario(
+        "reject-geofence-violation",
+        "brain.cli.check_geofence_violation",
+        version="p0.v2",
+        safety_rejection="must-reject-geofence-violation-before-arm",
+        fallback_expectation="no-flight-command",
+    ),
 )
 
 
