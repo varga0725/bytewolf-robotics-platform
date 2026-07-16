@@ -41,6 +41,7 @@ class HeadlessScenarioTests(unittest.TestCase):
             tuple(scenario.identifier for scenario in P0_V2_SCENARIOS[:2]),
             ("boot-prearm-check", "takeoff-2m-hover-10s-land"),
         )
+        self.assertIn("waypoint-square-land", tuple(scenario.identifier for scenario in P0_V2_SCENARIOS))
 
     def test_runner_can_select_the_expanded_p0_v2_matrix_without_replacing_v1(self) -> None:
         self.assertEqual(parse_arguments(()).matrix_version, "p0.v1")

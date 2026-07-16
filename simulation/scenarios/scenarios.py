@@ -140,6 +140,24 @@ P0_V2_SCENARIOS: tuple[Scenario, ...] = (
         fallback_expectation="land-once-after-airborne-failure",
     ),
     Scenario(
+        "waypoint-square-land",
+        "brain.cli.fly_waypoint_square_land",
+        (
+            "--takeoff-altitude",
+            "2",
+            "--side-length",
+            "5",
+            "--waypoint-altitude",
+            "2",
+            "--hover-seconds",
+            "3",
+            "--preflight-wait-seconds",
+            "60",
+        ),
+        version="p0.v2",
+        fallback_expectation="confirm-four-corners-then-land-once",
+    ),
+    Scenario(
         "mission-interrupt-hold-cleanup-land",
         "brain.cli.fly_controlled_interruption",
         (
