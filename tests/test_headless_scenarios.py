@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock
 
-from simulation.headless.scenarios import P0_SCENARIOS, ScenarioRunner
+from simulation.headless.scenarios import P0_SCENARIOS, Scenario, ScenarioRunner
 
 
 class HeadlessScenarioTests(unittest.TestCase):
@@ -18,6 +19,10 @@ class HeadlessScenarioTests(unittest.TestCase):
             ("takeoff-hover-land", "waypoint-land", "return-to-home"),
         )
         self.assertTrue(all(scenario.module.startswith("brain.cli.") for scenario in P0_SCENARIOS))
+        self.assertTrue(all(scenario.version == "p0.v1" for scenario in P0_SCENARIOS))
+        self.assertTrue(all(scenario.readiness_requirements for scenario in P0_SCENARIOS))
+        self.assertTrue(all(scenario.safety_rejection is not None for scenario in P0_SCENARIOS))
+        self.assertTrue(all(scenario.fallback_expectation for scenario in P0_SCENARIOS))
 
     def test_runner_records_each_scenario_and_writes_a_json_report(self) -> None:
         completed = Mock(return_value=Mock(returncode=0, stdout="mission complete\n", stderr=""))
@@ -37,6 +42,72 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertIn('"status": "passed"', report)
         self.assertIn('"takeoff-hover-land"', report)
         self.assertIn("mission complete", report)
+
+    def test_runner_includes_versioned_safety_metadata_in_json_report(self) -> None:
+        scenario = Scenario(
+            "safety-reject",
+            "brain.cli.fly_waypoint_land",
+            version="p0.v1",
+            readiness_requirements=("mavsdk-connected", "telemetry-healthy"),
+            safety_rejection="must-reject-out-of-bounds-waypoint",
+            fallback_expectation="no-flight-command",
+        )
+        completed = Mock(return_value=Mock(returncode=0, stdout="rejected\n", stderr=""))
+
+        with TemporaryDirectory() as temporary_directory:
+            report_path = ScenarioRunner(command_runner=completed).run(
+                (scenario,), Path(temporary_directory)
+            )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        result = report["results"][0]
+        self.assertEqual(result["version"], "p0.v1")
+        self.assertEqual(result["readiness_requirements"], ["mavsdk-connected", "telemetry-healthy"])
+        self.assertEqual(result["safety_rejection"], "must-reject-out-of-bounds-waypoint")
+        self.assertEqual(result["fallback_expectation"], "no-flight-command")
+
+    def test_runner_starts_sitl_in_its_own_process_group_and_cleans_it_up(self) -> None:
+        sitl_process = Mock(pid=90210)
+        process_starter = Mock(return_value=sitl_process)
+        command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
+        readiness_check = Mock(return_value=True)
+        terminate_group = Mock()
+        runner = ScenarioRunner(
+            command_runner=command_runner,
+            sitl_command=("./simulation/launch/run_px4_gazebo_headless.zsh", "base"),
+            process_starter=process_starter,
+            readiness_check=readiness_check,
+            terminate_process_group=terminate_group,
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            runner.run(P0_SCENARIOS[:1], Path(temporary_directory))
+
+        self.assertEqual(process_starter.call_args.args[0], runner.sitl_command)
+        self.assertTrue(process_starter.call_args.kwargs["start_new_session"])
+        readiness_check.assert_called_once_with(sitl_process)
+        terminate_group.assert_called_once_with(90210)
+
+    def test_runner_reports_readiness_failure_and_still_cleans_up_sitl(self) -> None:
+        sitl_process = Mock(pid=90210)
+        command_runner = Mock()
+        terminate_group = Mock()
+        runner = ScenarioRunner(
+            command_runner=command_runner,
+            sitl_command=("sitl",),
+            process_starter=Mock(return_value=sitl_process),
+            readiness_check=Mock(return_value=False),
+            terminate_process_group=terminate_group,
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            report_path = runner.run(P0_SCENARIOS[:1], Path(temporary_directory))
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(command_runner.call_count, 0)
+        self.assertEqual(report["overall_status"], "failed")
+        self.assertEqual(report["results"][0]["status"], "blocked")
+        terminate_group.assert_called_once_with(90210)
 
     def test_runner_marks_a_nonzero_process_as_failed_without_stopping_matrix(self) -> None:
         command_runner = Mock(
