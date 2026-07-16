@@ -61,8 +61,15 @@ in the JSON report.
 
 The unsafe-altitude scenario is a passing test only when the CLI rejects it
 before a PX4 flight command. The nominal scenarios remain the inputs for the
-9/10 repeatability gate; run the matrix repeatedly and retain its reports before
-declaring that gate complete.
+9/10 repeatability gate. The runner can produce the aggregate proof directly:
+
+```zsh
+.venv/bin/python -m simulation.headless.scenarios --runs 10
+```
+
+The resulting `p0-repeatability-*.json` reports the independent pass rate for
+takeoff-hover-land, waypoint, and RTL. Each must meet the 90% threshold; the
+safety-rejection scenario must pass on every run.
 
 ## Run the first flight mission
 

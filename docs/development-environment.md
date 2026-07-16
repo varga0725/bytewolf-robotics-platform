@@ -84,3 +84,14 @@ Minden scenario saját `mission-artifacts/<scenario>` könyvtárat kap; az útvo
 a `simulation/artifacts/headless/p0-*.json` riportban is szerepel. A timeoutolt
 folyamatcsoport garantáltan leáll. A 9/10 ismételhetőségi méréshez több, megőrzött
 riport szükséges; ez külön elfogadási mérés, nem az egyszeri runner smoke test.
+
+A kapu automatizált mérése:
+
+```zsh
+.venv/bin/python -m simulation.headless.scenarios --runs 10
+```
+
+A `p0-repeatability-*.json` összesítő minden nominális scenario külön
+sikerarányát tartalmazza. Takeoff, waypoint és RTL egyaránt legalább 0,9 arányt
+kell elérjen; a tiltott magasság biztonsági elutasításának minden körben sikeres
+scenario-ként kell zárulnia.

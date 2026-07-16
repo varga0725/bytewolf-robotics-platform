@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -170,6 +171,72 @@ class ScenarioRunner:
         )
         return report_path
 
+    def run_repeated(
+        self,
+        scenarios: Iterable[Scenario],
+        output_directory: Path,
+        repetitions: int = 10,
+        minimum_success_rate: float = 0.9,
+    ) -> Path:
+        """Prove nominal P0 scenario repeatability with a durable aggregate report."""
+        if repetitions <= 0:
+            raise ValueError("Repeatability repetitions must be a positive integer.")
+        if not 0.0 < minimum_success_rate <= 1.0:
+            raise ValueError("Minimum success rate must be within (0, 1].")
+
+        scenario_matrix = tuple(scenarios)
+        timestamp = self._now().astimezone(UTC)
+        run_root = output_directory / f"repeatability-{timestamp.strftime('%Y%m%dT%H%M%SZ')}"
+        report_paths = tuple(
+            self.run(scenario_matrix, run_root / f"run-{index:02d}")
+            for index in range(1, repetitions + 1)
+        )
+        reports = tuple(
+            json.loads(path.read_text(encoding="utf-8")) for path in report_paths
+        )
+        success_rates = {
+            scenario.identifier: sum(
+                result["status"] == "passed"
+                for report in reports
+                for result in report["results"]
+                if result["identifier"] == scenario.identifier
+            )
+            / repetitions
+            for scenario in scenario_matrix
+        }
+        nominal_scenarios = tuple(
+            scenario.identifier for scenario in scenario_matrix if scenario.expected_returncode == 0
+        )
+        overall_status = (
+            "passed"
+            if all(success_rates[identifier] >= minimum_success_rate for identifier in nominal_scenarios)
+            and all(
+                success_rates[scenario.identifier] == 1.0
+                for scenario in scenario_matrix
+                if scenario.expected_returncode != 0
+            )
+            else "failed"
+        )
+        aggregate_path = output_directory / f"p0-repeatability-{timestamp.strftime('%Y%m%dT%H%M%SZ')}.json"
+        output_directory.mkdir(parents=True, exist_ok=True)
+        aggregate_path.write_text(
+            json.dumps(
+                {
+                    "minimum_success_rate": minimum_success_rate,
+                    "nominal_scenarios": list(nominal_scenarios),
+                    "overall_status": overall_status,
+                    "repetitions": repetitions,
+                    "run_reports": [str(path) for path in report_paths],
+                    "started_at": timestamp.isoformat(),
+                    "success_rates": success_rates,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return aggregate_path
+
     def _run_scenario(self, scenario: Scenario, output_directory: Path) -> ScenarioResult:
         artifact_directory = self._artifact_directory(output_directory, scenario)
         command = (
@@ -298,11 +365,34 @@ def _terminate_process_group(process_group_id: int) -> None:
     os.killpg(process_group_id, signal.SIGTERM)
 
 
-def main() -> None:
+def parse_arguments(arguments: Iterable[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the headless PX4/Gazebo P0 scenario matrix.")
+    parser.add_argument("--runs", type=int, default=1, help="Number of complete P0 matrices to run.")
+    parser.add_argument(
+        "--minimum-success-rate",
+        type=float,
+        default=0.9,
+        help="Required pass rate for each nominal scenario when --runs is greater than one.",
+    )
+    return parser.parse_args(arguments)
+
+
+def main(arguments: Iterable[str] | None = None) -> None:
     """Launch an isolated headless PX4 SITL and run the standard P0 matrix."""
-    report_path = ScenarioRunner(
+    parsed = parse_arguments(arguments)
+    runner = ScenarioRunner(
         sitl_command=("simulation/launch/run_px4_gazebo_headless.zsh", "base")
-    ).run(P0_SCENARIOS, Path("simulation/artifacts/headless"))
+    )
+    output_directory = Path("simulation/artifacts/headless")
+    if parsed.runs == 1:
+        report_path = runner.run(P0_SCENARIOS, output_directory)
+    else:
+        report_path = runner.run_repeated(
+            P0_SCENARIOS,
+            output_directory,
+            repetitions=parsed.runs,
+            minimum_success_rate=parsed.minimum_success_rate,
+        )
     print(f"Headless P0 report: {report_path}")
 
 

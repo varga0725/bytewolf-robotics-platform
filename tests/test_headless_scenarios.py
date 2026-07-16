@@ -155,6 +155,49 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertIn('"status": "failed"', report)
         self.assertIn('"status": "passed"', report)
 
+    def test_repeatability_report_requires_the_configured_success_rate_per_nominal_scenario(self) -> None:
+        scenario = Scenario("takeoff-hover-land", "brain.cli.fly_takeoff_hover_land")
+        completed = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
+        timestamp = datetime(2026, 7, 16, 10, 30, tzinfo=UTC)
+
+        with TemporaryDirectory() as temporary_directory:
+            report_path = ScenarioRunner(
+                command_runner=completed,
+                now=lambda: timestamp,
+            ).run_repeated(
+                (scenario,),
+                Path(temporary_directory),
+                repetitions=10,
+                minimum_success_rate=0.9,
+            )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(report["overall_status"], "passed")
+        self.assertEqual(report["repetitions"], 10)
+        self.assertEqual(report["success_rates"]["takeoff-hover-land"], 1.0)
+        self.assertEqual(len(report["run_reports"]), 10)
+
+    def test_repeatability_report_fails_when_a_nominal_scenario_misses_the_gate(self) -> None:
+        scenario = Scenario("waypoint-land", "brain.cli.fly_waypoint_land")
+        completed = Mock(
+            side_effect=(
+                *(Mock(returncode=0, stdout="ok", stderr="") for _ in range(8)),
+                *(Mock(returncode=1, stdout="", stderr="failed") for _ in range(2)),
+            )
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            report_path = ScenarioRunner(command_runner=completed).run_repeated(
+                (scenario,),
+                Path(temporary_directory),
+                repetitions=10,
+                minimum_success_rate=0.9,
+            )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(report["overall_status"], "failed")
+        self.assertEqual(report["success_rates"]["waypoint-land"], 0.8)
+
 
 if __name__ == "__main__":
     unittest.main()
