@@ -2,6 +2,7 @@ import asyncio
 import unittest
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
+from brain.mission.runtime_policy import RuntimePolicy
 from brain.mission.commands import TakeoffCommand, WaypointCommand
 from brain.mission.execution import MissionPhase
 from brain.mission.flight import (
@@ -94,6 +95,18 @@ class NeverLandingDrone(FakeDrone):
         self.telemetry = NeverLandingTelemetry()
 
 
+class FailingWaypointAction(FakeAction):
+    async def goto_location(self, latitude: float, longitude: float, altitude: float, yaw: float) -> None:
+        self._events.append(("goto_location", latitude, longitude, altitude, yaw))
+        raise RuntimeError("navigation command rejected")
+
+
+class FailingWaypointDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.action = FailingWaypointAction(self.events)
+
+
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_connects_before_executing_the_expected_command_sequence(self) -> None:
         drone = FakeDrone()
@@ -128,6 +141,35 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
                 MissionPhase.COMPLETED,
             ),
         )
+
+    async def test_confirms_normal_hover_land_with_telemetry(self) -> None:
+        drone = NeverLandingDrone()
+        policy = RuntimePolicy("v0.1", waypoint_timeout_s=30.0, landing_confirmation_timeout_s=0.01, fallback_land_attempts=1)
+        adapter = MavsdkMissionAdapter(drone, runtime_policy=policy)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.0)
+
+        with self.assertRaises(TimeoutError):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events.count("land"), 1)
+
+    async def test_lands_once_after_an_airborne_waypoint_failure(self) -> None:
+        drone = FailingWaypointDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffWaypointLandMission(
+            takeoff=TakeoffCommand(2.0),
+            waypoint=WaypointCommand(north_m=5.0, east_m=0.0, target_altitude_m=2.0),
+            hover_duration_s=1.0,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "navigation command rejected"):
+            await adapter.execute_waypoint_mission(mission)
+
+        self.assertEqual(drone.events.count("land"), 1)
 
     async def test_converts_and_sends_an_authorized_relative_waypoint(self) -> None:
         drone = FakeDrone()
