@@ -240,7 +240,44 @@ class RuntimeTelemetryDropoutDrone(FakeDrone):
         self.telemetry = RuntimeTelemetryDropoutTelemetry()
 
 
+class UnknownBatteryThenZeroTelemetry(FakeTelemetry):
+    """Models SITL's permitted unknown preflight battery followed by zero."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._battery_calls = 0
+
+    async def battery(self):
+        self._battery_calls += 1
+        if self._battery_calls == 1:
+            yield Battery(remaining_percent=float("nan"))
+            return
+        while True:
+            yield Battery(remaining_percent=0.0)
+            await asyncio.sleep(0)
+
+    async def position(self):
+        while True:
+            yield Position()
+            await asyncio.sleep(0)
+
+
+class UnknownBatteryThenZeroDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = UnknownBatteryThenZeroTelemetry()
+
+
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_permitted_unknown_sitl_battery_does_not_turn_a_later_zero_sample_into_low_battery(self) -> None:
+        drone = UnknownBatteryThenZeroDrone()
+        adapter = MavsdkMissionAdapter(drone, sleep=asyncio.sleep)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.01)
+
+        await adapter.execute(mission)
+
+        self.assertEqual(drone.events.count("land"), 1)
+
     async def test_lands_once_when_live_battery_crosses_the_runtime_reserve(self) -> None:
         drone = RuntimeLowBatteryDrone()
         adapter = MavsdkMissionAdapter(drone)

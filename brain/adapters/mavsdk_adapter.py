@@ -442,13 +442,21 @@ class MavsdkMissionAdapter:
         if sleep_task.done():
             await sleep_task
             return
-        battery_task = asyncio.create_task(
-            self._watch_runtime_battery(self._drone.telemetry.battery())
-        )
         position_task = asyncio.create_task(
             self._watch_runtime_position(self._drone.telemetry.position())
         )
-        tasks = {sleep_task, battery_task, position_task}
+        tasks = {sleep_task, position_task}
+        # The X500 SITL profile explicitly allows an unmodelled battery.  When
+        # preflight could not establish a trustworthy value, a later PX4 zero
+        # sample is still unknown rather than evidence of a real low battery.
+        # A physical profile (or any trusted preflight reading) continues to
+        # monitor the live battery and lands on reserve violation.
+        if not (
+            self._safety_profile.allow_missing_battery_telemetry
+            and self._preflight_telemetry is not None
+            and self._preflight_telemetry.battery_percent is None
+        ):
+            tasks.add(asyncio.create_task(self._watch_runtime_battery(self._drone.telemetry.battery())))
         try:
             done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             if sleep_task in done:
