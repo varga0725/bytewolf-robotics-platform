@@ -7,7 +7,7 @@ from brain.mission.runtime_policy import RuntimePolicyError, load_runtime_policy
 
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY_PATH = ROOT / "platforms/x500v2/config/runtime_policy.v0_1.yaml"
+POLICY_PATH = ROOT / "shared/config/x500v2/runtime_policy.v0_1.yaml"
 
 
 class RuntimePolicyTests(unittest.TestCase):

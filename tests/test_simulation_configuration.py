@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class SimulationConfigurationTests(unittest.TestCase):
     def test_twin_configuration_declares_the_base_profile_and_safety_limits(self) -> None:
-        configuration = (ROOT / "platforms/x500v2/config/twin.yaml").read_text()
+        configuration = (ROOT / "shared/config/x500v2/twin.yaml").read_text()
 
         self.assertIn("id: x500v2_reference_01", configuration)
         self.assertIn("base: gz_x500", configuration)
@@ -21,7 +21,7 @@ class SimulationConfigurationTests(unittest.TestCase):
         self.assertIn("max_radius_m: 50", configuration)
 
     def test_launch_script_exposes_all_documented_x500_profiles(self) -> None:
-        launcher = (ROOT / "simulation/launch/run_px4_gazebo.zsh").read_text()
+        launcher = (ROOT / "simulation/gazebo/launch/run_px4_gazebo.zsh").read_text()
 
         self.assertIn("PX4_ROOT=${PX4_ROOT:A}", launcher)
         for target in (
@@ -37,13 +37,13 @@ class SimulationConfigurationTests(unittest.TestCase):
             self.assertIn(target, launcher)
 
     def test_validation_script_checks_required_native_dependencies(self) -> None:
-        validator = (ROOT / "simulation/launch/validate_px4_gazebo.zsh").read_text()
+        validator = (ROOT / "simulation/gazebo/launch/validate_px4_gazebo.zsh").read_text()
 
         for dependency in ("cmake", "ninja", "gz", "brew"):
             self.assertIn(dependency, validator)
 
     def test_headless_launcher_starts_a_gazebo_server_before_px4(self) -> None:
-        launcher = (ROOT / "simulation/launch/run_px4_gazebo_headless.zsh").read_text()
+        launcher = (ROOT / "simulation/gazebo/launch/run_px4_gazebo_headless.zsh").read_text()
 
         self.assertIn("gz sim -r -s", launcher)
         self.assertIn("PX4_GZ_STANDALONE=1", launcher)
@@ -53,7 +53,7 @@ class SimulationConfigurationTests(unittest.TestCase):
 
     def test_headless_launcher_runs_px4_without_an_interactive_shell(self) -> None:
         """A piped headless process must not emit an unbounded PX4 prompt stream."""
-        launcher = (ROOT / "simulation/launch/run_px4_gazebo_headless.zsh").read_text()
+        launcher = (ROOT / "simulation/gazebo/launch/run_px4_gazebo_headless.zsh").read_text()
 
         self.assertIn('PX4_BINARY="$PX4_BUILD_DIR/bin/px4"', launcher)
         self.assertIn('"$PX4_BINARY" -d', launcher)

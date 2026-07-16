@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://bytewolf.example/interfaces/ros2-telemetry/telemetry-bridge-v0.1",
+  "$id": "https://bytewolf.example/shared/schemas/ros2-telemetry/telemetry-bridge-v0.1",
   "title": "ByteWolf ROS 2 Telemetry Bridge Contract v0.1",
   "type": "object",
   "additionalProperties": false,

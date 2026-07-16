@@ -17,7 +17,7 @@ from brain.telemetry.ros2_contract import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_PATH = ROOT / "interfaces/ros2_telemetry/telemetry_bridge_v0_1.schema.json"
+SCHEMA_PATH = ROOT / "shared/schemas/ros2_telemetry/telemetry_bridge_v0_1.schema.json"
 
 
 class Ros2TelemetryContractTests(unittest.TestCase):

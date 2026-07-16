@@ -29,8 +29,8 @@ meglévő `SafetyGate` ellenőrzésén is átmegy.
 - A felszállási és waypoint-magasság nem lehet a mission maximuma felett.
 - A linkvesztési szabály nem gyengítheti a platform előírt RTL fallbackjét.
 
-A séma: `interfaces/mission_spec/mission_spec_v0_1.schema.json`. Egy valid
-minta: `interfaces/mission_spec/examples/takeoff_waypoint_rtl.v0_1.json`.
+A séma: `shared/schemas/mission_spec/mission_spec_v0_1.schema.json`. Egy valid
+minta: `shared/interfaces/mission_spec/examples/takeoff_waypoint_rtl.v0_1.json`.
 
 ## Jelenlegi megvalósítási állapot
 

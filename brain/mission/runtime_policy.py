@@ -9,7 +9,7 @@ import yaml
 
 
 DEFAULT_RUNTIME_POLICY_PATH = (
-    Path(__file__).resolve().parents[2] / "platforms/x500v2/config/runtime_policy.v0_1.yaml"
+    Path(__file__).resolve().parents[2] / "shared/config/x500v2/runtime_policy.v0_1.yaml"
 )
 
 

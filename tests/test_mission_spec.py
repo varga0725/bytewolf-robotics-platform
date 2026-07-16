@@ -161,7 +161,7 @@ class MissionSpecValidationTests(unittest.TestCase):
 
     def test_documented_example_is_valid(self) -> None:
         document = json.loads(
-            (ROOT / "interfaces/mission_spec/examples/takeoff_waypoint_rtl.v0_1.json").read_text()
+            (ROOT / "shared/interfaces/mission_spec/examples/takeoff_waypoint_rtl.v0_1.json").read_text()
         )
 
         report = validate_and_compile_mission_spec(document, PROFILE)
@@ -169,7 +169,7 @@ class MissionSpecValidationTests(unittest.TestCase):
         self.assertTrue(report.approved)
 
     def test_loads_the_active_twin_profile_for_mission_spec_validation(self) -> None:
-        profile = load_mission_safety_profile(ROOT / "platforms/x500v2/config/twin.yaml")
+        profile = load_mission_safety_profile(ROOT / "shared/config/x500v2/twin.yaml")
 
         self.assertEqual(profile, PROFILE)
 

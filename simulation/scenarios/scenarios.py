@@ -302,7 +302,10 @@ class ScenarioRunner:
         process = subprocess.Popen(
             command,
             cwd=self._project_root,
-            start_new_session=True,
+            # A dedicated process group is enough for killpg-based cleanup.  Unlike
+            # start_new_session (setsid), setpgid avoids the intermittent EPERM
+            # observed while repeatedly launching isolated processes on macOS.
+            process_group=0,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -353,7 +356,10 @@ class ScenarioRunner:
                 return self._process_starter(
                     self.sitl_command,
                     cwd=self._project_root,
-                    start_new_session=True,
+                    # The runner only needs a unique process group to terminate the
+                    # launcher and all of its children.  A full new session uses
+                    # setsid and can intermittently fail with EPERM on macOS.
+                    process_group=0,
                     # The process is intentionally long-lived and its output is never
                     # consumed here.  Keeping it in pipes can block PX4 once a pipe
                     # fills, preventing MAVLink from ever becoming available.
@@ -446,7 +452,7 @@ def main(arguments: Iterable[str] | None = None) -> None:
     """Launch an isolated headless PX4 SITL and run the standard P0 matrix."""
     parsed = parse_arguments(arguments)
     runner = ScenarioRunner(
-        sitl_command=("simulation/launch/run_px4_gazebo_headless.zsh", "base")
+        sitl_command=("simulation/gazebo/launch/run_px4_gazebo_headless.zsh", "base")
     )
     output_directory = Path("simulation/artifacts/headless")
     if parsed.runs == 1:

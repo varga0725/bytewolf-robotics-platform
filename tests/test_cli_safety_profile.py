@@ -7,7 +7,7 @@ from brain.cli import fly_return_to_home, fly_takeoff_hover_land, fly_waypoint_l
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILE_PATH = ROOT / "platforms/x500v2/config/twin.yaml"
+PROFILE_PATH = ROOT / "shared/config/x500v2/twin.yaml"
 
 
 class CliSafetyProfileTests(unittest.TestCase):

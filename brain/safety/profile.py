@@ -11,7 +11,7 @@ from brain.safety.gate import FlightLimits
 
 
 DEFAULT_SAFETY_PROFILE_PATH = (
-    Path(__file__).resolve().parents[2] / "platforms/x500v2/config/twin.yaml"
+    Path(__file__).resolve().parents[2] / "shared/config/x500v2/twin.yaml"
 )
 
 

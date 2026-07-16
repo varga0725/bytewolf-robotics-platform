@@ -15,7 +15,7 @@ from brain.safety.profile import SafetyProfile, load_safety_profile
 
 
 _SCHEMA_PATH = (
-    Path(__file__).resolve().parents[2] / "interfaces/mission_spec/mission_spec_v0_1.schema.json"
+    Path(__file__).resolve().parents[2] / "shared/schemas/mission_spec/mission_spec_v0_1.schema.json"
 )
 _SCHEMA = json.loads(_SCHEMA_PATH.read_text())
 _VALIDATOR = Draft202012Validator(_SCHEMA, format_checker=FormatChecker())

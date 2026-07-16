@@ -20,13 +20,13 @@ A projektmappában látható `PX4-Autopilot` erre mutató hivatkozás.
 
 ```zsh
 cd "/Users/vargaferenc/Documents/ByteWolf Robotics Platform"
-./simulation/launch/validate_px4_gazebo.zsh
-./simulation/launch/run_px4_gazebo.zsh base
+./simulation/gazebo/launch/validate_px4_gazebo.zsh
+./simulation/gazebo/launch/run_px4_gazebo.zsh base
 ```
 
 A launcher az `PX4_ROOT` változóval más PX4 checkoutot is fogad. Alapértelmezésben
 a projekt `PX4-Autopilot` hivatkozását használja, majd annak szóközmentes fizikai
-célútvonalára oldja fel. A `platforms/x500v2/config/twin.yaml`
+célútvonalára oldja fel. A `shared/config/x500v2/twin.yaml`
 tartja a verziózott profil- és safety-baseline-t; a még nem mért fizikai paraméterek
 szándékosan `null` értékűek.
 
@@ -75,7 +75,7 @@ tartalmazza. Tesztfutáshoz adj meg külön könyvtárat, például
 ## Headless P0 regressziós mátrix
 
 ```zsh
-.venv/bin/python -m simulation.headless.scenarios
+.venv/bin/python -m simulation.scenarios.scenarios
 ```
 
 A runner izolált PX4/Gazebo process groupot indít, lefuttatja a takeoff-hover-
@@ -99,13 +99,13 @@ Ha a második indítás is hibás, a kör fail-closed, blokkolt riporttal zárul
 A kapu automatizált mérése:
 
 ```zsh
-.venv/bin/python -m simulation.headless.scenarios --runs 10
+.venv/bin/python -m simulation.scenarios.scenarios --runs 10
 ```
 
 Apple Silicon nightly vagy kézi regressziós belépési pont:
 
 ```zsh
-./simulation/launch/run_p0_nightly.zsh
+./simulation/gazebo/launch/run_p0_nightly.zsh
 ```
 
 A mátrix a nominális repülések mellett valós SITL waypoint-timeout → egyszeri

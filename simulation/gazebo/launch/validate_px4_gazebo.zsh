@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=${0:A:h}
-PROJECT_ROOT=${SCRIPT_DIR:h:h}
+PROJECT_ROOT=${SCRIPT_DIR:h:h:h}
 PX4_ROOT=${PX4_ROOT:-${PROJECT_ROOT}/PX4-Autopilot}
 PX4_ROOT=${PX4_ROOT:A}
 WORLD=${PX4_GZ_WORLD:-default}

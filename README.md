@@ -2,6 +2,23 @@
 
 Safety-first digital twin platform for a PX4-powered multicopter.
 
+## Repository structure
+
+```text
+apps/        # API and dashboard applications
+brain/       # Mission, safety, planning and perception domains
+robots/      # Vehicle-specific integrations
+simulation/  # Gazebo launchers, worlds, models and scenarios
+shared/      # Cross-domain interfaces, schemas and configuration
+tests/       # Automated verification
+docs/        # Engineering documentation
+docker/      # Container runtime surface
+```
+
+The current X500 V2 twin configuration is shared by the flight brain and the
+simulator under `shared/config/x500v2`; PX4's third-party source tree remains
+outside this structure at `PX4-Autopilot`.
+
 ## Current local environment
 
 - Primary simulation environment: native Apple Silicon macOS.
@@ -15,8 +32,8 @@ run the native macOS PX4/Gazebo simulator.
 ## Run the simulator
 
 ```zsh
-./simulation/launch/validate_px4_gazebo.zsh
-./simulation/launch/run_px4_gazebo.zsh base
+./simulation/gazebo/launch/validate_px4_gazebo.zsh
+./simulation/gazebo/launch/run_px4_gazebo.zsh base
 ```
 
 The launcher keeps PX4's source tree untouched and accepts the official X500
@@ -25,7 +42,7 @@ sensor profiles: `vision`, `depth`, `mono-front`, `mono-down`, `lidar-down`,
 `PX4_GZ_WORLD`, for example:
 
 ```zsh
-PX4_GZ_WORLD=empty ./simulation/launch/run_px4_gazebo.zsh base
+PX4_GZ_WORLD=empty ./simulation/gazebo/launch/run_px4_gazebo.zsh base
 ```
 
 ## Set up the Python environment
@@ -56,7 +73,7 @@ processes. Every scenario is assigned a dedicated artifact directory, recorded
 in the JSON report.
 
 ```zsh
-.venv/bin/python -m simulation.headless.scenarios
+.venv/bin/python -m simulation.scenarios.scenarios
 ```
 
 The unsafe-altitude scenario is a passing test only when the CLI rejects it
@@ -64,13 +81,13 @@ before a PX4 flight command. The nominal scenarios remain the inputs for the
 9/10 repeatability gate. The runner can produce the aggregate proof directly:
 
 ```zsh
-.venv/bin/python -m simulation.headless.scenarios --runs 10
+.venv/bin/python -m simulation.scenarios.scenarios --runs 10
 ```
 
 For the documented Apple Silicon nightly/manual gate, use:
 
 ```zsh
-./simulation/launch/run_p0_nightly.zsh
+./simulation/gazebo/launch/run_p0_nightly.zsh
 ```
 
 The resulting `p0-repeatability-*.json` reports the independent pass rate for

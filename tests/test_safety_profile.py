@@ -7,7 +7,7 @@ from brain.safety.profile import SafetyProfileError, load_safety_profile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILE_PATH = ROOT / "platforms/x500v2/config/twin.yaml"
+PROFILE_PATH = ROOT / "shared/config/x500v2/twin.yaml"
 
 
 class SafetyProfileTests(unittest.TestCase):

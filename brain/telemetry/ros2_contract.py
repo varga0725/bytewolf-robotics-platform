@@ -14,7 +14,7 @@ import yaml
 ROS2_TELEMETRY_BRIDGE_VERSION = "v0.1"
 DEFAULT_ROS2_TELEMETRY_BRIDGE_CONFIG = (
     Path(__file__).resolve().parents[2]
-    / "platforms/x500v2/config/ros2_telemetry_bridge.v0_1.yaml"
+    / "shared/config/x500v2/ros2_telemetry_bridge.v0_1.yaml"
 )
 
 

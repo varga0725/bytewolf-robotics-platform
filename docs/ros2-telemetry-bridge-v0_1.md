@@ -13,8 +13,8 @@ Linux ROS 2 deployment is introduced.
 
 ## Versioned inputs
 
-- Public schema: `interfaces/ros2_telemetry/telemetry_bridge_v0_1.schema.json`
-- X500 V2 contract: `platforms/x500v2/config/ros2_telemetry_bridge.v0_1.yaml`
+- Public schema: `shared/schemas/ros2_telemetry/telemetry_bridge_v0_1.schema.json`
+- X500 V2 contract: `shared/config/x500v2/ros2_telemetry_bridge.v0_1.yaml`
 - ROS-independent reader: `brain/telemetry/ros2_contract.py`
 
 The contract names three telemetry-only topics under the vehicle namespace:

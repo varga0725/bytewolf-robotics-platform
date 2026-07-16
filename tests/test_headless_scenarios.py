@@ -8,9 +8,9 @@ from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from simulation.headless.scenarios import P0_SCENARIOS, Scenario, ScenarioRunner
+from simulation.scenarios.scenarios import P0_SCENARIOS, Scenario, ScenarioRunner
 
 
 class HeadlessScenarioTests(unittest.TestCase):
@@ -116,7 +116,7 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertEqual(result["safety_rejection"], "must-reject-out-of-bounds-waypoint")
         self.assertEqual(result["fallback_expectation"], "no-flight-command")
 
-    def test_runner_starts_sitl_in_its_own_process_group_and_cleans_it_up(self) -> None:
+    def test_runner_starts_sitl_in_an_isolated_process_group_and_cleans_it_up(self) -> None:
         sitl_process = Mock(pid=90210)
         process_starter = Mock(return_value=sitl_process)
         command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
@@ -125,7 +125,7 @@ class HeadlessScenarioTests(unittest.TestCase):
         sleep = Mock()
         runner = ScenarioRunner(
             command_runner=command_runner,
-            sitl_command=("./simulation/launch/run_px4_gazebo_headless.zsh", "base"),
+            sitl_command=("./simulation/gazebo/launch/run_px4_gazebo_headless.zsh", "base"),
             process_starter=process_starter,
             readiness_check=readiness_check,
             terminate_process_group=terminate_group,
@@ -136,7 +136,8 @@ class HeadlessScenarioTests(unittest.TestCase):
             runner.run(P0_SCENARIOS[:1], Path(temporary_directory))
 
         self.assertEqual(process_starter.call_args.args[0], runner.sitl_command)
-        self.assertTrue(process_starter.call_args.kwargs["start_new_session"])
+        self.assertEqual(process_starter.call_args.kwargs["process_group"], 0)
+        self.assertNotIn("start_new_session", process_starter.call_args.kwargs)
         self.assertIs(process_starter.call_args.kwargs["stdin"], subprocess.DEVNULL)
         self.assertIs(process_starter.call_args.kwargs["stdout"], subprocess.DEVNULL)
         self.assertIs(process_starter.call_args.kwargs["stderr"], subprocess.DEVNULL)
@@ -187,6 +188,23 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertEqual(process_starter.call_count, 2)
         self.assertEqual(report["overall_status"], "passed")
         sleep.assert_any_call(1.0)
+
+    def test_isolated_cli_process_uses_a_process_group_not_a_new_session(self) -> None:
+        process = Mock(returncode=0)
+        process.poll.return_value = 0
+        process.communicate.return_value = ("ok", "")
+        scenario = Scenario("takeoff-hover-land", "brain.cli.fly_takeoff_hover_land")
+
+        with TemporaryDirectory() as temporary_directory:
+            with patch("simulation.scenarios.scenarios.subprocess.Popen", return_value=process) as starter:
+                ScenarioRunner()._run_isolated_scenario(
+                    scenario,
+                    ("python", "-m", scenario.module),
+                    Path(temporary_directory) / "mission-artifacts" / scenario.identifier,
+                )
+
+        self.assertEqual(starter.call_args.kwargs["process_group"], 0)
+        self.assertNotIn("start_new_session", starter.call_args.kwargs)
 
     def test_runner_marks_a_nonzero_process_as_failed_without_stopping_matrix(self) -> None:
         command_runner = Mock(
