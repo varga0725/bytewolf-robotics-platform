@@ -8,6 +8,7 @@ import unittest
 from brain.mission.commands import LandCommand, ReturnToHomeCommand, TakeoffCommand, WaypointCommand
 from brain.mission_spec.validation import (
     MissionSafetyProfile,
+    load_mission_safety_profile,
     validate_and_compile_mission_spec,
 )
 
@@ -166,6 +167,11 @@ class MissionSpecValidationTests(unittest.TestCase):
         report = validate_and_compile_mission_spec(document, PROFILE)
 
         self.assertTrue(report.approved)
+
+    def test_loads_the_active_twin_profile_for_mission_spec_validation(self) -> None:
+        profile = load_mission_safety_profile(ROOT / "platforms/x500v2/config/twin.yaml")
+
+        self.assertEqual(profile, PROFILE)
 
 
 if __name__ == "__main__":

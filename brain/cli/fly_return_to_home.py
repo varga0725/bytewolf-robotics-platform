@@ -3,10 +3,12 @@
 import argparse
 import asyncio
 from collections.abc import Sequence
+from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.mission.flight import authorize_takeoff_return_to_home
-from brain.safety.gate import FlightLimits, SafetyGate
+from brain.safety.gate import SafetyGate
+from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -14,7 +16,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--takeoff-altitude", type=float, default=2.0)
     parser.add_argument("--hover-seconds", type=float, default=3.0)
     parser.add_argument("--landing-timeout", type=float, default=60.0)
-    parser.add_argument("--max-altitude", type=float, default=20.0)
+    parser.add_argument(
+        "--safety-profile",
+        type=Path,
+        default=DEFAULT_SAFETY_PROFILE_PATH,
+        help="Versioned vehicle twin YAML that supplies non-overridable safety limits.",
+    )
     parser.add_argument("--endpoint", default="udpin://0.0.0.0:14540")
     parser.add_argument("--connection-timeout", type=float, default=15.0)
     return parser.parse_args(arguments)
@@ -28,9 +35,8 @@ async def run(arguments: argparse.Namespace) -> None:
             "MAVSDK is not installed. Run: .venv/bin/pip install -r requirements.txt"
         ) from error
 
-    gate = SafetyGate(
-        FlightLimits(max_altitude_m=arguments.max_altitude, max_distance_m=500.0)
-    )
+    profile = load_safety_profile(arguments.safety_profile)
+    gate = SafetyGate(profile.flight_limits())
     mission = authorize_takeoff_return_to_home(
         gate,
         takeoff_altitude_m=arguments.takeoff_altitude,

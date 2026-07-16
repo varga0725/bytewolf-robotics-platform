@@ -11,6 +11,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from brain.mission.commands import LandCommand, ReturnToHomeCommand, TakeoffCommand, WaypointCommand
 from brain.safety.gate import FlightLimits, SafetyGate
+from brain.safety.profile import SafetyProfile, load_safety_profile
 
 
 _SCHEMA_PATH = (
@@ -30,6 +31,22 @@ class MissionSafetyProfile:
     max_radius_m: float
     minimum_battery_percent_to_start: float
     loss_of_link_action: str
+
+
+def load_mission_safety_profile(path: Path | str) -> MissionSafetyProfile:
+    """Load the active twin contract in the MissionSpec validation shape."""
+    return _mission_safety_profile(load_safety_profile(path))
+
+
+def _mission_safety_profile(profile: SafetyProfile) -> MissionSafetyProfile:
+    return MissionSafetyProfile(
+        vehicle_id=profile.vehicle_id,
+        max_altitude_m=profile.max_altitude_m,
+        max_speed_m_s=profile.max_speed_m_s,
+        max_radius_m=profile.max_radius_m,
+        minimum_battery_percent_to_start=profile.minimum_battery_percent_to_start,
+        loss_of_link_action=profile.loss_of_link_action,
+    )
 
 
 @dataclass(frozen=True)

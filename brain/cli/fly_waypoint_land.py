@@ -3,10 +3,12 @@
 import argparse
 import asyncio
 from collections.abc import Sequence
+from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.mission.flight import authorize_takeoff_waypoint_land
-from brain.safety.gate import FlightLimits, SafetyGate
+from brain.safety.gate import SafetyGate
+from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -16,8 +18,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--east", type=float, default=0.0, help="Waypoint east offset in metres.")
     parser.add_argument("--waypoint-altitude", type=float, default=2.0)
     parser.add_argument("--hover-seconds", type=float, default=3.0)
-    parser.add_argument("--max-altitude", type=float, default=20.0)
-    parser.add_argument("--max-distance", type=float, default=500.0)
+    parser.add_argument(
+        "--safety-profile",
+        type=Path,
+        default=DEFAULT_SAFETY_PROFILE_PATH,
+        help="Versioned vehicle twin YAML that supplies non-overridable safety limits.",
+    )
     parser.add_argument("--waypoint-timeout", type=float, default=30.0)
     parser.add_argument("--endpoint", default="udpin://0.0.0.0:14540")
     parser.add_argument("--connection-timeout", type=float, default=15.0)
@@ -27,12 +33,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 async def run(arguments: argparse.Namespace) -> None:
     from mavsdk import System
 
-    gate = SafetyGate(
-        FlightLimits(
-            max_altitude_m=arguments.max_altitude,
-            max_distance_m=arguments.max_distance,
-        )
-    )
+    profile = load_safety_profile(arguments.safety_profile)
+    gate = SafetyGate(profile.flight_limits())
     mission = authorize_takeoff_waypoint_land(
         gate,
         takeoff_altitude_m=arguments.takeoff_altitude,

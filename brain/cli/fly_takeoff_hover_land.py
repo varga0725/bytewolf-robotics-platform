@@ -3,10 +3,12 @@
 import argparse
 import asyncio
 from collections.abc import Sequence
+from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.mission.flight import authorize_takeoff_hover_land
-from brain.safety.gate import FlightLimits, SafetyGate
+from brain.safety.gate import SafetyGate
+from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -18,7 +20,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--hover-seconds", type=float, default=5.0, help="Hover duration in seconds."
     )
     parser.add_argument(
-        "--max-altitude", type=float, default=20.0, help="Safety ceiling in metres."
+        "--safety-profile",
+        type=Path,
+        default=DEFAULT_SAFETY_PROFILE_PATH,
+        help="Versioned vehicle twin YAML that supplies non-overridable safety limits.",
     )
     parser.add_argument(
         "--endpoint",
@@ -42,9 +47,8 @@ async def run(arguments: argparse.Namespace) -> None:
             "MAVSDK is not installed. Run: .venv/bin/pip install -r requirements.txt"
         ) from error
 
-    gate = SafetyGate(
-        FlightLimits(max_altitude_m=arguments.max_altitude, max_distance_m=500.0)
-    )
+    profile = load_safety_profile(arguments.safety_profile)
+    gate = SafetyGate(profile.flight_limits())
     mission = authorize_takeoff_hover_land(gate, arguments.altitude, arguments.hover_seconds)
     adapter = MavsdkMissionAdapter(System())
 
