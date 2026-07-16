@@ -32,6 +32,23 @@ class TakeoffWaypointLandMission:
 
 
 @dataclass(frozen=True)
+class TakeoffWaypointSquareLandMission:
+    """A bounded four-leg local square, with a confirmed arrival at every corner.
+
+    Each waypoint is a displacement from the vehicle's current position. This
+    matches MAVSDK's local waypoint conversion and keeps every leg's reference
+    frame explicit.
+    """
+
+    takeoff: TakeoffCommand
+    waypoints: tuple[WaypointCommand, WaypointCommand, WaypointCommand, WaypointCommand]
+    hover_duration_s: float
+    takeoff_settle_seconds: float = 4.0
+    waypoint_tolerance_m: float = 1.0
+    waypoint_timeout_s: float = 30.0
+
+
+@dataclass(frozen=True)
 class TakeoffReturnToHomeMission:
     """Take off, briefly hover, then ask PX4 to return to launch and land."""
 
@@ -85,6 +102,61 @@ def authorize_takeoff_waypoint_land(
     return TakeoffWaypointLandMission(
         takeoff=takeoff,
         waypoint=waypoint,
+        hover_duration_s=hover_duration_s,
+        waypoint_tolerance_m=waypoint_tolerance_m,
+        waypoint_timeout_s=waypoint_timeout_s,
+    )
+
+
+def authorize_takeoff_waypoint_square_land(
+    gate: SafetyGate,
+    takeoff_altitude_m: float,
+    side_length_m: float,
+    waypoint_altitude_m: float,
+    hover_duration_s: float,
+    waypoint_tolerance_m: float = 1.0,
+    waypoint_timeout_s: float = 30.0,
+) -> TakeoffWaypointSquareLandMission:
+    """Authorize all square corners before any flight operation can begin.
+
+    The final corner is the launch-relative origin, so the complete square is
+    observable in the simulator while remaining inside the same local safety
+    boundary as every other waypoint mission.
+    """
+    if not isfinite(side_length_m) or side_length_m <= 0.0:
+        raise MissionValidationError("Square side length must be a positive, finite number of metres.")
+    if not isfinite(hover_duration_s) or hover_duration_s <= 0.0:
+        raise MissionValidationError("Hover duration must be a positive, finite number of seconds.")
+    if not isfinite(waypoint_tolerance_m) or waypoint_tolerance_m <= 0.0:
+        raise MissionValidationError("Waypoint tolerance must be a positive, finite number of metres.")
+    if not isfinite(waypoint_timeout_s) or waypoint_timeout_s <= 0.0:
+        raise MissionValidationError("Waypoint timeout must be a positive, finite number of seconds.")
+
+    takeoff = TakeoffCommand(target_altitude_m=takeoff_altitude_m)
+    legs = tuple(
+        WaypointCommand(north_m=north_m, east_m=east_m, target_altitude_m=waypoint_altitude_m)
+        for north_m, east_m in (
+            (side_length_m, 0.0),
+            (0.0, side_length_m),
+            (-side_length_m, 0.0),
+            (0.0, -side_length_m),
+        )
+    )
+    # Safety limits are launch-relative, whereas execution legs are relative
+    # to the current position. Evaluate the cumulative corner coordinates
+    # before arming so that a rejected later corner blocks the whole mission.
+    absolute_corners = (
+        WaypointCommand(side_length_m, 0.0, waypoint_altitude_m),
+        WaypointCommand(side_length_m, side_length_m, waypoint_altitude_m),
+        WaypointCommand(0.0, side_length_m, waypoint_altitude_m),
+        WaypointCommand(0.0, 0.0, waypoint_altitude_m),
+    )
+    gate.evaluate(takeoff)
+    for waypoint in absolute_corners:
+        gate.evaluate(waypoint)
+    return TakeoffWaypointSquareLandMission(
+        takeoff=takeoff,
+        waypoints=(legs[0], legs[1], legs[2], legs[3]),
         hover_duration_s=hover_duration_s,
         waypoint_tolerance_m=waypoint_tolerance_m,
         waypoint_timeout_s=waypoint_timeout_s,

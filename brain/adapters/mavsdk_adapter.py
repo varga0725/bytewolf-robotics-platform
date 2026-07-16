@@ -13,6 +13,7 @@ from brain.mission.flight import (
     TakeoffHoverLandMission,
     TakeoffReturnToHomeMission,
     TakeoffWaypointLandMission,
+    TakeoffWaypointSquareLandMission,
 )
 from brain.mission.runtime_policy import RuntimePolicy, load_runtime_policy
 from brain.navigation.waypoints import (
@@ -166,6 +167,40 @@ class MavsdkMissionAdapter:
                 mission.waypoint_tolerance_m,
                 min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s),
             )
+            execution = execution.transition(MissionPhase.HOVERING)
+            await self._sleep(mission.hover_duration_s)
+        except Exception:
+            await self._fallback_land_after_airborne_failure(
+                execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
+            )
+            raise
+        return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
+
+    async def execute_waypoint_square_mission(
+        self, mission: TakeoffWaypointSquareLandMission
+    ) -> MissionExecution:
+        """Visit four pre-authorized corners sequentially, confirming each before landing.
+
+        There is intentionally no retry or skip path: any navigation or arrival
+        failure causes one bounded landing fallback and propagates the error.
+        """
+        await self._require_preflight()
+        execution = MissionExecution.empty().transition(MissionPhase.ARMING)
+        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+        airborne = False
+        try:
+            await self._drone.action.arm()
+            execution = execution.transition(MissionPhase.TAKING_OFF)
+            await self._drone.action.takeoff()
+            airborne = True
+            await self._sleep(mission.takeoff_settle_seconds)
+            execution = execution.transition(MissionPhase.NAVIGATING)
+            timeout_s = min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s)
+            for waypoint in mission.waypoints:
+                target = await self.goto_relative_waypoint(waypoint)
+                await self.wait_until_waypoint_reached(
+                    target, mission.waypoint_tolerance_m, timeout_s
+                )
             execution = execution.transition(MissionPhase.HOVERING)
             await self._sleep(mission.hover_duration_s)
         except Exception:
