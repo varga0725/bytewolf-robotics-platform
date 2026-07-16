@@ -113,7 +113,7 @@ class ScenarioRunner:
         readiness_check: ReadinessCheck | None = None,
         terminate_process_group: ProcessGroupTerminator | None = None,
         scenario_timeout_s: float = 120.0,
-        startup_wait_s: float = 20.0,
+        startup_wait_s: float = 45.0,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._command_runner = command_runner

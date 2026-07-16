@@ -112,7 +112,7 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertEqual(process_starter.call_args.args[0], runner.sitl_command)
         self.assertTrue(process_starter.call_args.kwargs["start_new_session"])
         readiness_check.assert_called_once_with(sitl_process)
-        sleep.assert_called_once_with(20.0)
+        sleep.assert_called_once_with(45.0)
         terminate_group.assert_called_once_with(90210)
 
     def test_runner_reports_readiness_failure_and_still_cleans_up_sitl(self) -> None:
