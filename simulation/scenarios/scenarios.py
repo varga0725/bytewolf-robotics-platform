@@ -53,6 +53,7 @@ class Scenario:
     fallback_expectation: str = "land-once-after-airborne-failure"
     expected_returncode: int = 0
     requires_mavsdk_server: bool = True
+    requires_fresh_sitl_lifecycle: bool = False
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,7 @@ P0_V2_SCENARIOS: tuple[Scenario, ...] = (
         version="p0.v2",
         safety_rejection="must-fail-closed-before-arm-if-prearm-is-invalid",
         fallback_expectation="no-flight-command",
+        requires_fresh_sitl_lifecycle=True,
     ),
     Scenario(
         "takeoff-2m-hover-10s-land",
@@ -139,6 +141,7 @@ P0_V2_SCENARIOS: tuple[Scenario, ...] = (
         ("--altitude", "2", "--hover-seconds", "10", "--preflight-wait-seconds", "60"),
         version="p0.v2",
         fallback_expectation="land-once-after-airborne-failure",
+        requires_fresh_sitl_lifecycle=True,
     ),
     Scenario(
         "waypoint-square-land",
@@ -157,6 +160,7 @@ P0_V2_SCENARIOS: tuple[Scenario, ...] = (
         ),
         version="p0.v2",
         fallback_expectation="confirm-four-corners-then-land-once",
+        requires_fresh_sitl_lifecycle=True,
     ),
     Scenario(
         "mission-interrupt-hold-cleanup-land",
@@ -173,6 +177,7 @@ P0_V2_SCENARIOS: tuple[Scenario, ...] = (
         ),
         version="p0.v2",
         fallback_expectation="command-hold-then-cleanup-land-once",
+        requires_fresh_sitl_lifecycle=True,
     ),
     Scenario(
         "mission-interrupt-land",
@@ -180,6 +185,7 @@ P0_V2_SCENARIOS: tuple[Scenario, ...] = (
         ("--interruption-action", "land", "--interrupt-after-seconds", "3", "--preflight-wait-seconds", "60"),
         version="p0.v2",
         fallback_expectation="command-land-once-after-interrupt",
+        requires_fresh_sitl_lifecycle=True,
     ),
     Scenario(
         "reject-geofence-violation",
@@ -233,28 +239,15 @@ class ScenarioRunner:
         run_output_directory = output_directory / "runs" / (
             f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex}"
         )
-        sitl_process: ManagedProcess | None = None
-        try:
-            sitl_process = self._start_sitl()
-            if sitl_process is not None:
-                self._sleep(self._startup_wait_s)
-            if sitl_process is not None and not self._readiness_check(sitl_process):
-                results = tuple(
-                    self._blocked_result(scenario, "SITL readiness check failed.", run_output_directory)
-                    for scenario in scenario_matrix
-                )
-            else:
-                results = tuple(
-                    self._run_scenario(scenario, run_output_directory) for scenario in scenario_matrix
-                )
-        except OSError as error:
+        if any(scenario.requires_fresh_sitl_lifecycle for scenario in scenario_matrix):
             results = tuple(
-                self._blocked_result(scenario, f"Could not start SITL: {error}.", run_output_directory)
+                self._run_with_fresh_sitl(scenario, run_output_directory)
+                if scenario.requires_fresh_sitl_lifecycle
+                else self._run_scenario(scenario, run_output_directory)
                 for scenario in scenario_matrix
             )
-        finally:
-            if sitl_process is not None:
-                self._stop_sitl(sitl_process)
+        else:
+            results = self._run_with_shared_sitl(scenario_matrix, run_output_directory)
         output_directory.mkdir(parents=True, exist_ok=True)
         report_path = output_directory / f"p0-{timestamp.strftime('%Y%m%dT%H%M%SZ')}.json"
         report_path.write_text(
@@ -270,6 +263,46 @@ class ScenarioRunner:
             encoding="utf-8",
         )
         return report_path
+
+    def _run_with_shared_sitl(
+        self, scenarios: tuple[Scenario, ...], output_directory: Path
+    ) -> tuple[ScenarioResult, ...]:
+        """Preserve the accepted P0.v1 shared-SITL execution contract."""
+        sitl_process: ManagedProcess | None = None
+        try:
+            sitl_process = self._start_sitl()
+            if sitl_process is not None:
+                self._sleep(self._startup_wait_s)
+            if sitl_process is not None and not self._readiness_check(sitl_process):
+                return tuple(
+                    self._blocked_result(scenario, "SITL readiness check failed.", output_directory)
+                    for scenario in scenarios
+                )
+            return tuple(self._run_scenario(scenario, output_directory) for scenario in scenarios)
+        except OSError as error:
+            return tuple(
+                self._blocked_result(scenario, f"Could not start SITL: {error}.", output_directory)
+                for scenario in scenarios
+            )
+        finally:
+            if sitl_process is not None:
+                self._stop_sitl(sitl_process)
+
+    def _run_with_fresh_sitl(self, scenario: Scenario, output_directory: Path) -> ScenarioResult:
+        """Run one disruptive scenario against a brand-new bounded SITL lifecycle."""
+        sitl_process: ManagedProcess | None = None
+        try:
+            sitl_process = self._start_sitl()
+            if sitl_process is not None:
+                self._sleep(self._startup_wait_s)
+            if sitl_process is not None and not self._readiness_check(sitl_process):
+                return self._blocked_result(scenario, "SITL readiness check failed.", output_directory)
+            return self._run_scenario(scenario, output_directory)
+        except OSError as error:
+            return self._blocked_result(scenario, f"Could not start SITL: {error}.", output_directory)
+        finally:
+            if sitl_process is not None:
+                self._stop_sitl(sitl_process)
 
     def run_repeated(
         self,

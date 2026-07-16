@@ -61,6 +61,14 @@ class HeadlessScenarioTests(unittest.TestCase):
         )
         self.assertEqual(geofence_scenario.module, "brain.cli.check_geofence_violation")
         self.assertEqual(geofence_scenario.fallback_expectation, "no-flight-command")
+        self.assertFalse(geofence_scenario.requires_fresh_sitl_lifecycle)
+        self.assertTrue(
+            all(
+                scenario.requires_fresh_sitl_lifecycle
+                for scenario in P0_V2_SCENARIOS
+                if scenario.requires_mavsdk_server
+            )
+        )
         self.assertTrue(all(scenario.version == "p0.v2" for scenario in P0_V2_SCENARIOS))
         self.assertEqual(
             tuple(scenario.identifier for scenario in P0_SCENARIOS),
@@ -203,6 +211,61 @@ class HeadlessScenarioTests(unittest.TestCase):
         readiness_check.assert_called_once_with(sitl_process)
         sleep.assert_called_once_with(45.0)
         terminate_process.assert_called_once_with(90210)
+
+    def test_p0_v2_runs_each_mavsdk_scenario_with_a_fresh_sitl_lifecycle(self) -> None:
+        """Disruptive P0.v2 missions must not inherit a previous vehicle state."""
+        first_process = Mock(pid=90210)
+        second_process = Mock(pid=90211)
+        process_starter = Mock(side_effect=(first_process, second_process))
+        command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
+        terminate_process = Mock()
+        scenarios = (
+            Scenario("first", "brain.cli.first", version="p0.v2", requires_fresh_sitl_lifecycle=True),
+            Scenario("local-check", "brain.cli.local", version="p0.v2", requires_mavsdk_server=False),
+            Scenario("second", "brain.cli.second", version="p0.v2", requires_fresh_sitl_lifecycle=True),
+        )
+        runner = ScenarioRunner(
+            command_runner=command_runner,
+            sitl_command=("sitl",),
+            process_starter=process_starter,
+            readiness_check=Mock(return_value=True),
+            terminate_process=terminate_process,
+            sleep=Mock(),
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            report_path = runner.run(scenarios, Path(temporary_directory))
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(process_starter.call_count, 2)
+        self.assertEqual(terminate_process.call_args_list, [((90210,),), ((90211,),)])
+        self.assertEqual(command_runner.call_count, 3)
+        self.assertEqual(report["overall_status"], "passed")
+
+    def test_p0_v2_fresh_sitl_start_failure_blocks_only_its_scenario(self) -> None:
+        """One failed disposable SITL must not hide independent scenario evidence."""
+        working_process = Mock(pid=90211)
+        process_starter = Mock(side_effect=(OSError("launcher unavailable"), OSError("launcher unavailable"), working_process))
+        command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
+        scenarios = (
+            Scenario("unavailable", "brain.cli.first", version="p0.v2", requires_fresh_sitl_lifecycle=True),
+            Scenario("available", "brain.cli.second", version="p0.v2", requires_fresh_sitl_lifecycle=True),
+        )
+        runner = ScenarioRunner(
+            command_runner=command_runner,
+            sitl_command=("sitl",),
+            process_starter=process_starter,
+            readiness_check=Mock(return_value=True),
+            terminate_process=Mock(),
+            sleep=Mock(),
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            report_path = runner.run(scenarios, Path(temporary_directory))
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual([result["status"] for result in report["results"]], ["blocked", "passed"])
+        self.assertEqual(command_runner.call_count, 1)
 
     def test_runner_reports_readiness_failure_and_still_cleans_up_sitl(self) -> None:
         sitl_process = Mock(pid=90210)
