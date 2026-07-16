@@ -139,6 +139,29 @@ P0_V2_SCENARIOS: tuple[Scenario, ...] = (
         version="p0.v2",
         fallback_expectation="land-once-after-airborne-failure",
     ),
+    Scenario(
+        "mission-interrupt-hold-cleanup-land",
+        "brain.cli.fly_controlled_interruption",
+        (
+            "--interruption-action",
+            "hold",
+            "--interrupt-after-seconds",
+            "3",
+            "--hold-cleanup-seconds",
+            "1",
+            "--preflight-wait-seconds",
+            "60",
+        ),
+        version="p0.v2",
+        fallback_expectation="command-hold-then-cleanup-land-once",
+    ),
+    Scenario(
+        "mission-interrupt-land",
+        "brain.cli.fly_controlled_interruption",
+        ("--interruption-action", "land", "--interrupt-after-seconds", "3", "--preflight-wait-seconds", "60"),
+        version="p0.v2",
+        fallback_expectation="command-land-once-after-interrupt",
+    ),
 )
 
 

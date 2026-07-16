@@ -1,6 +1,7 @@
 """Safe, high-level flight mission definitions."""
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from math import isfinite
 
 from brain.mission.commands import ReturnToHomeCommand, TakeoffCommand, WaypointCommand
@@ -11,12 +12,33 @@ class MissionValidationError(ValueError):
     """Raised when a mission contains invalid timing or unsafe commands."""
 
 
+class InterruptionAction(StrEnum):
+    """The two explicit flight-interruption actions exercised by P0.v2."""
+
+    HOLD = "hold"
+    LAND = "land"
+
+
 @dataclass(frozen=True)
 class TakeoffHoverLandMission:
     """A bounded mission that leaves all low-level control to PX4."""
 
     takeoff: TakeoffCommand
     hover_duration_s: float
+
+
+@dataclass(frozen=True)
+class TakeoffInterruptLandMission:
+    """Take off, deliberately interrupt, then guarantee a terminal landing.
+
+    A HOLD interrupt is intentionally followed by one cleanup LAND command so
+    that no P0 scenario leaves a vehicle airborne after its evidence is saved.
+    """
+
+    takeoff: TakeoffCommand
+    interrupt_after_s: float
+    interruption_action: InterruptionAction
+    hold_cleanup_s: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -72,6 +94,30 @@ def authorize_takeoff_hover_land(
     command = TakeoffCommand(target_altitude_m=target_altitude_m)
     gate.evaluate(command)
     return TakeoffHoverLandMission(takeoff=command, hover_duration_s=hover_duration_s)
+
+
+def authorize_takeoff_interrupt_land(
+    gate: SafetyGate,
+    takeoff_altitude_m: float,
+    interrupt_after_s: float,
+    interruption_action: InterruptionAction,
+    hold_cleanup_s: float = 1.0,
+) -> TakeoffInterruptLandMission:
+    """Authorize a controlled interruption that always terminates on land."""
+    if not isfinite(interrupt_after_s) or interrupt_after_s <= 0.0:
+        raise MissionValidationError("Interruption delay must be a positive, finite number of seconds.")
+    if not isfinite(hold_cleanup_s) or hold_cleanup_s < 0.0:
+        raise MissionValidationError("Hold cleanup duration must be a finite non-negative number of seconds.")
+    if not isinstance(interruption_action, InterruptionAction):
+        raise MissionValidationError("Interruption action must be HOLD or LAND.")
+    takeoff = TakeoffCommand(target_altitude_m=takeoff_altitude_m)
+    gate.evaluate(takeoff)
+    return TakeoffInterruptLandMission(
+        takeoff=takeoff,
+        interrupt_after_s=interrupt_after_s,
+        interruption_action=interruption_action,
+        hold_cleanup_s=hold_cleanup_s,
+    )
 
 
 def authorize_takeoff_waypoint_land(

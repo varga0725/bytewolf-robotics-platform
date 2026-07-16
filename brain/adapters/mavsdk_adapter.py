@@ -10,7 +10,9 @@ from brain.mission.commands import WaypointCommand
 from brain.mission.execution import MissionExecution, MissionPhase
 from brain.mission.artifacts import MissionTelemetrySnapshot
 from brain.mission.flight import (
+    InterruptionAction,
     TakeoffHoverLandMission,
+    TakeoffInterruptLandMission,
     TakeoffReturnToHomeMission,
     TakeoffWaypointLandMission,
     TakeoffWaypointSquareLandMission,
@@ -33,6 +35,7 @@ class MavsdkAction(Protocol):
     async def set_return_to_launch_altitude(self, altitude_m: float) -> None: ...
     async def arm(self) -> None: ...
     async def takeoff(self) -> None: ...
+    async def hold(self) -> None: ...
     async def land(self) -> None: ...
     async def return_to_launch(self) -> None: ...
     async def goto_location(
@@ -108,6 +111,37 @@ class MavsdkMissionAdapter:
             airborne = True
             execution = execution.transition(MissionPhase.HOVERING)
             await self._sleep(mission.hover_duration_s)
+        except Exception:
+            await self._fallback_land_after_airborne_failure(
+                execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
+            )
+            raise
+        return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
+
+    async def execute_controlled_interruption_mission(
+        self, mission: TakeoffInterruptLandMission
+    ) -> MissionExecution:
+        """Exercise an explicit HOLD or LAND interruption with a safe terminal state.
+
+        The command sequence is deliberately small and audit-visible.  HOLD is
+        not a terminal state in this harness: after its bounded observation
+        interval the adapter sends exactly one normal LAND command.
+        """
+        await self._require_preflight()
+        execution = MissionExecution.empty().transition(MissionPhase.ARMING)
+        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+        airborne = False
+        try:
+            await self._drone.action.arm()
+            execution = execution.transition(MissionPhase.TAKING_OFF)
+            await self._drone.action.takeoff()
+            airborne = True
+            execution = execution.transition(MissionPhase.HOVERING)
+            await self._sleep(mission.interrupt_after_s)
+            if mission.interruption_action is InterruptionAction.HOLD:
+                await self._drone.action.hold()
+                execution = execution.transition(MissionPhase.HOLDING)
+                await self._sleep(mission.hold_cleanup_s)
         except Exception:
             await self._fallback_land_after_airborne_failure(
                 execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
