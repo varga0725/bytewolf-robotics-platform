@@ -6,6 +6,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
+from brain.cli.artifacts import write_run_artifact
+from brain.mission.execution import MissionExecution
 from brain.mission.flight import authorize_takeoff_hover_land
 from brain.safety.gate import SafetyGate
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
@@ -36,30 +38,40 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=15.0,
         help="Maximum seconds to wait for the PX4 vehicle to be discovered.",
     )
+    parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        default=None,
+        help="Directory for the immutable mission audit artifact.",
+    )
     return parser.parse_args(arguments)
 
 
 async def run(arguments: argparse.Namespace) -> None:
+    execution = MissionExecution.empty()
     try:
-        from mavsdk import System
-    except ModuleNotFoundError as error:
-        raise RuntimeError(
-            "MAVSDK is not installed. Run: .venv/bin/pip install -r requirements.txt"
-        ) from error
+        try:
+            from mavsdk import System
+        except ModuleNotFoundError as error:
+            raise RuntimeError(
+                "MAVSDK is not installed. Run: .venv/bin/pip install -r requirements.txt"
+            ) from error
 
-    profile = load_safety_profile(arguments.safety_profile)
-    gate = SafetyGate(profile.flight_limits())
-    mission = authorize_takeoff_hover_land(gate, arguments.altitude, arguments.hover_seconds)
-    adapter = MavsdkMissionAdapter(System())
+        profile = load_safety_profile(arguments.safety_profile)
+        gate = SafetyGate(profile.flight_limits())
+        mission = authorize_takeoff_hover_land(gate, arguments.altitude, arguments.hover_seconds)
+        adapter = MavsdkMissionAdapter(System())
 
-    print(f"Connecting to PX4 at {arguments.endpoint}...")
-    await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
-    print(
-        f"Approved: take off to {mission.takeoff.target_altitude_m:g} m, "
-        f"hover for {mission.hover_duration_s:g} s, then land."
-    )
-    execution = await adapter.execute(mission)
-    print("Mission completed: " + " -> ".join(event.phase.value for event in execution.events))
+        print(f"Connecting to PX4 at {arguments.endpoint}...")
+        await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
+        print(
+            f"Approved: take off to {mission.takeoff.target_altitude_m:g} m, "
+            f"hover for {mission.hover_duration_s:g} s, then land."
+        )
+        execution = await adapter.execute(mission)
+        print("Mission completed: " + " -> ".join(event.phase.value for event in execution.events))
+    finally:
+        write_run_artifact(getattr(arguments, "artifact_dir", None), execution)
 
 
 def main(arguments: Sequence[str] | None = None) -> None:
