@@ -7,6 +7,7 @@ from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.cli.artifacts import write_run_artifact
+from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
 from brain.mission.execution import MissionExecution
 from brain.mission.flight import authorize_takeoff_return_to_home
 from brain.safety.gate import SafetyGate
@@ -77,6 +78,7 @@ async def run(arguments: argparse.Namespace) -> None:
         failure_reason = f"{type(error).__name__}: {error}"
         raise
     finally:
+        stop_owned_mavsdk_server(system)
         write_run_artifact(
             getattr(arguments, "artifact_dir", None),
             execution,

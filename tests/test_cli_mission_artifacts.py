@@ -51,6 +51,7 @@ class CliMissionArtifactTests(unittest.TestCase):
                 artifact_paths = list(Path(directory).glob("*.json"))
                 self.assertEqual(len(artifact_paths), 1)
                 artifact = json.loads(artifact_paths[0].read_text(encoding="utf-8"))
+                mavsdk.System.return_value._stop_mavsdk_server.assert_called_once()
                 UUID(artifact["run_id"])
                 self.assertEqual(artifact["version"], "v0.2")
                 self.assertEqual(artifact["events"][0]["phase"], "arming")
