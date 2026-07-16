@@ -48,6 +48,22 @@ These tests use fake MAVSDK/PX4 collaborators; they do not launch or validate
 PX4 SITL and Gazebo. Run the mission commands below separately against a
 running simulator for manual integration verification.
 
+## Run the headless P0 scenario matrix
+
+The headless runner starts an isolated PX4/Gazebo instance, executes the three
+nominal missions and an expected safety-rejection scenario, then tears down all
+processes. Every scenario is assigned a dedicated artifact directory, recorded
+in the JSON report.
+
+```zsh
+.venv/bin/python -m simulation.headless.scenarios
+```
+
+The unsafe-altitude scenario is a passing test only when the CLI rejects it
+before a PX4 flight command. The nominal scenarios remain the inputs for the
+9/10 repeatability gate; run the matrix repeatedly and retain its reports before
+declaring that gate complete.
+
 ## Run the first flight mission
 
 In a second terminal, while the PX4/Gazebo simulator is running, run the

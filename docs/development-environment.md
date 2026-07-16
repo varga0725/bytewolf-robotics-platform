@@ -71,3 +71,16 @@ safety-döntést, a végkimenetelt, az esetleges hibaokot, az állapotátmenetek
 az arm előtti navigation/home/global-position/battery telemetria-snapshotot
 tartalmazza. Tesztfutáshoz adj meg külön könyvtárat, például
 `--artifact-dir simulation/artifacts/manual`.
+
+## Headless P0 regressziós mátrix
+
+```zsh
+.venv/bin/python -m simulation.headless.scenarios
+```
+
+A runner izolált PX4/Gazebo process groupot indít, lefuttatja a takeoff-hover-
+land, waypoint és RTL scenario-t, valamint a tiltott magasság elutasítását.
+Minden scenario saját `mission-artifacts/<scenario>` könyvtárat kap; az útvonal
+a `simulation/artifacts/headless/p0-*.json` riportban is szerepel. A timeoutolt
+folyamatcsoport garantáltan leáll. A 9/10 ismételhetőségi méréshez több, megőrzött
+riport szükséges; ez külön elfogadási mérés, nem az egyszeri runner smoke test.

@@ -48,6 +48,7 @@ class Scenario:
     readiness_requirements: tuple[str, ...] = ("mavsdk-connected", "telemetry-healthy")
     safety_rejection: str | None = "must-not-bypass-safety-gate"
     fallback_expectation: str = "land-once-after-airborne-failure"
+    expected_returncode: int = 0
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,8 @@ class ScenarioResult:
     readiness_requirements: tuple[str, ...]
     safety_rejection: str | None
     fallback_expectation: str
+    expected_returncode: int
+    artifact_directory: str
 
 
 P0_SCENARIOS: tuple[Scenario, ...] = (
@@ -83,6 +86,14 @@ P0_SCENARIOS: tuple[Scenario, ...] = (
         "return-to-home",
         "brain.cli.fly_return_to_home",
         fallback_expectation="px4-rtl-then-land-once-on-failure",
+    ),
+    Scenario(
+        "reject-unsafe-altitude",
+        "brain.cli.fly_takeoff_hover_land",
+        ("--altitude", "21"),
+        safety_rejection="must-reject-over-max-altitude",
+        fallback_expectation="no-flight-command",
+        expected_returncode=1,
     ),
 )
 
@@ -127,11 +138,19 @@ class ScenarioRunner:
             if sitl_process is not None:
                 self._sleep(self._startup_wait_s)
             if sitl_process is not None and not self._readiness_check(sitl_process):
-                results = tuple(self._blocked_result(scenario, "SITL readiness check failed.") for scenario in scenario_matrix)
+                results = tuple(
+                    self._blocked_result(scenario, "SITL readiness check failed.", output_directory)
+                    for scenario in scenario_matrix
+                )
             else:
-                results = tuple(self._run_scenario(scenario) for scenario in scenario_matrix)
+                results = tuple(
+                    self._run_scenario(scenario, output_directory) for scenario in scenario_matrix
+                )
         except OSError as error:
-            results = tuple(self._blocked_result(scenario, f"Could not start SITL: {error}.") for scenario in scenario_matrix)
+            results = tuple(
+                self._blocked_result(scenario, f"Could not start SITL: {error}.", output_directory)
+                for scenario in scenario_matrix
+            )
         finally:
             if sitl_process is not None:
                 self._stop_sitl(sitl_process)
@@ -151,10 +170,18 @@ class ScenarioRunner:
         )
         return report_path
 
-    def _run_scenario(self, scenario: Scenario) -> ScenarioResult:
-        command = (self._python_executable, "-m", scenario.module, *scenario.arguments)
+    def _run_scenario(self, scenario: Scenario, output_directory: Path) -> ScenarioResult:
+        artifact_directory = self._artifact_directory(output_directory, scenario)
+        command = (
+            self._python_executable,
+            "-m",
+            scenario.module,
+            *scenario.arguments,
+            "--artifact-dir",
+            str(artifact_directory),
+        )
         if self._uses_default_command_runner:
-            return self._run_isolated_scenario(scenario, command)
+            return self._run_isolated_scenario(scenario, command, artifact_directory)
         try:
             completed = self._command_runner(
                 command,
@@ -168,12 +195,14 @@ class ScenarioRunner:
             stdout = error.stdout.decode() if isinstance(error.stdout, bytes) else error.stdout or ""
             stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else error.stderr or ""
             return self._result_from_process(
-                scenario, command, -1, stdout, f"{stderr}\nScenario timeout after {self._scenario_timeout_s:g}s.", "failed"
+                scenario, command, -1, stdout, f"{stderr}\nScenario timeout after {self._scenario_timeout_s:g}s.", artifact_directory, "failed"
             )
-        return self._result_from_process(scenario, command, completed.returncode, completed.stdout, completed.stderr)
+        return self._result_from_process(
+            scenario, command, completed.returncode, completed.stdout, completed.stderr, artifact_directory
+        )
 
     def _run_isolated_scenario(
-        self, scenario: Scenario, command: tuple[str, ...]
+        self, scenario: Scenario, command: tuple[str, ...], artifact_directory: Path
     ) -> ScenarioResult:
         """Run a mission in its own process group so a timeout cannot leak MAVSDK children."""
         process = subprocess.Popen(
@@ -194,9 +223,11 @@ class ScenarioRunner:
                 os.killpg(process.pid, signal.SIGKILL)
                 stdout, stderr = process.communicate()
             return self._result_from_process(
-                scenario, command, -1, stdout or "", f"{stderr or ''}\nScenario timeout after {self._scenario_timeout_s:g}s.", "failed"
+                scenario, command, -1, stdout or "", f"{stderr or ''}\nScenario timeout after {self._scenario_timeout_s:g}s.", artifact_directory, "failed"
             )
-        return self._result_from_process(scenario, command, process.returncode, stdout, stderr)
+        return self._result_from_process(
+            scenario, command, process.returncode, stdout, stderr, artifact_directory
+        )
 
     def _start_sitl(self) -> ManagedProcess | None:
         if self.sitl_command is None:
@@ -219,9 +250,16 @@ class ScenarioRunner:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5.0)
 
-    def _blocked_result(self, scenario: Scenario, reason: str) -> ScenarioResult:
+    def _blocked_result(self, scenario: Scenario, reason: str, output_directory: Path) -> ScenarioResult:
+        artifact_directory = self._artifact_directory(output_directory, scenario)
         command = (self._python_executable, "-m", scenario.module, *scenario.arguments)
-        return self._result_from_process(scenario, command, -1, "", reason, status="blocked")
+        return self._result_from_process(
+            scenario, command, -1, "", reason, artifact_directory, status="blocked"
+        )
+
+    @staticmethod
+    def _artifact_directory(output_directory: Path, scenario: Scenario) -> Path:
+        return output_directory / "mission-artifacts" / scenario.identifier
 
     @staticmethod
     def _result_from_process(
@@ -230,13 +268,14 @@ class ScenarioRunner:
         returncode: int,
         stdout: str,
         stderr: str,
+        artifact_directory: Path,
         status: str | None = None,
     ) -> ScenarioResult:
         return ScenarioResult(
             identifier=scenario.identifier,
             module=scenario.module,
             command=command,
-            status=status or ("passed" if returncode == 0 else "failed"),
+            status=status or ("passed" if returncode == scenario.expected_returncode else "failed"),
             returncode=returncode,
             stdout=stdout,
             stderr=stderr,
@@ -244,6 +283,8 @@ class ScenarioRunner:
             readiness_requirements=scenario.readiness_requirements,
             safety_rejection=scenario.safety_rejection,
             fallback_expectation=scenario.fallback_expectation,
+            expected_returncode=scenario.expected_returncode,
+            artifact_directory=str(artifact_directory),
         )
 
 

@@ -16,13 +16,14 @@ class HeadlessScenarioTests(unittest.TestCase):
     def test_p0_matrix_covers_the_bounded_flight_commands(self) -> None:
         self.assertEqual(
             tuple(scenario.identifier for scenario in P0_SCENARIOS),
-            ("takeoff-hover-land", "waypoint-land", "return-to-home"),
+            ("takeoff-hover-land", "waypoint-land", "return-to-home", "reject-unsafe-altitude"),
         )
         self.assertTrue(all(scenario.module.startswith("brain.cli.") for scenario in P0_SCENARIOS))
         self.assertTrue(all(scenario.version == "p0.v1" for scenario in P0_SCENARIOS))
         self.assertTrue(all(scenario.readiness_requirements for scenario in P0_SCENARIOS))
         self.assertTrue(all(scenario.safety_rejection is not None for scenario in P0_SCENARIOS))
         self.assertTrue(all(scenario.fallback_expectation for scenario in P0_SCENARIOS))
+        self.assertEqual(P0_SCENARIOS[-1].expected_returncode, 1)
 
     def test_runner_records_each_scenario_and_writes_a_json_report(self) -> None:
         completed = Mock(return_value=Mock(returncode=0, stdout="mission complete\n", stderr=""))
@@ -42,6 +43,29 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertIn('"status": "passed"', report)
         self.assertIn('"takeoff-hover-land"', report)
         self.assertIn("mission complete", report)
+
+    def test_runner_passes_a_expected_safety_rejection_and_assigns_artifact_directory(self) -> None:
+        scenario = Scenario(
+            "reject-unsafe-altitude",
+            "brain.cli.fly_takeoff_hover_land",
+            ("--altitude", "21"),
+            safety_rejection="must-reject-over-max-altitude",
+            fallback_expectation="no-flight-command",
+            expected_returncode=1,
+        )
+        completed = Mock(return_value=Mock(returncode=1, stdout="", stderr="mission rejected"))
+
+        with TemporaryDirectory() as temporary_directory:
+            report_path = ScenarioRunner(command_runner=completed).run(
+                (scenario,), Path(temporary_directory)
+            )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        result = report["results"][0]
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["expected_returncode"], 1)
+        self.assertTrue(result["artifact_directory"].endswith("mission-artifacts/reject-unsafe-altitude"))
+        self.assertIn("--artifact-dir", completed.call_args.args[0])
 
     def test_runner_includes_versioned_safety_metadata_in_json_report(self) -> None:
         scenario = Scenario(
@@ -101,6 +125,7 @@ class HeadlessScenarioTests(unittest.TestCase):
             process_starter=Mock(return_value=sitl_process),
             readiness_check=Mock(return_value=False),
             terminate_process_group=terminate_group,
+            sleep=Mock(),
         )
 
         with TemporaryDirectory() as temporary_directory:
