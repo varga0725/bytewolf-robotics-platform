@@ -30,6 +30,59 @@ def _mission() -> SimpleNamespace:
 
 
 class CliMissionArtifactTests(unittest.TestCase):
+    def test_takeoff_cli_relays_dashboard_telemetry_on_its_existing_system_connection(self) -> None:
+        execution = MissionExecution.empty().transition(MissionPhase.ARMING)
+        relay = MagicMock()
+        relay.run = AsyncMock()
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "live-telemetry.json"
+            arguments = fly_takeoff_hover_land.parse_arguments(
+                ("--dashboard-snapshot", str(snapshot), "--mavsdk-server-port", "51001")
+            )
+            mavsdk = ModuleType("mavsdk")
+            mavsdk.System = MagicMock()  # type: ignore[attr-defined]
+            adapter = MagicMock()
+            adapter.connect = AsyncMock()
+            adapter.execute = AsyncMock(return_value=execution)
+            with (
+                patch.dict(sys.modules, {"mavsdk": mavsdk}),
+                patch.object(fly_takeoff_hover_land, "load_safety_profile", return_value=MagicMock()),
+                patch.object(fly_takeoff_hover_land, "authorize_takeoff_hover_land", return_value=_mission()),
+                patch.object(fly_takeoff_hover_land, "MavsdkMissionAdapter", return_value=adapter),
+                patch.object(fly_takeoff_hover_land, "MavsdkTelemetryRelay", return_value=relay) as relay_factory,
+            ):
+                asyncio.run(fly_takeoff_hover_land.run(arguments))
+
+        system = mavsdk.System.return_value
+        relay_factory.assert_called_once_with(system, snapshot)
+        relay.run.assert_awaited_once()
+        mavsdk.System.assert_called_once_with(port=51001)
+        system._stop_mavsdk_server.assert_called_once()
+
+    def test_dashboard_relay_failure_does_not_change_the_mission_outcome(self) -> None:
+        execution = MissionExecution.empty().transition(MissionPhase.ARMING)
+        relay = MagicMock()
+        relay.run = AsyncMock(side_effect=RuntimeError("dashboard unavailable"))
+        with tempfile.TemporaryDirectory() as directory:
+            arguments = fly_takeoff_hover_land.parse_arguments(
+                ("--dashboard-snapshot", str(Path(directory) / "live.json"),)
+            )
+            mavsdk = ModuleType("mavsdk")
+            mavsdk.System = MagicMock()  # type: ignore[attr-defined]
+            adapter = MagicMock()
+            adapter.connect = AsyncMock()
+            adapter.execute = AsyncMock(return_value=execution)
+            with (
+                patch.dict(sys.modules, {"mavsdk": mavsdk}),
+                patch.object(fly_takeoff_hover_land, "load_safety_profile", return_value=MagicMock()),
+                patch.object(fly_takeoff_hover_land, "authorize_takeoff_hover_land", return_value=_mission()),
+                patch.object(fly_takeoff_hover_land, "MavsdkMissionAdapter", return_value=adapter),
+                patch.object(fly_takeoff_hover_land, "MavsdkTelemetryRelay", return_value=relay),
+            ):
+                asyncio.run(fly_takeoff_hover_land.run(arguments))
+
+        adapter.execute.assert_awaited_once()
+
     def test_each_cli_writes_one_versioned_artifact_after_a_successful_mission(self) -> None:
         execution = MissionExecution.empty().transition(MissionPhase.ARMING)
         for module, authorizer_name, executor_name in CLI_CASES:

@@ -12,6 +12,7 @@ from brain.mission.execution import MissionExecution
 from brain.mission.flight import authorize_takeoff_hover_land
 from brain.safety.gate import SafetyGate
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
+from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -52,6 +53,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=None,
         help="Directory for the immutable mission audit artifact.",
     )
+    parser.add_argument(
+        "--dashboard-snapshot",
+        type=Path,
+        default=None,
+        help="Optional read-only telemetry JSON snapshot, updated during this mission.",
+    )
     return parser.parse_args(arguments)
 
 
@@ -62,6 +69,8 @@ async def run(arguments: argparse.Namespace) -> None:
     safety_decision = "not-evaluated"
     outcome = "failed"
     failure_reason: str | None = None
+    dashboard_stop_event: asyncio.Event | None = None
+    dashboard_relay_task: asyncio.Task[None] | None = None
     try:
         try:
             from mavsdk import System
@@ -79,6 +88,10 @@ async def run(arguments: argparse.Namespace) -> None:
 
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
+        if arguments.dashboard_snapshot is not None:
+            dashboard_stop_event = asyncio.Event()
+            relay = MavsdkTelemetryRelay(system, arguments.dashboard_snapshot)
+            dashboard_relay_task = asyncio.create_task(relay.run(dashboard_stop_event))
         print(
             f"Approved: take off to {mission.takeoff.target_altitude_m:g} m, "
             f"hover for {mission.hover_duration_s:g} s, then land."
@@ -92,6 +105,13 @@ async def run(arguments: argparse.Namespace) -> None:
         failure_reason = f"{type(error).__name__}: {error}"
         raise
     finally:
+        if dashboard_stop_event is not None:
+            dashboard_stop_event.set()
+        if dashboard_relay_task is not None:
+            try:
+                await dashboard_relay_task
+            except Exception as error:
+                print(f"Dashboard telemetry relay stopped: {type(error).__name__}: {error}")
         stop_owned_mavsdk_server(system)
         write_run_artifact(
             getattr(arguments, "artifact_dir", None),
