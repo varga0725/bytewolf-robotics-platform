@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.example/interfaces/ros2-telemetry/telemetry-bridge-v0.1",
+  "title": "ByteWolf ROS 2 Telemetry Bridge Contract v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "namespace", "vehicle_id", "topics"],
+  "properties": {
+    "version": {"const": "v0.1"},
+    "namespace": {"type": "string", "pattern": "^/bytewolf/[a-z0-9_-]+$"},
+    "vehicle_id": {"type": "string", "minLength": 1},
+    "topics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "message_type", "source", "qos_profile"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^/bytewolf/[a-z0-9_-]+/telemetry/[a-z0-9_]+$"},
+          "message_type": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_/]*$"},
+          "source": {"type": "string", "minLength": 1},
+          "qos_profile": {"enum": ["sensor_data", "reliable_status"]}
+        }
+      }
+    }
+  }
+}
