@@ -1,7 +1,8 @@
 """MAVSDK adapter for executing an approved, bounded mission on PX4."""
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from math import isfinite
 from typing import Protocol
 
 from brain.mission.commands import WaypointCommand
@@ -17,6 +18,11 @@ from brain.navigation.waypoints import (
     horizontal_distance_m,
     relative_waypoint_to_global,
 )
+from brain.safety.profile import SafetyProfile, load_safety_profile
+
+
+class MissionPreflightError(RuntimeError):
+    """Raised when required PX4 telemetry cannot authorize a mission start."""
 
 
 class MavsdkAction(Protocol):
@@ -38,6 +44,9 @@ class MavsdkCore(Protocol):
 class MavsdkTelemetry(Protocol):
     def position(self): ...
     def in_air(self): ...
+    def health_all_ok(self): ...
+    def home(self): ...
+    def battery(self): ...
 
 
 class MavsdkDrone(Protocol):
@@ -55,10 +64,12 @@ class MavsdkMissionAdapter:
         drone: MavsdkDrone,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         runtime_policy: RuntimePolicy | None = None,
+        safety_profile: SafetyProfile | None = None,
     ) -> None:
         self._drone = drone
         self._sleep = sleep
         self._runtime_policy = runtime_policy or load_runtime_policy()
+        self._safety_profile = safety_profile or load_safety_profile()
 
     async def connect(self, system_address: str) -> None:
         await self._drone.connect(system_address=system_address)
@@ -68,6 +79,7 @@ class MavsdkMissionAdapter:
 
     async def execute(self, mission: TakeoffHoverLandMission) -> MissionExecution:
         """Execute takeoff-hover-land and confirm the normal landing by telemetry."""
+        await self._require_preflight()
         execution = MissionExecution.empty().transition(MissionPhase.ARMING)
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
@@ -118,6 +130,7 @@ class MavsdkMissionAdapter:
         self, mission: TakeoffWaypointLandMission
     ) -> MissionExecution:
         """Take off, visit one waypoint, then land with telemetry confirmation."""
+        await self._require_preflight()
         execution = MissionExecution.empty().transition(MissionPhase.ARMING)
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
@@ -161,6 +174,7 @@ class MavsdkMissionAdapter:
         self, mission: TakeoffReturnToHomeMission
     ) -> MissionExecution:
         """Delegate return-and-land to PX4; use one land fallback only on failure."""
+        await self._require_preflight()
         execution = MissionExecution.empty().transition(MissionPhase.ARMING)
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         await self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m)
@@ -186,6 +200,64 @@ class MavsdkMissionAdapter:
             )
             raise
         return execution.transition(MissionPhase.COMPLETED)
+
+    async def _require_preflight(self) -> None:
+        """Verify PX4 telemetry before issuing any configuration or flight command."""
+        health_all_ok = await self._first_telemetry_sample(
+            self._drone.telemetry.health_all_ok(), "health"
+        )
+        if not health_all_ok:
+            raise MissionPreflightError("Preflight rejected: vehicle health is not OK.")
+
+        home = await self._first_telemetry_sample(self._drone.telemetry.home(), "home")
+        self._require_global_position(home, "home")
+
+        position = await self._first_telemetry_sample(
+            self._drone.telemetry.position(), "global position"
+        )
+        self._require_global_position(position, "global position")
+
+        battery = await self._first_telemetry_sample(self._drone.telemetry.battery(), "battery")
+        remaining_percent = self._battery_percent(battery)
+        if remaining_percent < self._safety_profile.minimum_battery_percent_to_start:
+            required = self._safety_profile.minimum_battery_percent_to_start
+            raise MissionPreflightError(
+                f"Preflight rejected: battery is {remaining_percent:.1f}%, below the required {required:.1f}%."
+            )
+
+    @staticmethod
+    async def _first_telemetry_sample(stream: AsyncIterator[object], label: str) -> object:
+        try:
+            return await anext(stream)
+        except StopAsyncIteration as error:
+            raise MissionPreflightError(
+                f"Preflight rejected: {label} telemetry is unavailable."
+            ) from error
+
+    @staticmethod
+    def _require_global_position(position: object, label: str) -> None:
+        try:
+            latitude = float(getattr(position, "latitude_deg"))
+            longitude = float(getattr(position, "longitude_deg"))
+            altitude = float(getattr(position, "absolute_altitude_m"))
+        except (AttributeError, TypeError, ValueError) as error:
+            raise MissionPreflightError(f"Preflight rejected: {label} telemetry is unavailable.") from error
+        if (
+            not all(isfinite(value) for value in (latitude, longitude, altitude))
+            or not -90.0 <= latitude <= 90.0
+            or not -180.0 <= longitude <= 180.0
+        ):
+            raise MissionPreflightError(f"Preflight rejected: {label} telemetry is invalid.")
+
+    @staticmethod
+    def _battery_percent(battery: object) -> float:
+        try:
+            remaining = float(getattr(battery, "remaining_percent"))
+        except (AttributeError, TypeError, ValueError) as error:
+            raise MissionPreflightError("Preflight rejected: battery telemetry is unavailable.") from error
+        if not isfinite(remaining) or not 0.0 <= remaining <= 1.0:
+            raise MissionPreflightError("Preflight rejected: battery telemetry is invalid.")
+        return remaining * 100.0
 
     async def _normal_land(
         self, execution: MissionExecution, confirmation_timeout_s: float

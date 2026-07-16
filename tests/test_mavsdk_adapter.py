@@ -1,7 +1,8 @@
 import asyncio
 import unittest
 
-from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
+from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter, MissionPreflightError
+from brain.safety.profile import SafetyProfile
 from brain.mission.runtime_policy import RuntimePolicy
 from brain.mission.commands import TakeoffCommand, WaypointCommand
 from brain.mission.execution import MissionPhase
@@ -61,7 +62,7 @@ class FakeTelemetry:
 
     async def position(self):
         self._calls += 1
-        if self._calls == 1:
+        if self._calls <= 2:
             yield Position()
         else:
             yield Position(latitude=47.5000449)
@@ -69,6 +70,20 @@ class FakeTelemetry:
     async def in_air(self):
         yield True
         yield False
+
+    async def health_all_ok(self):
+        yield True
+
+    async def home(self):
+        yield Position()
+
+    async def battery(self):
+        yield Battery(remaining_percent=0.75)
+
+
+class Battery:
+    def __init__(self, remaining_percent: float) -> None:
+        self.remaining_percent = remaining_percent
 
 
 class FakeDrone:
@@ -107,7 +122,76 @@ class FailingWaypointDrone(FakeDrone):
         self.action = FailingWaypointAction(self.events)
 
 
+class UnhealthyTelemetry(FakeTelemetry):
+    async def health_all_ok(self):
+        yield False
+
+
+class UnhealthyDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = UnhealthyTelemetry()
+
+
+class MissingHomeTelemetry(FakeTelemetry):
+    async def home(self):
+        if False:
+            yield Position()
+
+
+class MissingHomeDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = MissingHomeTelemetry()
+
+
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rejects_unhealthy_vehicle_before_any_action(self) -> None:
+        drone = UnhealthyDrone()
+        adapter = MavsdkMissionAdapter(drone)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        with self.assertRaisesRegex(MissionPreflightError, "health"):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events, [])
+
+    async def test_rejects_battery_below_the_safety_profile_before_any_action(self) -> None:
+        drone = FakeDrone()
+        profile = SafetyProfile(
+            vehicle_id="test",
+            max_altitude_m=20.0,
+            max_speed_m_s=3.0,
+            max_radius_m=50.0,
+            minimum_battery_percent_to_start=80.0,
+            loss_of_link_action="RTL",
+        )
+        adapter = MavsdkMissionAdapter(drone, safety_profile=profile)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        with self.assertRaisesRegex(MissionPreflightError, "battery"):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events, [])
+
+    async def test_rejects_when_home_telemetry_is_unavailable_before_any_action(self) -> None:
+        drone = MissingHomeDrone()
+        adapter = MavsdkMissionAdapter(drone)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        with self.assertRaisesRegex(MissionPreflightError, "home"):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events, [])
+
+    async def test_runs_telemetry_preflight_before_the_first_action(self) -> None:
+        drone = FakeDrone()
+        adapter = MavsdkMissionAdapter(drone)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        await adapter.execute(mission)
+
+        self.assertEqual(drone.events[0], ("set_takeoff_altitude", 2.0))
     async def test_connects_before_executing_the_expected_command_sequence(self) -> None:
         drone = FakeDrone()
 
