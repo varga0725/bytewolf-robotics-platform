@@ -296,9 +296,15 @@ class ScenarioRunner:
             stderr=subprocess.PIPE,
             text=True,
         )
-        try:
-            stdout, stderr = process.communicate(timeout=self._scenario_timeout_s)
-        except subprocess.TimeoutExpired:
+        deadline = time.monotonic() + self._scenario_timeout_s
+        while process.poll() is None and time.monotonic() < deadline:
+            artifact = _latest_artifact(artifact_directory)
+            if artifact is not None:
+                os.killpg(process.pid, signal.SIGTERM)
+                stdout, stderr = process.communicate(timeout=5.0)
+                return self._result_from_artifact(scenario, command, stdout, stderr, artifact_directory, artifact)
+            time.sleep(0.1)
+        if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)
             try:
                 stdout, stderr = process.communicate(timeout=5.0)
@@ -308,8 +314,24 @@ class ScenarioRunner:
             return self._result_from_process(
                 scenario, command, -1, stdout or "", f"{stderr or ''}\nScenario timeout after {self._scenario_timeout_s:g}s.", artifact_directory, "failed"
             )
+        stdout, stderr = process.communicate()
         return self._result_from_process(
             scenario, command, process.returncode, stdout, stderr, artifact_directory
+        )
+
+    @staticmethod
+    def _result_from_artifact(
+        scenario: Scenario,
+        command: tuple[str, ...],
+        stdout: str,
+        stderr: str,
+        artifact_directory: Path,
+        artifact: Path,
+    ) -> ScenarioResult:
+        document = json.loads(artifact.read_text(encoding="utf-8"))
+        inferred_returncode = 0 if document["outcome"] == "completed" else 1
+        return ScenarioRunner._result_from_process(
+            scenario, command, inferred_returncode, stdout, stderr, artifact_directory
         )
 
     def _start_sitl(self) -> ManagedProcess | None:
@@ -379,6 +401,12 @@ def _process_started(process: ManagedProcess) -> bool:
 def _terminate_process_group(process_group_id: int) -> None:
     """Stop the isolated SITL session rather than only its shell wrapper."""
     os.killpg(process_group_id, signal.SIGTERM)
+
+
+def _latest_artifact(directory: Path) -> Path | None:
+    """Return the only immutable artifact expected for a bounded CLI invocation."""
+    artifacts = tuple(directory.glob("*.json")) if directory.exists() else ()
+    return artifacts[0] if len(artifacts) == 1 else None
 
 
 def parse_arguments(arguments: Iterable[str] | None = None) -> argparse.Namespace:
