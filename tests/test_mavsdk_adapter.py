@@ -71,8 +71,8 @@ class FakeTelemetry:
         yield True
         yield False
 
-    async def health_all_ok(self):
-        yield True
+    async def health(self):
+        yield Health(global_position_ok=True, home_position_ok=True)
 
     async def home(self):
         yield Position()
@@ -84,6 +84,12 @@ class FakeTelemetry:
 class Battery:
     def __init__(self, remaining_percent: float) -> None:
         self.remaining_percent = remaining_percent
+
+
+class Health:
+    def __init__(self, global_position_ok: bool, home_position_ok: bool) -> None:
+        self.is_global_position_ok = global_position_ok
+        self.is_home_position_ok = home_position_ok
 
 
 class FakeDrone:
@@ -123,8 +129,8 @@ class FailingWaypointDrone(FakeDrone):
 
 
 class UnhealthyTelemetry(FakeTelemetry):
-    async def health_all_ok(self):
-        yield False
+    async def health(self):
+        yield Health(global_position_ok=False, home_position_ok=True)
 
 
 class UnhealthyDrone(FakeDrone):

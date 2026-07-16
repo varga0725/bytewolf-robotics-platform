@@ -29,6 +29,7 @@ class SafetyProfile:
     max_radius_m: float
     minimum_battery_percent_to_start: float
     loss_of_link_action: str
+    allow_missing_battery_telemetry: bool = False
 
     def flight_limits(self) -> FlightLimits:
         return FlightLimits(
@@ -51,6 +52,10 @@ def load_safety_profile(path: Path | str = DEFAULT_SAFETY_PROFILE_PATH) -> Safet
         raise SafetyProfileError("Safety profile root must be a mapping.")
     vehicle = _required_mapping(source, "vehicle")
     safety = _required_mapping(source, "safety")
+    simulation_value = source.get("simulation", {})
+    if not isinstance(simulation_value, Mapping):
+        raise SafetyProfileError("Safety profile field 'simulation' must be a mapping.")
+    simulation = simulation_value
     return SafetyProfile(
         vehicle_id=_required_string(vehicle, "id"),
         max_altitude_m=_required_positive_number(safety, "max_altitude_m"),
@@ -60,6 +65,9 @@ def load_safety_profile(path: Path | str = DEFAULT_SAFETY_PROFILE_PATH) -> Safet
             safety, "minimum_battery_percent_to_start"
         ),
         loss_of_link_action=_required_string(safety, "loss_of_link_action"),
+        allow_missing_battery_telemetry=_optional_boolean(
+            simulation, "allow_missing_battery_telemetry", default=False
+        ),
     )
 
 
@@ -91,4 +99,11 @@ def _required_percent(source: Mapping[str, Any], field: str) -> float:
     value = _required_positive_number(source, field)
     if value > 100.0:
         raise SafetyProfileError(f"Safety profile field '{field}' must not exceed 100.")
+    return value
+
+
+def _optional_boolean(source: Mapping[str, Any], field: str, default: bool) -> bool:
+    value = source.get(field, default)
+    if not isinstance(value, bool):
+        raise SafetyProfileError(f"Safety profile field '{field}' must be a boolean.")
     return value

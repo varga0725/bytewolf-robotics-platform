@@ -60,7 +60,7 @@ async def run(arguments: argparse.Namespace) -> None:
         profile = load_safety_profile(arguments.safety_profile)
         gate = SafetyGate(profile.flight_limits())
         mission = authorize_takeoff_hover_land(gate, arguments.altitude, arguments.hover_seconds)
-        adapter = MavsdkMissionAdapter(System())
+        adapter = MavsdkMissionAdapter(System(), safety_profile=profile)
 
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)

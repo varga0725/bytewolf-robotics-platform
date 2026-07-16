@@ -53,7 +53,7 @@ async def run(arguments: argparse.Namespace) -> None:
             hover_duration_s=arguments.hover_seconds,
             landing_timeout_s=arguments.landing_timeout,
         )
-        adapter = MavsdkMissionAdapter(System())
+        adapter = MavsdkMissionAdapter(System(), safety_profile=profile)
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         print(

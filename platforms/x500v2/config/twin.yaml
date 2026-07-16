@@ -42,6 +42,9 @@ simulation:
   px4_version: v1.17.0
   gazebo_distribution: harmonic
   default_world: default
+  # PX4 SITL may expose an unknown battery percentage before an energy model is added.
+  # Physical-flight profiles must set this to false.
+  allow_missing_battery_telemetry: true
   profiles:
     base: gz_x500
     vision: gz_x500_vision

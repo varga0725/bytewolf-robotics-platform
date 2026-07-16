@@ -44,7 +44,7 @@ class MavsdkCore(Protocol):
 class MavsdkTelemetry(Protocol):
     def position(self): ...
     def in_air(self): ...
-    def health_all_ok(self): ...
+    def health(self): ...
     def home(self): ...
     def battery(self): ...
 
@@ -203,11 +203,11 @@ class MavsdkMissionAdapter:
 
     async def _require_preflight(self) -> None:
         """Verify PX4 telemetry before issuing any configuration or flight command."""
-        health_all_ok = await self._first_telemetry_sample(
-            self._drone.telemetry.health_all_ok(), "health"
-        )
-        if not health_all_ok:
-            raise MissionPreflightError("Preflight rejected: vehicle health is not OK.")
+        health = await self._first_telemetry_sample(self._drone.telemetry.health(), "health")
+        if not self._has_required_navigation_health(health):
+            raise MissionPreflightError(
+                "Preflight rejected: health indicates global position or home position is not ready."
+            )
 
         home = await self._first_telemetry_sample(self._drone.telemetry.home(), "home")
         self._require_global_position(home, "home")
@@ -218,7 +218,12 @@ class MavsdkMissionAdapter:
         self._require_global_position(position, "global position")
 
         battery = await self._first_telemetry_sample(self._drone.telemetry.battery(), "battery")
-        remaining_percent = self._battery_percent(battery)
+        try:
+            remaining_percent = self._battery_percent(battery)
+        except MissionPreflightError:
+            if self._safety_profile.allow_missing_battery_telemetry:
+                return
+            raise
         if remaining_percent < self._safety_profile.minimum_battery_percent_to_start:
             required = self._safety_profile.minimum_battery_percent_to_start
             raise MissionPreflightError(
@@ -233,6 +238,14 @@ class MavsdkMissionAdapter:
             raise MissionPreflightError(
                 f"Preflight rejected: {label} telemetry is unavailable."
             ) from error
+
+    @staticmethod
+    def _has_required_navigation_health(health: object) -> bool:
+        """Require navigation readiness, but not unrelated GCS health checks."""
+        try:
+            return bool(health.is_global_position_ok and health.is_home_position_ok)
+        except AttributeError as error:
+            raise MissionPreflightError("Preflight rejected: health telemetry is unavailable.") from error
 
     @staticmethod
     def _require_global_position(position: object, label: str) -> None:
