@@ -7,6 +7,7 @@ PROJECT_ROOT=${SCRIPT_DIR:h:h:h}
 PX4_ROOT=${PX4_ROOT:-${PROJECT_ROOT}/PX4-Autopilot}
 PX4_ROOT=${PX4_ROOT:A}
 WORLD=${PX4_GZ_WORLD:-default}
+WORLD_FILE=${PX4_GZ_WORLD_FILE:-$PX4_ROOT/Tools/simulation/gz/worlds/${WORLD}.sdf}
 
 typeset -i failed=0
 
@@ -29,11 +30,11 @@ if [[ ! -d "$PX4_ROOT" ]]; then
 else
   print "Rendben: PX4 forrás ($PX4_ROOT)"
 
-  if [[ ! -f "$PX4_ROOT/Tools/simulation/gz/worlds/${WORLD}.sdf" ]]; then
-    print -u2 "Nem található Gazebo world: ${WORLD}.sdf"
+  if [[ ! -f "$WORLD_FILE" ]]; then
+    print -u2 "Nem található Gazebo world: $WORLD_FILE"
     failed=1
   else
-    print "Rendben: Gazebo world ($WORLD)"
+    print "Rendben: Gazebo world ($WORLD_FILE)"
   fi
 
   if [[ ! -d "$PX4_ROOT/Tools/simulation/gz/models/x500" ]]; then

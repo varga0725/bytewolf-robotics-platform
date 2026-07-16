@@ -38,7 +38,8 @@ fi
 export HEADLESS=1
 export PX4_GZ_WORLD="$WORLD"
 export CMAKE_PREFIX_PATH="$(brew --prefix qt@5):${CMAKE_PREFIX_PATH:-}"
-WORLD_FILE="$PX4_ROOT/Tools/simulation/gz/worlds/$WORLD.sdf"
+WORLD_FILE=${PX4_GZ_WORLD_FILE:-$PX4_ROOT/Tools/simulation/gz/worlds/$WORLD.sdf}
+WORLD_FILE=${WORLD_FILE:A}
 
 if [[ ! -f "$WORLD_FILE" ]]; then
   print -u2 "Nem található a Gazebo world: $WORLD_FILE"
