@@ -75,23 +75,26 @@ P0_SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         "takeoff-hover-land",
         "brain.cli.fly_takeoff_hover_land",
+        ("--preflight-wait-seconds", "0"),
         fallback_expectation="land-once-after-airborne-failure",
     ),
     Scenario(
         "waypoint-land",
         "brain.cli.fly_waypoint_land",
+        ("--preflight-wait-seconds", "0"),
         safety_rejection="must-reject-out-of-bounds-waypoint",
         fallback_expectation="land-once-after-airborne-failure",
     ),
     Scenario(
         "return-to-home",
         "brain.cli.fly_return_to_home",
+        ("--preflight-wait-seconds", "0"),
         fallback_expectation="px4-rtl-then-land-once-on-failure",
     ),
     Scenario(
         "reject-unsafe-altitude",
         "brain.cli.fly_takeoff_hover_land",
-        ("--altitude", "21"),
+        ("--altitude", "21", "--preflight-wait-seconds", "0"),
         safety_rejection="must-reject-over-max-altitude",
         fallback_expectation="no-flight-command",
         expected_returncode=1,
@@ -99,7 +102,7 @@ P0_SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         "waypoint-timeout-fallback",
         "brain.cli.fly_waypoint_land",
-        ("--waypoint-timeout", "0.01"),
+        ("--waypoint-timeout", "0.01", "--preflight-wait-seconds", "0"),
         safety_rejection="must-record-timeout-and-fallback",
         fallback_expectation="land-once-after-waypoint-timeout",
         expected_returncode=1,
