@@ -145,14 +145,21 @@ class ScenarioRunner:
 
     def _run_scenario(self, scenario: Scenario) -> ScenarioResult:
         command = (self._python_executable, "-m", scenario.module, *scenario.arguments)
-        completed = self._command_runner(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=self._project_root,
-            timeout=self._scenario_timeout_s,
-        )
+        try:
+            completed = self._command_runner(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=self._project_root,
+                timeout=self._scenario_timeout_s,
+            )
+        except subprocess.TimeoutExpired as error:
+            stdout = error.stdout.decode() if isinstance(error.stdout, bytes) else error.stdout or ""
+            stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else error.stderr or ""
+            return self._result_from_process(
+                scenario, command, -1, stdout, f"{stderr}\nScenario timeout after {self._scenario_timeout_s:g}s.", "failed"
+            )
         return self._result_from_process(scenario, command, completed.returncode, completed.stdout, completed.stderr)
 
     def _start_sitl(self) -> ManagedProcess | None:
