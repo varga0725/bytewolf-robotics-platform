@@ -166,6 +166,28 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertEqual(report["results"][0]["status"], "blocked")
         terminate_group.assert_called_once_with(90210)
 
+    def test_runner_retries_a_transient_sitl_start_failure(self) -> None:
+        sitl_process = Mock(pid=90210)
+        process_starter = Mock(side_effect=(OSError(1, "Operation not permitted"), sitl_process))
+        command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
+        sleep = Mock()
+        runner = ScenarioRunner(
+            command_runner=command_runner,
+            sitl_command=("sitl",),
+            process_starter=process_starter,
+            readiness_check=Mock(return_value=True),
+            terminate_process_group=Mock(),
+            sleep=sleep,
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            report_path = runner.run(P0_SCENARIOS[:1], Path(temporary_directory))
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(process_starter.call_count, 2)
+        self.assertEqual(report["overall_status"], "passed")
+        sleep.assert_any_call(1.0)
+
     def test_runner_marks_a_nonzero_process_as_failed_without_stopping_matrix(self) -> None:
         command_runner = Mock(
             side_effect=(

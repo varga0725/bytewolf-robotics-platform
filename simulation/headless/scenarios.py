@@ -134,6 +134,8 @@ class ScenarioRunner:
         terminate_process_group: ProcessGroupTerminator | None = None,
         scenario_timeout_s: float = 120.0,
         startup_wait_s: float = 45.0,
+        sitl_start_attempts: int = 2,
+        sitl_retry_delay_s: float = 1.0,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._command_runner = command_runner
@@ -147,6 +149,8 @@ class ScenarioRunner:
         self._terminate_process_group = terminate_process_group or _terminate_process_group
         self._scenario_timeout_s = scenario_timeout_s
         self._startup_wait_s = startup_wait_s
+        self._sitl_start_attempts = sitl_start_attempts
+        self._sitl_retry_delay_s = sitl_retry_delay_s
         self._sleep = sleep
 
     def run(self, scenarios: Iterable[Scenario], output_directory: Path) -> Path:
@@ -344,17 +348,24 @@ class ScenarioRunner:
     def _start_sitl(self) -> ManagedProcess | None:
         if self.sitl_command is None:
             return None
-        return self._process_starter(
-            self.sitl_command,
-            cwd=self._project_root,
-            start_new_session=True,
-            # The process is intentionally long-lived and its output is never
-            # consumed here.  Keeping it in pipes can block PX4 once a pipe
-            # fills, preventing MAVLink from ever becoming available.
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        for attempt in range(self._sitl_start_attempts):
+            try:
+                return self._process_starter(
+                    self.sitl_command,
+                    cwd=self._project_root,
+                    start_new_session=True,
+                    # The process is intentionally long-lived and its output is never
+                    # consumed here.  Keeping it in pipes can block PX4 once a pipe
+                    # fills, preventing MAVLink from ever becoming available.
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except OSError:
+                if attempt + 1 == self._sitl_start_attempts:
+                    raise
+                self._sleep(self._sitl_retry_delay_s)
+        raise AssertionError("The SITL startup retry loop must return or raise.")
 
     def _stop_sitl(self, process: ManagedProcess) -> None:
         """Terminate the session leader, then reap it so no simulator is orphaned."""
