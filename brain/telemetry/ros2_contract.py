@@ -11,10 +11,33 @@ from typing import Any
 import yaml
 
 
-ROS2_TELEMETRY_BRIDGE_VERSION = "v0.1"
+ROS2_TELEMETRY_BRIDGE_VERSION = "v0.2"
 DEFAULT_ROS2_TELEMETRY_BRIDGE_CONFIG = (
     Path(__file__).resolve().parents[2]
-    / "shared/config/x500v2/ros2_telemetry_bridge.v0_1.yaml"
+    / "shared/config/x500v2/ros2_telemetry_bridge.v0_2.yaml"
+)
+
+_DECLARED_TOPICS = frozenset(
+    {
+        (
+            "telemetry/position",
+            "sensor_msgs/msg/NavSatFix",
+            "MAVSDK telemetry.position",
+            "sensor_data",
+        ),
+        (
+            "telemetry/battery",
+            "sensor_msgs/msg/BatteryState",
+            "MAVSDK telemetry.battery",
+            "reliable_status",
+        ),
+        (
+            "telemetry/flight_state",
+            "std_msgs/msg/String",
+            "MAVSDK telemetry.in_air",
+            "reliable_status",
+        ),
+    }
 )
 
 
@@ -62,8 +85,25 @@ def load_ros2_telemetry_bridge_contract(
         raise ValueError("ROS 2 telemetry bridge topic names must be unique.")
     if any(not topic.name.startswith(f"{namespace}/") for topic in topics):
         raise ValueError("ROS 2 telemetry bridge topics must remain inside their namespace.")
+    _validate_declared_topics(namespace, topics)
 
     return Ros2TelemetryBridgeContract(version, namespace, vehicle_id, topics)
+
+
+def _validate_declared_topics(namespace: str, topics: tuple[Ros2TelemetryTopic, ...]) -> None:
+    actual_topics = frozenset(
+        (
+            topic.name.removeprefix(f"{namespace}/"),
+            topic.message_type,
+            topic.source,
+            topic.qos_profile,
+        )
+        for topic in topics
+    )
+    if actual_topics != _DECLARED_TOPICS:
+        raise ValueError(
+            "ROS 2 telemetry bridge topics, sources, message types, and QoS must match the v0.2 contract."
+        )
 
 
 def _parse_topic(document: Any) -> Ros2TelemetryTopic:

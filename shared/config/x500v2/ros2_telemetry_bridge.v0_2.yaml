@@ -1,0 +1,17 @@
+# Telemetry-only ROS 2 bridge contract.  GPS remains global WGS84 data.
+version: v0.2
+namespace: /bytewolf/x500v2_reference_01
+vehicle_id: x500v2_reference_01
+topics:
+  - name: /bytewolf/x500v2_reference_01/telemetry/position
+    message_type: sensor_msgs/msg/NavSatFix
+    source: MAVSDK telemetry.position
+    qos_profile: sensor_data
+  - name: /bytewolf/x500v2_reference_01/telemetry/battery
+    message_type: sensor_msgs/msg/BatteryState
+    source: MAVSDK telemetry.battery
+    qos_profile: reliable_status
+  - name: /bytewolf/x500v2_reference_01/telemetry/flight_state
+    message_type: std_msgs/msg/String
+    source: MAVSDK telemetry.in_air
+    qos_profile: reliable_status

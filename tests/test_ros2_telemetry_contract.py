@@ -17,7 +17,7 @@ from brain.telemetry.ros2_contract import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_PATH = ROOT / "shared/schemas/ros2_telemetry/telemetry_bridge_v0_1.schema.json"
+SCHEMA_PATH = ROOT / "shared/schemas/ros2_telemetry/telemetry_bridge_v0_2.schema.json"
 
 
 class Ros2TelemetryContractTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class Ros2TelemetryContractTests(unittest.TestCase):
     def test_loader_exposes_the_contract_without_requiring_ros(self) -> None:
         contract = load_ros2_telemetry_bridge_contract()
 
-        self.assertEqual(contract.version, "v0.1")
+        self.assertEqual(contract.version, "v0.2")
         self.assertEqual(contract.vehicle_id, "x500v2_reference_01")
         self.assertEqual(contract.namespace, "/bytewolf/x500v2_reference_01")
         self.assertEqual(
@@ -41,6 +41,14 @@ class Ros2TelemetryContractTests(unittest.TestCase):
                 "/bytewolf/x500v2_reference_01/telemetry/position",
                 "/bytewolf/x500v2_reference_01/telemetry/battery",
                 "/bytewolf/x500v2_reference_01/telemetry/flight_state",
+            ),
+        )
+        self.assertEqual(
+            tuple(topic.message_type for topic in contract.topics),
+            (
+                "sensor_msgs/msg/NavSatFix",
+                "sensor_msgs/msg/BatteryState",
+                "std_msgs/msg/String",
             ),
         )
 
@@ -53,6 +61,17 @@ class Ros2TelemetryContractTests(unittest.TestCase):
             path.write_text(yaml.safe_dump(document), encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "namespace"):
+                load_ros2_telemetry_bridge_contract(path)
+
+    def test_loader_rejects_a_semantically_unsafe_position_message_type(self) -> None:
+        document = yaml.safe_load(DEFAULT_ROS2_TELEMETRY_BRIDGE_CONFIG.read_text(encoding="utf-8"))
+        document["topics"][0]["message_type"] = "geometry_msgs/msg/PoseStamped"
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "contract.yaml"
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "message type"):
                 load_ros2_telemetry_bridge_contract(path)
 
 
