@@ -32,10 +32,15 @@ meglévő `SafetyGate` ellenőrzésén is átmegy.
 A séma: `interfaces/mission_spec/mission_spec_v0_1.schema.json`. Egy valid
 minta: `interfaces/mission_spec/examples/takeoff_waypoint_rtl.v0_1.json`.
 
-## Jelenlegi hatókör
+## Jelenlegi megvalósítási állapot
 
-A validátor és a fordító elkészült; a generikus Mission Orchestrator, a
-telemetria-alapú preflight feltételek és a teljes retry policy a következő
-szakasz feladatai. A séma nem állítja, hogy a sebesség- és akkumulátorkorlátot
-a jelenlegi MAVSDK-adapter már futás közben érvényesíti; ezeket most a
-MissionSpec/platform szerződés korlátozza.
+A séma, a determinisztikus validátor és a fordító elkészült. A fordító
+immutábilis magas szintű parancsokat és a HOLD időtartamait állítja elő, de
+ezeket még nem hajtja végre generikus Mission Orchestrator. A jelenlegi CLI-k
+külön, előre rögzített takeoff/waypoint/RTL küldetéseket futtatnak; nem töltenek
+be és nem futtatnak MissionSpec dokumentumot.
+
+A telemetria-alapú preflight feltételek, az abort policy végrehajtása és a
+teljes retry policy a következő szakasz feladatai. A séma ezért nem állítja,
+hogy a sebesség- és akkumulátorkorlátot a jelenlegi MAVSDK-adapter futás közben
+érvényesíti: ezeket jelenleg a MissionSpec/platform szerződés validálja.

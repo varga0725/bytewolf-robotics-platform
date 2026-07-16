@@ -3,8 +3,9 @@
 ## Elsődleges környezet
 
 A PX4 SITL és a Gazebo Harmonic elsődlegesen natív Apple Silicon macOS-en fut.
-Ez a beállítás ellenőrizve lett X500 modellel és az Árpádföld–Mátyásföld
-világgal.
+Az alapértelmezett indítás a PX4 beépített `default` világát és az X500 modellt
+használja. Más telepített világ választható a `PX4_GZ_WORLD` környezeti
+változóval.
 
 ## PX4 forrás
 
@@ -37,18 +38,28 @@ Elérhető profilok: `base`, `vision`, `depth`, `mono-front`, `mono-down`,
 Az Ubuntu/UTM virtuális gép nincs törölve, de a 3D szimulátorhoz nem szükséges.
 Később ROS 2-specifikus fejlesztéshez használható.
 
-## Végponttól végpontig tesztek
+## Automatizált és integrációs ellenőrzések
 
-A PX4 SITL elindítása után, egy második terminálból:
+A következő automatizált tesztekhez nem kell PX4 SITL: fake MAVSDK/PX4
+együttműködőkkel futnak, így a mission- és adapterviselkedést ellenőrzik.
 
 ```zsh
 cd "/Users/vargaferenc/Documents/ByteWolf Robotics Platform"
 .venv/bin/python -m unittest discover -s tests -v
+```
+
+PX4 SITL + Gazebo elindítása után a következő parancsok külön, kézi integrációs
+ellenőrzések; a jelenlegi tesztcsomag nem indít headless SITL-regressziót:
+
+```zsh
+.venv/bin/python -m brain.cli.fly_takeoff_hover_land
 .venv/bin/python -m brain.cli.fly_waypoint_land
 .venv/bin/python -m brain.cli.fly_return_to_home
 ```
 
-A waypoint-teszt GPS-telemetriával igazolja a célba érkezést. A Return-to-Home
-teszt a PX4 saját RTL módját használja, és az `in_air` telemetriával ellenőrzi a
-leszállást. Mindkét küldetés a determinisztikus SafetyGate-en halad át, mielőtt
-parancs kerülne a PX4-hez.
+A waypoint-küldetés GPS-telemetriával igazolja a célba érkezést. A Return-to-Home
+küldetés a PX4 saját RTL módját használja. Sikeres futásnál az `in_air` telemetria
+előbb repülést, majd leszállást jelez; timeout vagy RTL-hiba esetén az adapter
+külön land parancsot kísérel meg, a küldetés pedig hibásként zárul. Mindkét
+küldetés a determinisztikus SafetyGate-en halad át, mielőtt parancs kerülne a
+PX4-hez.
