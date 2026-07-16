@@ -18,6 +18,8 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(policy.waypoint_timeout_s, 30.0)
         self.assertEqual(policy.landing_confirmation_timeout_s, 60.0)
         self.assertEqual(policy.fallback_land_attempts, 1)
+        self.assertEqual(policy.minimum_battery_percent_to_continue, 35.0)
+        self.assertEqual(policy.telemetry_sample_timeout_s, 5.0)
         with self.assertRaises(FrozenInstanceError):
             policy.waypoint_timeout_s = 10.0  # type: ignore[misc]
 
@@ -31,9 +33,30 @@ class RuntimePolicyTests(unittest.TestCase):
                 "  landing_confirmation_s: 60\n"
                 "failure_handling:\n"
                 "  fallback_land_attempts: 2\n"
+                "runtime_watchdog:\n"
+                "  minimum_battery_percent_to_continue: 35\n"
+                "  telemetry_sample_timeout_s: 5\n"
             )
 
             with self.assertRaisesRegex(RuntimePolicyError, "fallback_land_attempts"):
+                load_runtime_policy(policy_path)
+
+    def test_rejects_runtime_battery_reserve_above_the_start_reserve_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            policy_path = Path(directory) / "policy.yaml"
+            policy_path.write_text(
+                "version: v0.1\n"
+                "timeouts:\n"
+                "  waypoint_s: 30\n"
+                "  landing_confirmation_s: 60\n"
+                "failure_handling:\n"
+                "  fallback_land_attempts: 1\n"
+                "runtime_watchdog:\n"
+                "  minimum_battery_percent_to_continue: 101\n"
+                "  telemetry_sample_timeout_s: 5\n"
+            )
+
+            with self.assertRaisesRegex(RuntimePolicyError, "minimum_battery_percent_to_continue"):
                 load_runtime_policy(policy_path)
 
 

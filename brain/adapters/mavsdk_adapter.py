@@ -18,6 +18,7 @@ from brain.mission.flight import (
     TakeoffWaypointSquareLandMission,
 )
 from brain.mission.runtime_policy import RuntimePolicy, load_runtime_policy
+from brain.mission.runtime_watchdog import RuntimeTelemetryWatchdog
 from brain.navigation.waypoints import (
     GlobalPosition,
     horizontal_distance_m,
@@ -28,6 +29,10 @@ from brain.safety.profile import SafetyProfile, load_safety_profile
 
 class MissionPreflightError(RuntimeError):
     """Raised when required PX4 telemetry cannot authorize a mission start."""
+
+
+class RuntimeSafetyError(RuntimeError):
+    """Raised when live telemetry requires the bounded airborne landing fallback."""
 
 
 class MavsdkAction(Protocol):
@@ -79,6 +84,10 @@ class MavsdkMissionAdapter:
         self._safety_profile = safety_profile or load_safety_profile()
         self._preflight_wait_s = preflight_wait_s
         self._preflight_telemetry: MissionTelemetrySnapshot | None = None
+        self._runtime_watchdog = RuntimeTelemetryWatchdog(
+            minimum_battery_percent=self._runtime_policy.minimum_battery_percent_to_continue,
+            telemetry_sample_timeout_s=self._runtime_policy.telemetry_sample_timeout_s,
+        )
 
     @property
     def preflight_telemetry(self) -> MissionTelemetrySnapshot | None:
@@ -110,7 +119,7 @@ class MavsdkMissionAdapter:
             await self._drone.action.takeoff()
             airborne = True
             execution = execution.transition(MissionPhase.HOVERING)
-            await self._sleep(mission.hover_duration_s)
+            await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
         except Exception:
             await self._fallback_land_after_airborne_failure(
                 execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
@@ -137,11 +146,11 @@ class MavsdkMissionAdapter:
             await self._drone.action.takeoff()
             airborne = True
             execution = execution.transition(MissionPhase.HOVERING)
-            await self._sleep(mission.interrupt_after_s)
+            await self._sleep_with_runtime_watchdog(mission.interrupt_after_s)
             if mission.interruption_action is InterruptionAction.HOLD:
                 await self._drone.action.hold()
                 execution = execution.transition(MissionPhase.HOLDING)
-                await self._sleep(mission.hold_cleanup_s)
+                await self._sleep_with_runtime_watchdog(mission.hold_cleanup_s)
         except Exception:
             await self._fallback_land_after_airborne_failure(
                 execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
@@ -193,7 +202,7 @@ class MavsdkMissionAdapter:
             execution = execution.transition(MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
-            await self._sleep(mission.takeoff_settle_seconds)
+            await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
             execution = execution.transition(MissionPhase.NAVIGATING)
             target = await self.goto_relative_waypoint(mission.waypoint)
             await self.wait_until_waypoint_reached(
@@ -202,7 +211,7 @@ class MavsdkMissionAdapter:
                 min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s),
             )
             execution = execution.transition(MissionPhase.HOVERING)
-            await self._sleep(mission.hover_duration_s)
+            await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
         except Exception:
             await self._fallback_land_after_airborne_failure(
                 execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
@@ -227,7 +236,7 @@ class MavsdkMissionAdapter:
             execution = execution.transition(MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
-            await self._sleep(mission.takeoff_settle_seconds)
+            await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
             execution = execution.transition(MissionPhase.NAVIGATING)
             timeout_s = min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s)
             for waypoint in mission.waypoints:
@@ -236,7 +245,7 @@ class MavsdkMissionAdapter:
                     target, mission.waypoint_tolerance_m, timeout_s
                 )
             execution = execution.transition(MissionPhase.HOVERING)
-            await self._sleep(mission.hover_duration_s)
+            await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
         except Exception:
             await self._fallback_land_after_airborne_failure(
                 execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
@@ -273,9 +282,9 @@ class MavsdkMissionAdapter:
             execution = execution.transition(MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
-            await self._sleep(mission.takeoff_settle_seconds)
+            await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
             execution = execution.transition(MissionPhase.HOVERING)
-            await self._sleep(mission.hover_duration_s)
+            await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
             execution = execution.transition(MissionPhase.RETURNING)
             await self._drone.action.return_to_launch()
             await self.wait_until_landed(
@@ -413,6 +422,83 @@ class MavsdkMissionAdapter:
         if not isfinite(remaining) or not 0.0 <= remaining <= 1.0:
             raise MissionPreflightError("Preflight rejected: battery telemetry is invalid.")
         return remaining * 100.0
+
+    async def _sleep_with_runtime_watchdog(self, duration_s: float) -> None:
+        """Observe live battery and GNSS while the controller is intentionally waiting.
+
+        The watchdog runs only inside this still-live MAVSDK process.  If it
+        detects a fault, mission execution raises and the existing outer
+        boundary sends the single permitted landing fallback.  If this process
+        itself stops, PX4's independently configured failsafe remains the
+        safety authority; no code here can claim to command after termination.
+        """
+        if duration_s <= 0.0:
+            await self._sleep(duration_s)
+            return
+        sleep_task = asyncio.create_task(self._sleep(duration_s))
+        # Preserve zero-cost injected sleepers used by deterministic unit tests;
+        # a completed wait has no in-flight interval that needs monitoring.
+        await asyncio.sleep(0)
+        if sleep_task.done():
+            await sleep_task
+            return
+        battery_task = asyncio.create_task(
+            self._watch_runtime_battery(self._drone.telemetry.battery())
+        )
+        position_task = asyncio.create_task(
+            self._watch_runtime_position(self._drone.telemetry.position())
+        )
+        tasks = {sleep_task, battery_task, position_task}
+        try:
+            done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            if sleep_task in done:
+                await sleep_task
+                return
+            for task in done:
+                if task is not sleep_task:
+                    await task
+            raise AssertionError("Runtime telemetry watcher ended without a safety decision.")
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _watch_runtime_battery(self, stream: AsyncIterator[object]) -> None:
+        iterator = stream.__aiter__()
+        while True:
+            sample = await self._next_runtime_sample(iterator, "battery")
+            decision = self._runtime_watchdog.evaluate_battery(sample)
+            self._require_runtime_decision(decision)
+
+    async def _watch_runtime_position(self, stream: AsyncIterator[object]) -> None:
+        iterator = stream.__aiter__()
+        while True:
+            sample = await self._next_runtime_sample(iterator, "position")
+            decision = self._runtime_watchdog.evaluate_position(sample)
+            self._require_runtime_decision(decision)
+
+    async def _next_runtime_sample(self, iterator: AsyncIterator[object], source: str) -> object:
+        try:
+            return await asyncio.wait_for(
+                anext(iterator), timeout=self._runtime_watchdog.telemetry_sample_timeout_s
+            )
+        except (StopAsyncIteration, TimeoutError) as error:
+            decision = self._runtime_watchdog.telemetry_unavailable(source)
+            self._require_runtime_decision(decision)
+            raise AssertionError("Unavailable telemetry must have raised a runtime safety error.") from error
+
+    @staticmethod
+    def _require_runtime_decision(decision: object) -> None:
+        if getattr(decision, "permitted", False):
+            return
+        fault = getattr(decision, "fault", None)
+        action = getattr(decision, "action", None)
+        if fault is None or action is None:
+            raise RuntimeSafetyError(
+                "Runtime safety fault cannot be handled by this live controller; PX4 failsafe is required."
+            )
+        raise RuntimeSafetyError(f"Runtime safety fallback requested: {fault.kind.value} from {fault.source}.")
 
     async def _normal_land(
         self, execution: MissionExecution, confirmation_timeout_s: float

@@ -63,9 +63,13 @@ class FakeTelemetry:
     async def position(self):
         self._calls += 1
         if self._calls <= 2:
-            yield Position()
+            while True:
+                yield Position()
+                await asyncio.sleep(0)
         else:
-            yield Position(latitude=47.5000449)
+            while True:
+                yield Position(latitude=47.5000449)
+                await asyncio.sleep(0)
 
     async def in_air(self):
         yield True
@@ -78,7 +82,9 @@ class FakeTelemetry:
         yield Position()
 
     async def battery(self):
-        yield Battery(remaining_percent=0.75)
+        while True:
+            yield Battery(remaining_percent=0.75)
+            await asyncio.sleep(0)
 
 
 class Battery:
@@ -185,7 +191,76 @@ class GnssDropoutDrone(FakeDrone):
         self.telemetry = GnssDropoutTelemetry()
 
 
+class RuntimeLowBatteryTelemetry(FakeTelemetry):
+    def __init__(self) -> None:
+        super().__init__()
+        self._battery_calls = 0
+
+    async def battery(self):
+        self._battery_calls += 1
+        if self._battery_calls == 1:
+            yield Battery(remaining_percent=0.75)
+            return
+        while True:
+            yield Battery(remaining_percent=0.34)
+            await asyncio.sleep(0)
+
+    async def position(self):
+        while True:
+            yield Position()
+            await asyncio.sleep(0)
+
+
+class RuntimeLowBatteryDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = RuntimeLowBatteryTelemetry()
+
+
+class RuntimeTelemetryDropoutTelemetry(FakeTelemetry):
+    def __init__(self) -> None:
+        super().__init__()
+        self._battery_calls = 0
+
+    async def battery(self):
+        self._battery_calls += 1
+        if self._battery_calls == 1:
+            yield Battery(remaining_percent=0.75)
+        return
+
+    async def position(self):
+        while True:
+            yield Position()
+            await asyncio.sleep(0)
+
+
+class RuntimeTelemetryDropoutDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = RuntimeTelemetryDropoutTelemetry()
+
+
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_lands_once_when_live_battery_crosses_the_runtime_reserve(self) -> None:
+        drone = RuntimeLowBatteryDrone()
+        adapter = MavsdkMissionAdapter(drone)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        with self.assertRaisesRegex(RuntimeError, "low_battery"):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events.count("land"), 1)
+
+    async def test_lands_once_when_live_battery_telemetry_stops(self) -> None:
+        drone = RuntimeTelemetryDropoutDrone()
+        adapter = MavsdkMissionAdapter(drone)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        with self.assertRaisesRegex(RuntimeError, "telemetry_unavailable"):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events.count("land"), 1)
+
     async def test_waits_on_one_health_stream_until_navigation_is_ready(self) -> None:
         drone = BecomingHealthyDrone()
         adapter = MavsdkMissionAdapter(drone, preflight_wait_s=1.0)
