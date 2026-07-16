@@ -87,6 +87,13 @@ class MavsdkMissionAdapter:
             if state.is_connected:
                 return
 
+    async def verify_preflight(self) -> MissionTelemetrySnapshot:
+        """Capture pre-arm telemetry evidence without issuing a flight command."""
+        await self._require_preflight()
+        if self._preflight_telemetry is None:
+            raise AssertionError("A successful preflight check must capture telemetry evidence.")
+        return self._preflight_telemetry
+
     async def execute(self, mission: TakeoffHoverLandMission) -> MissionExecution:
         """Execute takeoff-hover-land and confirm the normal landing by telemetry."""
         await self._require_preflight()

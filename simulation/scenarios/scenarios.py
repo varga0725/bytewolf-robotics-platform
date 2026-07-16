@@ -120,6 +120,28 @@ P0_SCENARIOS: tuple[Scenario, ...] = (
 )
 
 
+# P0.v1 remains immutable evidence for the already accepted baseline.  P0.v2
+# starts the expanded flight-safety matrix with separate boot/pre-arm evidence
+# and the exact nominal takeoff profile requested by the programme.
+P0_V2_SCENARIOS: tuple[Scenario, ...] = (
+    Scenario(
+        "boot-prearm-check",
+        "brain.cli.check_boot_prearm",
+        ("--preflight-wait-seconds", "60"),
+        version="p0.v2",
+        safety_rejection="must-fail-closed-before-arm-if-prearm-is-invalid",
+        fallback_expectation="no-flight-command",
+    ),
+    Scenario(
+        "takeoff-2m-hover-10s-land",
+        "brain.cli.fly_takeoff_hover_land",
+        ("--altitude", "2", "--hover-seconds", "10", "--preflight-wait-seconds", "60"),
+        version="p0.v2",
+        fallback_expectation="land-once-after-airborne-failure",
+    ),
+)
+
+
 class ScenarioRunner:
     """Execute a scenario matrix with an optional, bounded headless SITL."""
 
@@ -439,6 +461,12 @@ def _mavsdk_server_port(output_directory: Path, scenario: Scenario) -> int:
 
 def parse_arguments(arguments: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the headless PX4/Gazebo P0 scenario matrix.")
+    parser.add_argument(
+        "--matrix-version",
+        choices=("p0.v1", "p0.v2"),
+        default="p0.v1",
+        help="Versioned scenario matrix. p0.v1 remains the accepted baseline.",
+    )
     parser.add_argument("--runs", type=int, default=1, help="Number of complete P0 matrices to run.")
     parser.add_argument(
         "--minimum-success-rate",
@@ -452,15 +480,16 @@ def parse_arguments(arguments: Iterable[str] | None = None) -> argparse.Namespac
 def main(arguments: Iterable[str] | None = None) -> None:
     """Launch an isolated headless PX4 SITL and run the standard P0 matrix."""
     parsed = parse_arguments(arguments)
+    scenario_matrix = P0_SCENARIOS if parsed.matrix_version == "p0.v1" else P0_V2_SCENARIOS
     runner = ScenarioRunner(
         sitl_command=("simulation/gazebo/launch/run_px4_gazebo_headless.zsh", "base")
     )
     output_directory = Path("simulation/artifacts/headless")
     if parsed.runs == 1:
-        report_path = runner.run(P0_SCENARIOS, output_directory)
+        report_path = runner.run(scenario_matrix, output_directory)
     else:
         report_path = runner.run_repeated(
-            P0_SCENARIOS,
+            scenario_matrix,
             output_directory,
             repetitions=parsed.runs,
             minimum_success_rate=parsed.minimum_success_rate,

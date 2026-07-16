@@ -244,6 +244,16 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(drone.events[0], ("set_takeoff_altitude", 2.0))
         self.assertIsNotNone(adapter.preflight_telemetry)
         self.assertEqual(adapter.preflight_telemetry.battery_percent, 75.0)
+
+    async def test_verifies_preflight_without_sending_an_actuation_command(self) -> None:
+        drone = FakeDrone()
+        adapter = MavsdkMissionAdapter(drone)
+
+        telemetry = await adapter.verify_preflight()
+
+        self.assertEqual(telemetry.battery_percent, 75.0)
+        self.assertEqual(drone.events, [])
+
     async def test_connects_before_executing_the_expected_command_sequence(self) -> None:
         drone = FakeDrone()
 

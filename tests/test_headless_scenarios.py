@@ -10,7 +10,13 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-from simulation.scenarios.scenarios import P0_SCENARIOS, Scenario, ScenarioRunner
+from simulation.scenarios.scenarios import (
+    P0_SCENARIOS,
+    P0_V2_SCENARIOS,
+    Scenario,
+    ScenarioRunner,
+    parse_arguments,
+)
 
 
 class HeadlessScenarioTests(unittest.TestCase):
@@ -28,6 +34,31 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertTrue(all(scenario.safety_rejection is not None for scenario in P0_SCENARIOS))
         self.assertTrue(all(scenario.fallback_expectation for scenario in P0_SCENARIOS))
         self.assertEqual(P0_SCENARIOS[-1].expected_returncode, 1)
+
+    def test_p0_v2_adds_explicit_boot_prearm_evidence_and_exact_nominal_profile(self) -> None:
+        """P0.v1 stays stable while P0.v2 makes the requested nominal evidence explicit."""
+        self.assertEqual(
+            tuple(scenario.identifier for scenario in P0_V2_SCENARIOS[:2]),
+            ("boot-prearm-check", "takeoff-2m-hover-10s-land"),
+        )
+
+    def test_runner_can_select_the_expanded_p0_v2_matrix_without_replacing_v1(self) -> None:
+        self.assertEqual(parse_arguments(()).matrix_version, "p0.v1")
+        self.assertEqual(parse_arguments(("--matrix-version", "p0.v2")).matrix_version, "p0.v2")
+        self.assertEqual(P0_V2_SCENARIOS[0].module, "brain.cli.check_boot_prearm")
+        self.assertEqual(P0_V2_SCENARIOS[0].arguments, ("--preflight-wait-seconds", "60"))
+        self.assertEqual(
+            P0_V2_SCENARIOS[1].arguments,
+            ("--altitude", "2", "--hover-seconds", "10", "--preflight-wait-seconds", "60"),
+        )
+        self.assertTrue(all(scenario.version == "p0.v2" for scenario in P0_V2_SCENARIOS))
+        self.assertEqual(
+            tuple(scenario.identifier for scenario in P0_SCENARIOS),
+            (
+                "takeoff-hover-land", "waypoint-land", "return-to-home", "reject-unsafe-altitude",
+                "waypoint-timeout-fallback", "link-unavailable",
+            ),
+        )
 
     def test_p0_matrix_allows_bounded_telemetry_readiness_after_sitl_startup(self) -> None:
         """The P0 process budget retains time for the actual mission after readiness."""
