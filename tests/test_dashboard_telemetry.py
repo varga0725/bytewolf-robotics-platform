@@ -16,7 +16,12 @@ from http.server import ThreadingHTTPServer
 class DashboardTelemetryTests(unittest.TestCase):
     def test_loads_the_documented_bridge_shape(self) -> None:
         payload = {
-            "position": {"latitude_deg": 47.4979, "longitude_deg": 19.0402, "absolute_altitude_m": 125.5},
+            "position": {
+                "latitude_deg": 47.4979,
+                "longitude_deg": 19.0402,
+                "absolute_altitude_m": 125.5,
+                "relative_altitude_m": 2.4,
+            },
             "battery": {"remaining_percent": 78.5},
             "in_air": True,
         }
@@ -29,6 +34,7 @@ class DashboardTelemetryTests(unittest.TestCase):
         self.assertEqual(snapshot.position.latitude_deg, 47.4979)
         self.assertEqual(snapshot.position.longitude_deg, 19.0402)
         self.assertEqual(snapshot.position.absolute_altitude_m, 125.5)
+        self.assertEqual(snapshot.position.relative_altitude_m, 2.4)
         self.assertEqual(snapshot.battery_percent, 78.5)
         self.assertTrue(snapshot.in_air)
 
@@ -72,7 +78,11 @@ class DashboardTelemetryTests(unittest.TestCase):
             try:
                 with urlopen(f"{base_url}/") as response:
                     self.assertEqual(response.status, 200)
-                    self.assertIn(b"ByteWolf telemetry", response.read())
+                    body = response.read()
+                    self.assertIn(b"ByteWolf telemetry", body)
+                    self.assertIn(b'id="connection"', body)
+                    self.assertIn(b'id="relative-altitude"', body)
+                    self.assertIn(b'id="flight-state"', body)
                 with urlopen(f"{base_url}/api/telemetry") as response:
                     self.assertEqual(response.status, 200)
                     self.assertEqual(json.loads(response.read()), {

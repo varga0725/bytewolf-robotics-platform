@@ -67,6 +67,7 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
                         "latitude_deg": 47.4979,
                         "longitude_deg": 19.0402,
                         "absolute_altitude_m": 125.5,
+                        "relative_altitude_m": 2.0,
                     },
                     "battery": {"remaining_percent": 78.0},
                     "in_air": True,

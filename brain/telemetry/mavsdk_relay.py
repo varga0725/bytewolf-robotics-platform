@@ -80,6 +80,7 @@ class DashboardTelemetryState:
                 "latitude_deg": self.position.latitude_deg,
                 "longitude_deg": self.position.longitude_deg,
                 "absolute_altitude_m": self.position.absolute_altitude_m,
+                "relative_altitude_m": self.position.relative_altitude_m,
             },
             "battery": {"remaining_percent": self.battery.remaining_percent * 100.0},
             "in_air": self.flight_state.in_air,

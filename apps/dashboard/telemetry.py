@@ -17,6 +17,7 @@ class Position:
     latitude_deg: float
     longitude_deg: float
     absolute_altitude_m: float
+    relative_altitude_m: float | None
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,7 @@ def _parse_position(value: Any) -> Position | None:
         latitude_deg=_required_number(value, "latitude_deg"),
         longitude_deg=_required_number(value, "longitude_deg"),
         absolute_altitude_m=_required_number(value, "absolute_altitude_m"),
+        relative_altitude_m=_number_or_none(value.get("relative_altitude_m"), "relative_altitude_m"),
     )
 
 
