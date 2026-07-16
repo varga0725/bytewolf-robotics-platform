@@ -85,8 +85,6 @@ async def run(arguments: argparse.Namespace) -> None:
             failure_reason,
             getattr(adapter, "preflight_telemetry", None),
         )
-        if system is not None:
-            getattr(system, "_stop_mavsdk_server", lambda: None)()
 
 
 def main(arguments: Sequence[str] | None = None) -> None:
