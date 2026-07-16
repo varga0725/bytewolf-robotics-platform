@@ -43,6 +43,14 @@ the data as `LIVE`, `STALE`, `FUTURE`, `MISSING` or `INVALID`. It exposes only
 `GET /` and `GET /api/telemetry`; any `POST` is rejected. It is intentionally
 not a flight-control user interface.
 
+For the exact native macOS visual replay/SITL procedure and the separately
+scoped Ubuntu Humble smoke procedure, see
+[`visual-simulation-verification.md`](visual-simulation-verification.md).
+The replay dashboard is not a live flight display.  The separate, optional
+`brain.cli.ros2_telemetry_bridge` process owns the live MAVSDK → ROS → JSON
+telemetry lifecycle in Ubuntu Humble; it must be verified there before it is
+represented as a live display.
+
 ## Future Humble implementation runbook
 
 1. Provision ROS 2 Humble in the optional Linux VM; do not add ROS as a V1

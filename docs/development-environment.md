@@ -38,6 +38,14 @@ Elérhető profilok: `base`, `vision`, `depth`, `mono-front`, `mono-down`,
 Az Ubuntu/UTM virtuális gép nincs törölve, de a 3D szimulátorhoz nem szükséges.
 Később ROS 2-specifikus fejlesztéshez használható.
 
+## Vizuális P1 ellenőrzés
+
+A helyi, csak olvasható dashboard replay, a látható Gazebo SITL repülések és a
+külön Ubuntu ROS 2 Humble smoke pontos lépései a
+[`visual-simulation-verification.md`](visual-simulation-verification.md)
+útmutatóban vannak. A dashboard nem repülésvezérlő felület; az élő MAVSDK → ROS
+életciklus csak a külön P1 integrációs belépési pont elkészülte után tesztelhető.
+
 ## Automatizált és integrációs ellenőrzések
 
 A következő automatizált tesztekhez nem kell PX4 SITL: fake MAVSDK/PX4
