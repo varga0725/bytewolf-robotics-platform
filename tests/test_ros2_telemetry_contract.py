@@ -74,6 +74,19 @@ class Ros2TelemetryContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "message type"):
                 load_ros2_telemetry_bridge_contract(path)
 
+    def test_loader_rejects_a_namespace_that_does_not_match_the_vehicle_id(self) -> None:
+        document = yaml.safe_load(DEFAULT_ROS2_TELEMETRY_BRIDGE_CONFIG.read_text(encoding="utf-8"))
+        document["namespace"] = "/bytewolf/another_vehicle"
+        for topic in document["topics"]:
+            topic["name"] = topic["name"].replace("x500v2_reference_01", "another_vehicle")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "contract.yaml"
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "vehicle_id"):
+                load_ros2_telemetry_bridge_contract(path)
+
 
 if __name__ == "__main__":
     unittest.main()

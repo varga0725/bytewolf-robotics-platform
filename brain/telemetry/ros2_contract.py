@@ -75,6 +75,8 @@ def load_ros2_telemetry_bridge_contract(
 
     namespace = _required_string(document, "namespace")
     vehicle_id = _required_string(document, "vehicle_id")
+    if namespace != f"/bytewolf/{vehicle_id}":
+        raise ValueError("ROS 2 telemetry bridge namespace must match vehicle_id.")
     topic_documents = document.get("topics")
     if not isinstance(topic_documents, list) or not topic_documents:
         raise ValueError("ROS 2 telemetry bridge configuration must declare topics.")
