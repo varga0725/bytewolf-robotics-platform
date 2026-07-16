@@ -48,6 +48,7 @@ class SimulationConfigurationTests(unittest.TestCase):
         self.assertIn("gz sim -r -s", launcher)
         self.assertIn("PX4_GZ_STANDALONE=1", launcher)
         self.assertIn("GZ_SIM_RESOURCE_PATH", launcher)
+        self.assertIn("GZ_IP=127.0.0.1", launcher)
         self.assertIn("trap cleanup EXIT INT TERM", launcher)
 
 

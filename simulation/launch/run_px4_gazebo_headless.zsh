@@ -49,6 +49,8 @@ fi
 # target to launch it can leave PX4 alive without a world or simulated GPS.
 export GZ_SIM_RESOURCE_PATH="$PX4_ROOT/Tools/simulation/gz/models:${GZ_SIM_RESOURCE_PATH:-}"
 export GZ_SIM_SERVER_CONFIG_PATH="$PX4_ROOT/Tools/simulation/gz/server.config"
+# PX4's gz_bridge is launched with this interface; the server must use the same one.
+export GZ_IP=127.0.0.1
 export PX4_GZ_STANDALONE=1
 
 cleanup() {
