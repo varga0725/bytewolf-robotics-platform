@@ -175,6 +175,7 @@ class MavsdkMissionAdapter:
     ) -> MissionExecution:
         """Delegate return-and-land to PX4; use one land fallback only on failure."""
         await self._require_preflight()
+        home = await self._global_position_sample("home")
         execution = MissionExecution.empty().transition(MissionPhase.ARMING)
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         await self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m)
@@ -192,7 +193,17 @@ class MavsdkMissionAdapter:
             await self.wait_until_landed(
                 min(mission.landing_timeout_s, self._runtime_policy.landing_confirmation_timeout_s)
             )
+            airborne = False
+            landing_position = await self._global_position_sample("landing position")
+            home_error_m = horizontal_distance_m(home, landing_position)
+            if home_error_m > mission.home_tolerance_m:
+                raise RuntimeError(
+                    f"RTL landed {home_error_m:.1f} m from home; limit is {mission.home_tolerance_m:.1f} m."
+                )
         except Exception:
+            if not airborne:
+                execution = execution.transition(MissionPhase.LANDING).transition(MissionPhase.FAILED)
+                raise
             await self._fallback_land_after_airborne_failure(
                 execution,
                 airborne,
@@ -229,6 +240,11 @@ class MavsdkMissionAdapter:
             raise MissionPreflightError(
                 f"Preflight rejected: battery is {remaining_percent:.1f}%, below the required {required:.1f}%."
             )
+
+    async def _global_position_sample(self, label: str) -> GlobalPosition:
+        sample = await self._first_telemetry_sample(self._drone.telemetry.position(), label)
+        self._require_global_position(sample, label)
+        return GlobalPosition(sample.latitude_deg, sample.longitude_deg, sample.absolute_altitude_m)
 
     @staticmethod
     async def _first_telemetry_sample(stream: AsyncIterator[object], label: str) -> object:

@@ -42,6 +42,7 @@ class TakeoffReturnToHomeMission:
     )
     takeoff_settle_seconds: float = 4.0
     landing_timeout_s: float = 60.0
+    home_tolerance_m: float = 6.0
 
 
 def authorize_takeoff_hover_land(
