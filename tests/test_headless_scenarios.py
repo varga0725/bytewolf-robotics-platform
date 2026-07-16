@@ -116,19 +116,19 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertEqual(result["safety_rejection"], "must-reject-out-of-bounds-waypoint")
         self.assertEqual(result["fallback_expectation"], "no-flight-command")
 
-    def test_runner_starts_sitl_in_an_isolated_process_group_and_cleans_it_up(self) -> None:
+    def test_runner_starts_a_plain_launcher_process_and_cleans_it_up(self) -> None:
         sitl_process = Mock(pid=90210)
         process_starter = Mock(return_value=sitl_process)
         command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
         readiness_check = Mock(return_value=True)
-        terminate_group = Mock()
+        terminate_process = Mock()
         sleep = Mock()
         runner = ScenarioRunner(
             command_runner=command_runner,
             sitl_command=("./simulation/gazebo/launch/run_px4_gazebo_headless.zsh", "base"),
             process_starter=process_starter,
             readiness_check=readiness_check,
-            terminate_process_group=terminate_group,
+            terminate_process=terminate_process,
             sleep=sleep,
         )
 
@@ -136,25 +136,25 @@ class HeadlessScenarioTests(unittest.TestCase):
             runner.run(P0_SCENARIOS[:1], Path(temporary_directory))
 
         self.assertEqual(process_starter.call_args.args[0], runner.sitl_command)
-        self.assertEqual(process_starter.call_args.kwargs["process_group"], 0)
+        self.assertNotIn("process_group", process_starter.call_args.kwargs)
         self.assertNotIn("start_new_session", process_starter.call_args.kwargs)
         self.assertIs(process_starter.call_args.kwargs["stdin"], subprocess.DEVNULL)
         self.assertIs(process_starter.call_args.kwargs["stdout"], subprocess.DEVNULL)
         self.assertIs(process_starter.call_args.kwargs["stderr"], subprocess.DEVNULL)
         readiness_check.assert_called_once_with(sitl_process)
         sleep.assert_called_once_with(45.0)
-        terminate_group.assert_called_once_with(90210)
+        terminate_process.assert_called_once_with(90210)
 
     def test_runner_reports_readiness_failure_and_still_cleans_up_sitl(self) -> None:
         sitl_process = Mock(pid=90210)
         command_runner = Mock()
-        terminate_group = Mock()
+        terminate_process = Mock()
         runner = ScenarioRunner(
             command_runner=command_runner,
             sitl_command=("sitl",),
             process_starter=Mock(return_value=sitl_process),
             readiness_check=Mock(return_value=False),
-            terminate_process_group=terminate_group,
+            terminate_process=terminate_process,
             sleep=Mock(),
         )
 
@@ -165,7 +165,7 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertEqual(command_runner.call_count, 0)
         self.assertEqual(report["overall_status"], "failed")
         self.assertEqual(report["results"][0]["status"], "blocked")
-        terminate_group.assert_called_once_with(90210)
+        terminate_process.assert_called_once_with(90210)
 
     def test_runner_retries_a_transient_sitl_start_failure(self) -> None:
         sitl_process = Mock(pid=90210)
@@ -177,7 +177,7 @@ class HeadlessScenarioTests(unittest.TestCase):
             sitl_command=("sitl",),
             process_starter=process_starter,
             readiness_check=Mock(return_value=True),
-            terminate_process_group=Mock(),
+            terminate_process=Mock(),
             sleep=sleep,
         )
 
@@ -189,7 +189,7 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertEqual(report["overall_status"], "passed")
         sleep.assert_any_call(1.0)
 
-    def test_isolated_cli_process_uses_a_process_group_not_a_new_session(self) -> None:
+    def test_isolated_cli_process_does_not_request_a_new_session_or_process_group(self) -> None:
         process = Mock(returncode=0)
         process.poll.return_value = 0
         process.communicate.return_value = ("ok", "")
@@ -203,7 +203,7 @@ class HeadlessScenarioTests(unittest.TestCase):
                     Path(temporary_directory) / "mission-artifacts" / scenario.identifier,
                 )
 
-        self.assertEqual(starter.call_args.kwargs["process_group"], 0)
+        self.assertNotIn("process_group", starter.call_args.kwargs)
         self.assertNotIn("start_new_session", starter.call_args.kwargs)
 
     def test_runner_marks_a_nonzero_process_as_failed_without_stopping_matrix(self) -> None:

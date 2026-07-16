@@ -28,7 +28,7 @@ class CompletedProcess(Protocol):
 CommandRunner = Callable[..., CompletedProcess]
 ProcessStarter = Callable[..., "ManagedProcess"]
 ReadinessCheck = Callable[["ManagedProcess"], bool]
-ProcessGroupTerminator = Callable[[int], None]
+ProcessTerminator = Callable[[int], None]
 
 
 class ManagedProcess(Protocol):
@@ -131,7 +131,7 @@ class ScenarioRunner:
         sitl_command: tuple[str, ...] | None = None,
         process_starter: ProcessStarter = subprocess.Popen,
         readiness_check: ReadinessCheck | None = None,
-        terminate_process_group: ProcessGroupTerminator | None = None,
+        terminate_process: ProcessTerminator | None = None,
         scenario_timeout_s: float = 120.0,
         startup_wait_s: float = 45.0,
         sitl_start_attempts: int = 2,
@@ -146,7 +146,7 @@ class ScenarioRunner:
         self.sitl_command = sitl_command
         self._process_starter = process_starter
         self._readiness_check = readiness_check or _process_started
-        self._terminate_process_group = terminate_process_group or _terminate_process_group
+        self._terminate_process = terminate_process or _terminate_process
         self._scenario_timeout_s = scenario_timeout_s
         self._startup_wait_s = startup_wait_s
         self._sitl_start_attempts = sitl_start_attempts
@@ -298,14 +298,10 @@ class ScenarioRunner:
     def _run_isolated_scenario(
         self, scenario: Scenario, command: tuple[str, ...], artifact_directory: Path
     ) -> ScenarioResult:
-        """Run a mission in its own process group so a timeout cannot leak MAVSDK children."""
+        """Run a bounded mission; its CLI shuts down its MAVSDK child in ``finally``."""
         process = subprocess.Popen(
             command,
             cwd=self._project_root,
-            # A dedicated process group is enough for killpg-based cleanup.  Unlike
-            # start_new_session (setsid), setpgid avoids the intermittent EPERM
-            # observed while repeatedly launching isolated processes on macOS.
-            process_group=0,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -314,16 +310,16 @@ class ScenarioRunner:
         while process.poll() is None and time.monotonic() < deadline:
             artifact = _latest_artifact(artifact_directory)
             if artifact is not None:
-                os.killpg(process.pid, signal.SIGTERM)
+                process.terminate()
                 stdout, stderr = process.communicate(timeout=5.0)
                 return self._result_from_artifact(scenario, command, stdout, stderr, artifact_directory, artifact)
             time.sleep(0.1)
         if process.poll() is None:
-            os.killpg(process.pid, signal.SIGTERM)
+            process.terminate()
             try:
                 stdout, stderr = process.communicate(timeout=5.0)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                process.kill()
                 stdout, stderr = process.communicate()
             return self._result_from_process(
                 scenario, command, -1, stdout or "", f"{stderr or ''}\nScenario timeout after {self._scenario_timeout_s:g}s.", artifact_directory, "failed"
@@ -356,10 +352,6 @@ class ScenarioRunner:
                 return self._process_starter(
                     self.sitl_command,
                     cwd=self._project_root,
-                    # The runner only needs a unique process group to terminate the
-                    # launcher and all of its children.  A full new session uses
-                    # setsid and can intermittently fail with EPERM on macOS.
-                    process_group=0,
                     # The process is intentionally long-lived and its output is never
                     # consumed here.  Keeping it in pipes can block PX4 once a pipe
                     # fills, preventing MAVLink from ever becoming available.
@@ -374,12 +366,12 @@ class ScenarioRunner:
         raise AssertionError("The SITL startup retry loop must return or raise.")
 
     def _stop_sitl(self, process: ManagedProcess) -> None:
-        """Terminate the session leader, then reap it so no simulator is orphaned."""
-        self._terminate_process_group(process.pid)
+        """Terminate the launcher; its trap reaps both PX4 and Gazebo children."""
+        self._terminate_process(process.pid)
         try:
             process.wait(timeout=5.0)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.kill(process.pid, signal.SIGKILL)
             process.wait(timeout=5.0)
 
     def _blocked_result(self, scenario: Scenario, reason: str, output_directory: Path) -> ScenarioResult:
@@ -425,9 +417,9 @@ def _process_started(process: ManagedProcess) -> bool:
     return process.pid > 0
 
 
-def _terminate_process_group(process_group_id: int) -> None:
-    """Stop the isolated SITL session rather than only its shell wrapper."""
-    os.killpg(process_group_id, signal.SIGTERM)
+def _terminate_process(process_id: int) -> None:
+    """Stop the lifecycle-owning launcher without requesting a macOS session."""
+    os.kill(process_id, signal.SIGTERM)
 
 
 def _latest_artifact(directory: Path) -> Path | None:

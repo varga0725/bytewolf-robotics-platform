@@ -61,8 +61,25 @@ if [[ ! -x "$PX4_BINARY" ]]; then
   exit 2
 fi
 
+PX4_PID=0
+
+stop_child() {
+  local child_pid=$1
+  if (( child_pid > 0 )) && kill -0 "$child_pid" 2>/dev/null; then
+    kill -TERM "$child_pid" 2>/dev/null || true
+    sleep 1
+  fi
+  if (( child_pid > 0 )) && kill -0 "$child_pid" 2>/dev/null; then
+    kill -KILL "$child_pid" 2>/dev/null || true
+  fi
+}
+
 cleanup() {
-  kill "$GZ_SERVER_PID" 2>/dev/null || true
+  trap - EXIT INT TERM
+  stop_child "$PX4_PID"
+  stop_child "$GZ_SERVER_PID"
+  wait "$PX4_PID" 2>/dev/null || true
+  wait "$GZ_SERVER_PID" 2>/dev/null || true
 }
 
 print "Headless Gazebo szerver indítása: $WORLD"
@@ -82,4 +99,6 @@ print "Headless PX4 SITL indítása: $TARGET a(z) $WORLD worldben"
 # once the pipe fills, PX4 blocks before MAVLink becomes available.  Daemon mode
 # starts the same SITL stack without the interactive shell.
 cd "$PX4_BUILD_DIR"
-PX4_SIM_MODEL="$TARGET" "$PX4_BINARY" -d "$PX4_BUILD_DIR/rootfs"
+PX4_SIM_MODEL="$TARGET" "$PX4_BINARY" -d "$PX4_BUILD_DIR/rootfs" &
+PX4_PID=$!
+wait "$PX4_PID"

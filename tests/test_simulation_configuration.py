@@ -58,6 +58,14 @@ class SimulationConfigurationTests(unittest.TestCase):
         self.assertIn('PX4_BINARY="$PX4_BUILD_DIR/bin/px4"', launcher)
         self.assertIn('"$PX4_BINARY" -d', launcher)
 
+    def test_headless_launcher_owns_and_reaps_both_simulator_children(self) -> None:
+        launcher = (ROOT / "simulation/gazebo/launch/run_px4_gazebo_headless.zsh").read_text()
+
+        self.assertIn('PX4_PID=$!', launcher)
+        self.assertIn('stop_child "$PX4_PID"', launcher)
+        self.assertIn('stop_child "$GZ_SERVER_PID"', launcher)
+        self.assertIn('kill -KILL "$child_pid"', launcher)
+
 
 if __name__ == "__main__":
     unittest.main()
