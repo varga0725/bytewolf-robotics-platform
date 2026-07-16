@@ -4,3 +4,4 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 PX4-Autopilot
+var/mission-runs/
