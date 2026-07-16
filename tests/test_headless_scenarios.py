@@ -53,6 +53,7 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertEqual(completed.call_count, 1)
         invocation = completed.call_args.args[0]
         self.assertEqual(invocation[1:3], ("-m", "brain.cli.fly_takeoff_hover_land"))
+        self.assertIn("--mavsdk-server-port", invocation)
         self.assertIn('"status": "passed"', report)
         self.assertIn('"takeoff-hover-land"', report)
         self.assertIn("mission complete", report)
@@ -69,6 +70,23 @@ class HeadlessScenarioTests(unittest.TestCase):
         first_directory = first_report["results"][0]["artifact_directory"]
         second_directory = second_report["results"][0]["artifact_directory"]
         self.assertNotEqual(first_directory, second_directory)
+
+    def test_runner_assigns_distinct_mavsdk_ports_to_distinct_run_directories(self) -> None:
+        completed = Mock(return_value=Mock(returncode=0, stdout="", stderr=""))
+        timestamp = datetime(2026, 7, 16, 10, 30, tzinfo=UTC)
+
+        with TemporaryDirectory() as temporary_directory:
+            runner = ScenarioRunner(command_runner=completed, now=lambda: timestamp)
+            runner.run(P0_SCENARIOS[:1], Path(temporary_directory))
+            first_port = completed.call_args.args[0][
+                completed.call_args.args[0].index("--mavsdk-server-port") + 1
+            ]
+            runner.run(P0_SCENARIOS[:1], Path(temporary_directory))
+            second_port = completed.call_args.args[0][
+                completed.call_args.args[0].index("--mavsdk-server-port") + 1
+            ]
+
+        self.assertNotEqual(first_port, second_port)
 
     def test_runner_passes_a_expected_safety_rejection_and_assigns_artifact_directory(self) -> None:
         scenario = Scenario(

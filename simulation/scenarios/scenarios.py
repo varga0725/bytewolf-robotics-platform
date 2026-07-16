@@ -6,6 +6,7 @@ import argparse
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -271,6 +272,8 @@ class ScenarioRunner:
             "-m",
             scenario.module,
             *scenario.arguments,
+            "--mavsdk-server-port",
+            str(_mavsdk_server_port(output_directory, scenario)),
             "--artifact-dir",
             str(artifact_directory),
         )
@@ -426,6 +429,12 @@ def _latest_artifact(directory: Path) -> Path | None:
     """Return the only immutable artifact expected for a bounded CLI invocation."""
     artifacts = tuple(directory.glob("*.json")) if directory.exists() else ()
     return artifacts[0] if len(artifacts) == 1 else None
+
+
+def _mavsdk_server_port(output_directory: Path, scenario: Scenario) -> int:
+    """Derive an isolated local gRPC port from immutable run identity and scenario."""
+    identity = f"{output_directory.resolve()}:{scenario.identifier}".encode("utf-8")
+    return 51000 + int.from_bytes(sha256(identity).digest()[:2], "big") % 10000
 
 
 def parse_arguments(arguments: Iterable[str] | None = None) -> argparse.Namespace:

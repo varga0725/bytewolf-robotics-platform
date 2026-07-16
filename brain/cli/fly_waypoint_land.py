@@ -32,6 +32,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--connection-timeout", type=float, default=15.0)
     parser.add_argument("--preflight-wait-seconds", type=float, default=120.0)
     parser.add_argument(
+        "--mavsdk-server-port",
+        type=int,
+        default=50051,
+        help="Local gRPC port for the MAVSDK server owned by this invocation.",
+    )
+    parser.add_argument(
         "--artifact-dir",
         type=Path,
         default=None,
@@ -62,7 +68,7 @@ async def run(arguments: argparse.Namespace) -> None:
             waypoint_timeout_s=arguments.waypoint_timeout,
         )
         safety_decision = "approved"
-        system = System()
+        system = System(port=arguments.mavsdk_server_port)
         adapter = MavsdkMissionAdapter(system, safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
