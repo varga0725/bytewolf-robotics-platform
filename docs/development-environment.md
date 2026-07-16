@@ -91,6 +91,16 @@ A kapu automatizált mérése:
 .venv/bin/python -m simulation.headless.scenarios --runs 10
 ```
 
+Apple Silicon nightly vagy kézi regressziós belépési pont:
+
+```zsh
+./simulation/launch/run_p0_nightly.zsh
+```
+
+A mátrix a nominális repülések mellett valós SITL waypoint-timeout → egyszeri
+land fallback és elérhetetlen MAVLink-végpont → arm előtti fail-closed linkhiba
+scenariót is futtat.
+
 A `p0-repeatability-*.json` összesítő minden nominális scenario külön
 sikerarányát tartalmazza. Takeoff, waypoint és RTL egyaránt legalább 0,9 arányt
 kell elérjen; a tiltott magasság biztonsági elutasításának minden körben sikeres

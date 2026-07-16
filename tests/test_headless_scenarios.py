@@ -16,7 +16,10 @@ class HeadlessScenarioTests(unittest.TestCase):
     def test_p0_matrix_covers_the_bounded_flight_commands(self) -> None:
         self.assertEqual(
             tuple(scenario.identifier for scenario in P0_SCENARIOS),
-            ("takeoff-hover-land", "waypoint-land", "return-to-home", "reject-unsafe-altitude"),
+            (
+                "takeoff-hover-land", "waypoint-land", "return-to-home", "reject-unsafe-altitude",
+                "waypoint-timeout-fallback", "link-unavailable",
+            ),
         )
         self.assertTrue(all(scenario.module.startswith("brain.cli.") for scenario in P0_SCENARIOS))
         self.assertTrue(all(scenario.version == "p0.v1" for scenario in P0_SCENARIOS))

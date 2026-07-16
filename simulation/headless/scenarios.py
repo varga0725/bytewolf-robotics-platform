@@ -96,6 +96,22 @@ P0_SCENARIOS: tuple[Scenario, ...] = (
         fallback_expectation="no-flight-command",
         expected_returncode=1,
     ),
+    Scenario(
+        "waypoint-timeout-fallback",
+        "brain.cli.fly_waypoint_land",
+        ("--waypoint-timeout", "0.01"),
+        safety_rejection="must-record-timeout-and-fallback",
+        fallback_expectation="land-once-after-waypoint-timeout",
+        expected_returncode=1,
+    ),
+    Scenario(
+        "link-unavailable",
+        "brain.cli.fly_takeoff_hover_land",
+        ("--endpoint", "udpin://0.0.0.0:14541", "--connection-timeout", "2"),
+        safety_rejection="must-fail-closed-before-arm-on-link-loss",
+        fallback_expectation="no-flight-command",
+        expected_returncode=1,
+    ),
 )
 
 

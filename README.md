@@ -67,6 +67,12 @@ before a PX4 flight command. The nominal scenarios remain the inputs for the
 .venv/bin/python -m simulation.headless.scenarios --runs 10
 ```
 
+For the documented Apple Silicon nightly/manual gate, use:
+
+```zsh
+./simulation/launch/run_p0_nightly.zsh
+```
+
 The resulting `p0-repeatability-*.json` reports the independent pass rate for
 takeoff-hover-land, waypoint, and RTL. Each must meet the 90% threshold; the
 safety-rejection scenario must pass on every run.
