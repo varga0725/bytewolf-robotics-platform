@@ -105,6 +105,7 @@ class ScenarioRunner:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._command_runner = command_runner
+        self._uses_default_command_runner = command_runner is subprocess.run
         self._now = now or (lambda: datetime.now(UTC))
         self._python_executable = python_executable
         self._project_root = project_root or Path(__file__).resolve().parents[2]
@@ -152,6 +153,8 @@ class ScenarioRunner:
 
     def _run_scenario(self, scenario: Scenario) -> ScenarioResult:
         command = (self._python_executable, "-m", scenario.module, *scenario.arguments)
+        if self._uses_default_command_runner:
+            return self._run_isolated_scenario(scenario, command)
         try:
             completed = self._command_runner(
                 command,
@@ -168,6 +171,32 @@ class ScenarioRunner:
                 scenario, command, -1, stdout, f"{stderr}\nScenario timeout after {self._scenario_timeout_s:g}s.", "failed"
             )
         return self._result_from_process(scenario, command, completed.returncode, completed.stdout, completed.stderr)
+
+    def _run_isolated_scenario(
+        self, scenario: Scenario, command: tuple[str, ...]
+    ) -> ScenarioResult:
+        """Run a mission in its own process group so a timeout cannot leak MAVSDK children."""
+        process = subprocess.Popen(
+            command,
+            cwd=self._project_root,
+            start_new_session=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=self._scenario_timeout_s)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                stdout, stderr = process.communicate(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                stdout, stderr = process.communicate()
+            return self._result_from_process(
+                scenario, command, -1, stdout or "", f"{stderr or ''}\nScenario timeout after {self._scenario_timeout_s:g}s.", "failed"
+            )
+        return self._result_from_process(scenario, command, process.returncode, stdout, stderr)
 
     def _start_sitl(self) -> ManagedProcess | None:
         if self.sitl_command is None:
