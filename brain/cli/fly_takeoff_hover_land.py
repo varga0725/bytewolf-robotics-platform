@@ -50,6 +50,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 
 async def run(arguments: argparse.Namespace) -> None:
     execution = MissionExecution.empty()
+    system = None
     adapter: MavsdkMissionAdapter | None = None
     safety_decision = "not-evaluated"
     outcome = "failed"
@@ -66,7 +67,8 @@ async def run(arguments: argparse.Namespace) -> None:
         gate = SafetyGate(profile.flight_limits())
         mission = authorize_takeoff_hover_land(gate, arguments.altitude, arguments.hover_seconds)
         safety_decision = "approved"
-        adapter = MavsdkMissionAdapter(System(), safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
+        system = System()
+        adapter = MavsdkMissionAdapter(system, safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
 
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
@@ -91,6 +93,8 @@ async def run(arguments: argparse.Namespace) -> None:
             failure_reason,
             getattr(adapter, "preflight_telemetry", None),
         )
+        if system is not None:
+            getattr(system, "_stop_mavsdk_server", lambda: None)()
 
 
 def main(arguments: Sequence[str] | None = None) -> None:
