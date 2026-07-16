@@ -227,15 +227,25 @@ class MavsdkMissionAdapter:
     async def _require_preflight(self) -> None:
         """Verify PX4 telemetry before issuing any configuration or flight command."""
         deadline = asyncio.get_running_loop().time() + self._preflight_wait_s
+        health_stream = self._drone.telemetry.health()
+        first_sample = True
         while True:
-            health = await self._first_telemetry_sample(self._drone.telemetry.health(), "health")
-            if self._has_required_navigation_health(health):
-                break
-            if asyncio.get_running_loop().time() >= deadline:
+            remaining_s = deadline - asyncio.get_running_loop().time()
+            if remaining_s < 0 and not first_sample:
                 raise MissionPreflightError(
                     "Preflight rejected: health indicates global position or home position is not ready."
                 )
-            await self._sleep(1.0)
+            try:
+                health = await asyncio.wait_for(anext(health_stream), timeout=max(remaining_s, 0.01))
+            except TimeoutError as error:
+                raise MissionPreflightError(
+                    "Preflight rejected: health indicates global position or home position is not ready."
+                ) from error
+            except StopAsyncIteration as error:
+                raise MissionPreflightError("Preflight rejected: health telemetry is unavailable.") from error
+            if self._has_required_navigation_health(health):
+                break
+            first_sample = False
 
         home = await self._first_telemetry_sample(self._drone.telemetry.home(), "home")
         self._require_global_position(home, "home")

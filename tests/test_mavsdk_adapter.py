@@ -139,6 +139,23 @@ class UnhealthyDrone(FakeDrone):
         self.telemetry = UnhealthyTelemetry()
 
 
+class BecomingHealthyTelemetry(FakeTelemetry):
+    def __init__(self) -> None:
+        super().__init__()
+        self.health_calls = 0
+
+    async def health(self):
+        self.health_calls += 1
+        yield Health(global_position_ok=False, home_position_ok=False)
+        yield Health(global_position_ok=True, home_position_ok=True)
+
+
+class BecomingHealthyDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = BecomingHealthyTelemetry()
+
+
 class MissingHomeTelemetry(FakeTelemetry):
     async def home(self):
         if False:
@@ -169,6 +186,16 @@ class GnssDropoutDrone(FakeDrone):
 
 
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_waits_on_one_health_stream_until_navigation_is_ready(self) -> None:
+        drone = BecomingHealthyDrone()
+        adapter = MavsdkMissionAdapter(drone, preflight_wait_s=1.0)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.0)
+
+        await adapter.execute(mission)
+
+        self.assertEqual(drone.events[0], ("set_takeoff_altitude", 2.0))
+        self.assertEqual(drone.telemetry.health_calls, 1)
+
     async def test_rejects_unhealthy_vehicle_before_any_action(self) -> None:
         drone = UnhealthyDrone()
         adapter = MavsdkMissionAdapter(drone)

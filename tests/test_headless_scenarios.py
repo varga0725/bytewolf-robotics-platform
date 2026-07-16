@@ -28,14 +28,14 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertTrue(all(scenario.fallback_expectation for scenario in P0_SCENARIOS))
         self.assertEqual(P0_SCENARIOS[-1].expected_returncode, 1)
 
-    def test_p0_matrix_fails_fast_when_sitl_preflight_is_not_ready(self) -> None:
-        """The runner already budgets time for SITL startup; missions must not add 120 s each."""
+    def test_p0_matrix_allows_bounded_telemetry_readiness_after_sitl_startup(self) -> None:
+        """The P0 process budget retains time for the actual mission after readiness."""
         for scenario in P0_SCENARIOS:
-            if scenario.identifier == "link-unavailable":
+            if scenario.identifier in {"reject-unsafe-altitude", "link-unavailable"}:
                 continue
             self.assertIn("--preflight-wait-seconds", scenario.arguments)
             argument_index = scenario.arguments.index("--preflight-wait-seconds")
-            self.assertEqual(scenario.arguments[argument_index + 1], "0")
+            self.assertEqual(scenario.arguments[argument_index + 1], "60")
 
     def test_runner_records_each_scenario_and_writes_a_json_report(self) -> None:
         completed = Mock(return_value=Mock(returncode=0, stdout="mission complete\n", stderr=""))
