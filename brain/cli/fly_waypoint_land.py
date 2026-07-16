@@ -40,6 +40,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 
 async def run(arguments: argparse.Namespace) -> None:
     execution = MissionExecution.empty()
+    adapter: MavsdkMissionAdapter | None = None
+    safety_decision = "not-evaluated"
+    outcome = "failed"
+    failure_reason: str | None = None
     try:
         from mavsdk import System
 
@@ -54,6 +58,7 @@ async def run(arguments: argparse.Namespace) -> None:
             hover_duration_s=arguments.hover_seconds,
             waypoint_timeout_s=arguments.waypoint_timeout,
         )
+        safety_decision = "approved"
         adapter = MavsdkMissionAdapter(System(), safety_profile=profile)
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
@@ -62,9 +67,22 @@ async def run(arguments: argparse.Namespace) -> None:
             f"{mission.waypoint.north_m:g} m north and {mission.waypoint.east_m:g} m east, then land."
         )
         execution = await adapter.execute_waypoint_mission(mission)
+        outcome = "completed"
         print("Mission completed: " + " -> ".join(event.phase.value for event in execution.events))
+    except Exception as error:
+        if safety_decision == "not-evaluated":
+            safety_decision = "rejected"
+        failure_reason = f"{type(error).__name__}: {error}"
+        raise
     finally:
-        write_run_artifact(getattr(arguments, "artifact_dir", None), execution)
+        write_run_artifact(
+            getattr(arguments, "artifact_dir", None),
+            execution,
+            safety_decision,
+            outcome,
+            failure_reason,
+            getattr(adapter, "preflight_telemetry", None),
+        )
 
 
 def main(arguments: Sequence[str] | None = None) -> None:

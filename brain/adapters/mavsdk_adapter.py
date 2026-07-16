@@ -2,11 +2,13 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime
 from math import isfinite
 from typing import Protocol
 
 from brain.mission.commands import WaypointCommand
 from brain.mission.execution import MissionExecution, MissionPhase
+from brain.mission.artifacts import MissionTelemetrySnapshot
 from brain.mission.flight import (
     TakeoffHoverLandMission,
     TakeoffReturnToHomeMission,
@@ -70,6 +72,12 @@ class MavsdkMissionAdapter:
         self._sleep = sleep
         self._runtime_policy = runtime_policy or load_runtime_policy()
         self._safety_profile = safety_profile or load_safety_profile()
+        self._preflight_telemetry: MissionTelemetrySnapshot | None = None
+
+    @property
+    def preflight_telemetry(self) -> MissionTelemetrySnapshot | None:
+        """The immutable evidence captured immediately before mission authorization."""
+        return self._preflight_telemetry
 
     async def connect(self, system_address: str) -> None:
         await self._drone.connect(system_address=system_address)
@@ -231,13 +239,25 @@ class MavsdkMissionAdapter:
         self._require_global_position(position, "global position")
 
         battery = await self._first_telemetry_sample(self._drone.telemetry.battery(), "battery")
+        remaining_percent: float | None
         try:
             remaining_percent = self._battery_percent(battery)
         except MissionPreflightError:
             if self._safety_profile.allow_missing_battery_telemetry:
-                return
-            raise
-        if remaining_percent < self._safety_profile.minimum_battery_percent_to_start:
+                remaining_percent = None
+            else:
+                raise
+        self._preflight_telemetry = MissionTelemetrySnapshot(
+            captured_at=datetime.now(UTC),
+            navigation_ready=True,
+            home_position_valid=True,
+            global_position_valid=True,
+            battery_percent=remaining_percent,
+        )
+        if (
+            remaining_percent is not None
+            and remaining_percent < self._safety_profile.minimum_battery_percent_to_start
+        ):
             required = self._safety_profile.minimum_battery_percent_to_start
             raise MissionPreflightError(
                 f"Preflight rejected: battery is {remaining_percent:.1f}%, below the required {required:.1f}%."

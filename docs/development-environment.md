@@ -65,3 +65,9 @@ küldetés a determinisztikus SafetyGate-en halad át, mielőtt parancs kerülne
 PX4-hez. A waypoint közbeni érvénytelen GPS-minta (hiányzó, nem véges vagy
 tartományon kívüli koordináta) nem válhat új navigációs paranccsá; levegőben a
 futás egyetlen korlátozott land fallbackkel zárul.
+
+Minden CLI-küldetés `v0.2` immutábilis JSON audit-artifactot ír. A fájl a
+safety-döntést, a végkimenetelt, az esetleges hibaokot, az állapotátmeneteket és
+az arm előtti navigation/home/global-position/battery telemetria-snapshotot
+tartalmazza. Tesztfutáshoz adj meg külön könyvtárat, például
+`--artifact-dir simulation/artifacts/manual`.

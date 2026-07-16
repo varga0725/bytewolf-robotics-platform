@@ -10,7 +10,27 @@ from brain.mission.execution import MissionEvent, MissionExecution
 
 
 DEFAULT_MISSION_RUNS_DIRECTORY = Path(__file__).resolve().parents[2] / "var/mission-runs"
-MISSION_AUDIT_ARTIFACT_VERSION = "v0.1"
+MISSION_AUDIT_ARTIFACT_VERSION = "v0.2"
+
+
+@dataclass(frozen=True)
+class MissionTelemetrySnapshot:
+    """Immutable preflight telemetry evidence attached to one mission artifact."""
+
+    captured_at: datetime
+    navigation_ready: bool
+    home_position_valid: bool
+    global_position_valid: bool
+    battery_percent: float | None
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "battery_percent": self.battery_percent,
+            "captured_at": _format_timestamp(self.captured_at),
+            "global_position_valid": self.global_position_valid,
+            "home_position_valid": self.home_position_valid,
+            "navigation_ready": self.navigation_ready,
+        }
 
 
 @dataclass(frozen=True)
@@ -21,6 +41,10 @@ class MissionAuditArtifact:
     run_id: str
     recorded_at: datetime
     events: tuple[MissionEvent, ...]
+    safety_decision: str = "not-evaluated"
+    outcome: str = "failed"
+    failure_reason: str | None = None
+    telemetry: MissionTelemetrySnapshot | None = None
 
     @classmethod
     def from_execution(
@@ -28,6 +52,10 @@ class MissionAuditArtifact:
         run_id: str,
         execution: MissionExecution,
         recorded_at: datetime | None = None,
+        safety_decision: str = "not-evaluated",
+        outcome: str = "failed",
+        failure_reason: str | None = None,
+        telemetry: MissionTelemetrySnapshot | None = None,
     ) -> "MissionAuditArtifact":
         """Capture an execution without retaining mutable storage state."""
         return cls(
@@ -35,6 +63,10 @@ class MissionAuditArtifact:
             run_id=run_id,
             recorded_at=recorded_at or datetime.now(UTC),
             events=execution.events,
+            safety_decision=safety_decision,
+            outcome=outcome,
+            failure_reason=failure_reason,
+            telemetry=telemetry,
         )
 
     def to_document(self) -> dict[str, object]:
@@ -46,6 +78,10 @@ class MissionAuditArtifact:
             ],
             "recorded_at": _format_timestamp(self.recorded_at),
             "run_id": self.run_id,
+            "safety_decision": self.safety_decision,
+            "outcome": self.outcome,
+            "failure_reason": self.failure_reason,
+            "telemetry": self.telemetry.to_document() if self.telemetry else None,
             "version": self.version,
         }
 

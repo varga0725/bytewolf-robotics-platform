@@ -52,8 +52,10 @@ class CliMissionArtifactTests(unittest.TestCase):
                 self.assertEqual(len(artifact_paths), 1)
                 artifact = json.loads(artifact_paths[0].read_text(encoding="utf-8"))
                 UUID(artifact["run_id"])
-                self.assertEqual(artifact["version"], "v0.1")
+                self.assertEqual(artifact["version"], "v0.2")
                 self.assertEqual(artifact["events"][0]["phase"], "arming")
+                self.assertEqual(artifact["safety_decision"], "approved")
+                self.assertEqual(artifact["outcome"], "completed")
 
     def test_each_cli_writes_an_artifact_before_reraising_a_failure(self) -> None:
         for module, authorizer_name, _ in CLI_CASES:
@@ -73,6 +75,9 @@ class CliMissionArtifactTests(unittest.TestCase):
                 artifact = json.loads(artifact_paths[0].read_text(encoding="utf-8"))
                 UUID(artifact["run_id"])
                 self.assertEqual(artifact["events"], [])
+                self.assertEqual(artifact["safety_decision"], "rejected")
+                self.assertEqual(artifact["outcome"], "failed")
+                self.assertIn("mission rejected", artifact["failure_reason"])
 
 
 if __name__ == "__main__":

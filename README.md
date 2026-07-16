@@ -74,6 +74,11 @@ possible.
 The mission layer creates high-level immutable commands only. PX4 remains
 responsible for stabilization and motor control. Each completed mission returns
 an immutable audit trail: `arming -> taking_off -> hovering -> landing -> completed`.
+Every CLI invocation also writes a versioned `v0.2` JSON artifact. It records
+the safety decision, terminal outcome, any failure reason, state transitions,
+and the preflight snapshot (navigation/home/global-position readiness and
+battery percentage when available). Use `--artifact-dir <directory>` to keep
+the artifacts beside a particular test run.
 
 ## Waypoint foundation
 
