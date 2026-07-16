@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from typing import Protocol
+from uuid import uuid4
 
 
 class CompletedProcess(Protocol):
@@ -152,6 +153,9 @@ class ScenarioRunner:
         """Run every scenario and write one JSON report, including failures."""
         scenario_matrix = tuple(scenarios)
         timestamp = self._now().astimezone(UTC)
+        run_output_directory = output_directory / "runs" / (
+            f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex}"
+        )
         sitl_process: ManagedProcess | None = None
         try:
             sitl_process = self._start_sitl()
@@ -159,16 +163,16 @@ class ScenarioRunner:
                 self._sleep(self._startup_wait_s)
             if sitl_process is not None and not self._readiness_check(sitl_process):
                 results = tuple(
-                    self._blocked_result(scenario, "SITL readiness check failed.", output_directory)
+                    self._blocked_result(scenario, "SITL readiness check failed.", run_output_directory)
                     for scenario in scenario_matrix
                 )
             else:
                 results = tuple(
-                    self._run_scenario(scenario, output_directory) for scenario in scenario_matrix
+                    self._run_scenario(scenario, run_output_directory) for scenario in scenario_matrix
                 )
         except OSError as error:
             results = tuple(
-                self._blocked_result(scenario, f"Could not start SITL: {error}.", output_directory)
+                self._blocked_result(scenario, f"Could not start SITL: {error}.", run_output_directory)
                 for scenario in scenario_matrix
             )
         finally:

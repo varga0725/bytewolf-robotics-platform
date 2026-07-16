@@ -56,6 +56,19 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertIn('"takeoff-hover-land"', report)
         self.assertIn("mission complete", report)
 
+    def test_runner_uses_a_fresh_artifact_directory_for_each_invocation(self) -> None:
+        completed = Mock(return_value=Mock(returncode=0, stdout="", stderr=""))
+        timestamp = datetime(2026, 7, 16, 10, 30, tzinfo=UTC)
+
+        with TemporaryDirectory() as temporary_directory:
+            runner = ScenarioRunner(command_runner=completed, now=lambda: timestamp)
+            first_report = json.loads(runner.run(P0_SCENARIOS[:1], Path(temporary_directory)).read_text())
+            second_report = json.loads(runner.run(P0_SCENARIOS[:1], Path(temporary_directory)).read_text())
+
+        first_directory = first_report["results"][0]["artifact_directory"]
+        second_directory = second_report["results"][0]["artifact_directory"]
+        self.assertNotEqual(first_directory, second_directory)
+
     def test_runner_passes_a_expected_safety_rejection_and_assigns_artifact_directory(self) -> None:
         scenario = Scenario(
             "reject-unsafe-altitude",
