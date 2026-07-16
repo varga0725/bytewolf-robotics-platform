@@ -84,6 +84,42 @@ before a PX4 flight command. The nominal scenarios remain the inputs for the
 .venv/bin/python -m simulation.scenarios.scenarios --runs 10
 ```
 
+## Run the expanded P0.v2 matrix
+
+P0.v2 adds evidence-only boot/pre-arm, the exact 2 m / 10 s nominal profile,
+a closed four-leg square, controlled HOLD/LAND interruptions, and an arm-before-
+flight geofence rejection. Every MAVSDK scenario runs in its own fresh
+PX4/Gazebo lifecycle; P0.v1 keeps its accepted shared-lifecycle behaviour.
+
+```zsh
+.venv/bin/python -m simulation.scenarios.scenarios --matrix-version p0.v2
+```
+
+The report identifies the outcome of each scenario. Treat its proof level
+carefully:
+
+- P0.v2 scenario reports are app+SITL evidence.
+- Watchdog unit/contract tests cover low battery, GNSS invalidity, and missing
+  telemetry while the MAVSDK client is alive.
+- A stopped MAVSDK process cannot send a command; PX4's configured failsafe is
+  the safety authority for that condition.
+
+To generate a concrete, inspectable 3, 6, or 10 m/s Gazebo wind world, use the
+wind-enabled PX4 source world and pass the resulting file to the launcher:
+
+```zsh
+.venv/bin/python -m simulation.gazebo.wind_profiles \
+  --speed 6 \
+  --source-world PX4-Autopilot/Tools/simulation/gz/worlds/windy.sdf \
+  --output-world simulation/artifacts/wind/wind-6.sdf
+
+PX4_GZ_WORLD_FILE="$PWD/simulation/artifacts/wind/wind-6.sdf" \
+  ./simulation/gazebo/launch/run_px4_gazebo_headless.zsh base
+```
+
+Do not label a wind or fault run as verified until its report records a
+PX4/Gazebo execution using that exact fixture.
+
 For the documented Apple Silicon nightly/manual gate, use:
 
 ```zsh

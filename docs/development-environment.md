@@ -110,6 +110,25 @@ A kapu automatizált mérése:
 .venv/bin/python -m simulation.scenarios.scenarios --runs 10
 ```
 
+## P0.v2 izolált mátrix és bizonyítási szintek
+
+Az új forgatókönyveket külön verzióval futtasd:
+
+```zsh
+.venv/bin/python -m simulation.scenarios.scenarios --matrix-version p0.v2
+```
+
+A P0.v2 MAVSDK-s forgatókönyvei egymástól független PX4/Gazebo lifecycle-ben
+indulnak. Az artifact `app+SITL` bizonyíték: a live watchdog egység- és
+szerződés-tesztjei külön fedik a low battery, GNSS-invalid és telemetria-kiesés
+esetét. Leállt MAVSDK kliensnél nem alkalmazásoldali LAND történik, hanem a
+PX4-failsafe felelőssége.
+
+Fix 3, 6 vagy 10 m/s szélhez előbb generálj world-fixture-t, majd azt add át a
+launchernek `PX4_GZ_WORLD_FILE` környezeti változóval. A pontos parancsot a
+fő README `Run the expanded P0.v2 matrix` része tartalmazza. Csak a fixture-t
+ténylegesen betöltő PX4/Gazebo report jelölhető wind-evidence-nek.
+
 Apple Silicon nightly vagy kézi regressziós belépési pont:
 
 ```zsh
