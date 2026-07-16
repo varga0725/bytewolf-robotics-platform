@@ -59,6 +59,28 @@ class BootPrearmCliTests(unittest.TestCase):
         mavsdk.System.return_value.action.assert_not_called()
         mavsdk.System.return_value._stop_mavsdk_server.assert_called_once()
 
+    def test_prearm_cli_reports_missing_permitted_battery_without_failing_formatting(self) -> None:
+        telemetry = MissionTelemetrySnapshot(
+            captured_at=__import__("datetime").datetime(2026, 7, 16, tzinfo=__import__("datetime").UTC),
+            navigation_ready=True,
+            home_position_valid=True,
+            global_position_valid=True,
+            battery_percent=None,
+        )
+        adapter = MagicMock()
+        adapter.connect = AsyncMock()
+        adapter.verify_preflight = AsyncMock(return_value=telemetry)
+        mavsdk = ModuleType("mavsdk")
+        mavsdk.System = MagicMock()  # type: ignore[attr-defined]
+        with (
+            patch.dict(sys.modules, {"mavsdk": mavsdk}),
+            patch.object(check_boot_prearm, "load_safety_profile", return_value=MagicMock()),
+            patch.object(check_boot_prearm, "MavsdkMissionAdapter", return_value=adapter),
+            patch("builtins.print") as printed,
+        ):
+            asyncio.run(check_boot_prearm.run(check_boot_prearm.parse_arguments(())))
+        self.assertIn("battery unavailable", printed.call_args_list[-1].args[0])
+
     def test_prearm_cli_failure_writes_fail_closed_artifact(self) -> None:
         adapter = MagicMock()
         adapter.connect = AsyncMock()

@@ -52,6 +52,7 @@ class Scenario:
     safety_rejection: str | None = "must-not-bypass-safety-gate"
     fallback_expectation: str = "land-once-after-airborne-failure"
     expected_returncode: int = 0
+    requires_mavsdk_server: bool = True
 
 
 @dataclass(frozen=True)
@@ -186,6 +187,7 @@ P0_V2_SCENARIOS: tuple[Scenario, ...] = (
         version="p0.v2",
         safety_rejection="must-reject-geofence-violation-before-arm",
         fallback_expectation="no-flight-command",
+        requires_mavsdk_server=False,
     ),
 )
 
@@ -342,11 +344,16 @@ class ScenarioRunner:
             "-m",
             scenario.module,
             *scenario.arguments,
-            "--mavsdk-server-port",
-            str(_mavsdk_server_port(output_directory, scenario)),
             "--artifact-dir",
             str(artifact_directory),
         )
+        if scenario.requires_mavsdk_server:
+            command = (
+                *command[:-2],
+                "--mavsdk-server-port",
+                str(_mavsdk_server_port(output_directory, scenario)),
+                *command[-2:],
+            )
         if self._uses_default_command_runner:
             return self._run_isolated_scenario(scenario, command, artifact_directory)
         try:

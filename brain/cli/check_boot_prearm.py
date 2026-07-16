@@ -95,9 +95,12 @@ async def run(arguments: argparse.Namespace) -> None:
         telemetry = await adapter.verify_preflight()
         safety_decision = "approved"
         outcome = "completed"
+        battery_description = (
+            f"{telemetry.battery_percent:.1f}%" if telemetry.battery_percent is not None else "unavailable"
+        )
         print(
             "Boot/pre-arm approved: navigation, home, global position, and battery telemetry are valid "
-            f"(battery {telemetry.battery_percent:.1f}% if reported). No flight command was sent."
+            f"(battery {battery_description}). No flight command was sent."
         )
     except Exception as error:
         if safety_decision == "not-evaluated":
