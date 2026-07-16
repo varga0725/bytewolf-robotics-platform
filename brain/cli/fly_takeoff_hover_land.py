@@ -38,6 +38,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=15.0,
         help="Maximum seconds to wait for the PX4 vehicle to be discovered.",
     )
+    parser.add_argument("--preflight-wait-seconds", type=float, default=120.0)
     parser.add_argument(
         "--artifact-dir",
         type=Path,
@@ -65,7 +66,7 @@ async def run(arguments: argparse.Namespace) -> None:
         gate = SafetyGate(profile.flight_limits())
         mission = authorize_takeoff_hover_land(gate, arguments.altitude, arguments.hover_seconds)
         safety_decision = "approved"
-        adapter = MavsdkMissionAdapter(System(), safety_profile=profile)
+        adapter = MavsdkMissionAdapter(System(), safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
 
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)

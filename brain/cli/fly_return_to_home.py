@@ -26,6 +26,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument("--endpoint", default="udpin://0.0.0.0:14540")
     parser.add_argument("--connection-timeout", type=float, default=15.0)
+    parser.add_argument("--preflight-wait-seconds", type=float, default=120.0)
     parser.add_argument(
         "--artifact-dir",
         type=Path,
@@ -58,7 +59,7 @@ async def run(arguments: argparse.Namespace) -> None:
             landing_timeout_s=arguments.landing_timeout,
         )
         safety_decision = "approved"
-        adapter = MavsdkMissionAdapter(System(), safety_profile=profile)
+        adapter = MavsdkMissionAdapter(System(), safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         print(
