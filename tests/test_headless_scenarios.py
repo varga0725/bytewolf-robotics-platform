@@ -72,12 +72,14 @@ class HeadlessScenarioTests(unittest.TestCase):
         command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
         readiness_check = Mock(return_value=True)
         terminate_group = Mock()
+        sleep = Mock()
         runner = ScenarioRunner(
             command_runner=command_runner,
             sitl_command=("./simulation/launch/run_px4_gazebo_headless.zsh", "base"),
             process_starter=process_starter,
             readiness_check=readiness_check,
             terminate_process_group=terminate_group,
+            sleep=sleep,
         )
 
         with TemporaryDirectory() as temporary_directory:
@@ -86,6 +88,7 @@ class HeadlessScenarioTests(unittest.TestCase):
         self.assertEqual(process_starter.call_args.args[0], runner.sitl_command)
         self.assertTrue(process_starter.call_args.kwargs["start_new_session"])
         readiness_check.assert_called_once_with(sitl_process)
+        sleep.assert_called_once_with(20.0)
         terminate_group.assert_called_once_with(90210)
 
     def test_runner_reports_readiness_failure_and_still_cleans_up_sitl(self) -> None:

@@ -11,6 +11,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import time
 from typing import Protocol
 
 
@@ -100,6 +101,8 @@ class ScenarioRunner:
         readiness_check: ReadinessCheck | None = None,
         terminate_process_group: ProcessGroupTerminator | None = None,
         scenario_timeout_s: float = 120.0,
+        startup_wait_s: float = 20.0,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._command_runner = command_runner
         self._now = now or (lambda: datetime.now(UTC))
@@ -110,6 +113,8 @@ class ScenarioRunner:
         self._readiness_check = readiness_check or _process_started
         self._terminate_process_group = terminate_process_group or _terminate_process_group
         self._scenario_timeout_s = scenario_timeout_s
+        self._startup_wait_s = startup_wait_s
+        self._sleep = sleep
 
     def run(self, scenarios: Iterable[Scenario], output_directory: Path) -> Path:
         """Run every scenario and write one JSON report, including failures."""
@@ -118,6 +123,8 @@ class ScenarioRunner:
         sitl_process: ManagedProcess | None = None
         try:
             sitl_process = self._start_sitl()
+            if sitl_process is not None:
+                self._sleep(self._startup_wait_s)
             if sitl_process is not None and not self._readiness_check(sitl_process):
                 results = tuple(self._blocked_result(scenario, "SITL readiness check failed.") for scenario in scenario_matrix)
             else:
