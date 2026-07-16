@@ -42,6 +42,14 @@ class SimulationConfigurationTests(unittest.TestCase):
         for dependency in ("cmake", "ninja", "gz", "brew"):
             self.assertIn(dependency, validator)
 
+    def test_headless_launcher_starts_a_gazebo_server_before_px4(self) -> None:
+        launcher = (ROOT / "simulation/launch/run_px4_gazebo_headless.zsh").read_text()
+
+        self.assertIn("gz sim -r -s", launcher)
+        self.assertIn("PX4_GZ_STANDALONE=1", launcher)
+        self.assertIn("GZ_SIM_RESOURCE_PATH", launcher)
+        self.assertIn("trap cleanup EXIT INT TERM", launcher)
+
 
 if __name__ == "__main__":
     unittest.main()
