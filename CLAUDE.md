@@ -108,9 +108,23 @@ The project treats simulation reports as proof, and the proof level is part of t
 - **PX4/Gazebo fault-injection** — only when the run actually loaded the fixture.
 
 Never label a wind or fault run verified unless its report records a PX4/Gazebo execution
-with that exact fixture. Wind worlds must be generated first
-(`simulation.gazebo.wind_profiles`) and passed via `PX4_GZ_WORLD_FILE`. The P0 gate needs
-9/10 nominal scenarios and 100% on the safety-rejection scenarios.
+with that exact fixture. The P0 gate needs 9/10 nominal scenarios and 100% on the
+safety-rejection scenarios.
+
+`simulation/gazebo/wind_profiles.py` renders wind fixtures; the P0.v2 runner builds and
+records them per scenario. A wind fixture is three inseparable parts, because Gazebo
+applies wind only to links opting in via `<enable_wind>` and only when the `WindEffects`
+system is loaded — PX4's stock X500 does neither, so its `windy` world exerts *zero* force:
+
+- the world (`PX4_GZ_WORLD_FILE`), which must declare no plugins of its own, since a world
+  plugin makes Gazebo ignore the server config entirely;
+- the wind-enabled X500 overlay (`PX4_GZ_MODELS`), rendered from PX4's read-only model;
+- the server config carrying `WindEffects` next to PX4's systems (`PX4_GZ_SERVER_CONFIG`).
+
+The wind force is scaled by `aerodynamics.linear_drag_coefficient_kg_s` in `twin.yaml`
+over the airframe mass. Gazebo's default of 1.0 is not a drag model — it accelerates the
+vehicle to wind speed. That coefficient is literature-derived, not X500-measured, and is
+backed only across 2-9 m/s, so the 10 m/s fixture reports that it extrapolates.
 
 ## Notion is the source of truth for status
 

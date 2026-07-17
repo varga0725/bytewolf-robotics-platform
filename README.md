@@ -104,21 +104,39 @@ carefully:
 - A stopped MAVSDK process cannot send a command; PX4's configured failsafe is
   the safety authority for that condition.
 
-To generate a concrete, inspectable 3, 6, or 10 m/s Gazebo wind world, use the
-wind-enabled PX4 source world and pass the resulting file to the launcher:
+The P0.v2 matrix builds its own 3, 6, and 10 m/s wind fixtures, so a wind run
+needs no manual setup; each report records the fixture it loaded. To inspect a
+fixture by hand, generate one and hand all three of its parts to the launcher:
 
 ```zsh
 .venv/bin/python -m simulation.gazebo.wind_profiles \
   --speed 6 \
   --source-world PX4-Autopilot/Tools/simulation/gz/worlds/windy.sdf \
-  --output-world simulation/artifacts/wind/wind-6.sdf
+  --output-world simulation/artifacts/wind/world.sdf \
+  --source-models PX4-Autopilot/Tools/simulation/gz/models \
+  --models-root simulation/artifacts/wind/models \
+  --source-server-config PX4-Autopilot/Tools/simulation/gz/server.config \
+  --output-server-config simulation/artifacts/wind/server.config
 
-PX4_GZ_WORLD_FILE="$PWD/simulation/artifacts/wind/wind-6.sdf" \
+PX4_GZ_WORLD=windy \
+  PX4_GZ_WORLD_FILE="$PWD/simulation/artifacts/wind/world.sdf" \
+  PX4_GZ_MODELS="$PWD/simulation/artifacts/wind/models" \
+  PX4_GZ_SERVER_CONFIG="$PWD/simulation/artifacts/wind/server.config" \
   ./simulation/gazebo/launch/run_px4_gazebo_headless.zsh base
 ```
 
+All three parts are required, and a wind world alone proves nothing. Gazebo
+applies wind only to links that opt into it, and only when the `WindEffects`
+system is loaded; PX4's stock X500 does neither, so its `windy` world exerts
+exactly zero force. The fixture supplies the wind-enabled airframe
+(`PX4_GZ_MODELS`) and the wind system (`PX4_GZ_SERVER_CONFIG`) as well as the
+world. The wind force is scaled to the twin's `aerodynamics` drag rather than
+Gazebo's default of 1.0, which drags the vehicle up to wind speed like a
+balloon instead of modelling drag.
+
 Do not label a wind or fault run as verified until its report records a
-PX4/Gazebo execution using that exact fixture.
+PX4/Gazebo execution using that exact fixture. A 10 m/s run additionally
+reports that it extrapolates the drag model beyond its 2-9 m/s backing.
 
 For the documented Apple Silicon nightly/manual gate, use:
 

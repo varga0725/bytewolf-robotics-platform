@@ -124,10 +124,21 @@ szerződés-tesztjei külön fedik a low battery, GNSS-invalid és telemetria-ki
 esetét. Leállt MAVSDK kliensnél nem alkalmazásoldali LAND történik, hanem a
 PX4-failsafe felelőssége.
 
-Fix 3, 6 vagy 10 m/s szélhez előbb generálj world-fixture-t, majd azt add át a
-launchernek `PX4_GZ_WORLD_FILE` környezeti változóval. A pontos parancsot a
-fő README `Run the expanded P0.v2 matrix` része tartalmazza. Csak a fixture-t
-ténylegesen betöltő PX4/Gazebo report jelölhető wind-evidence-nek.
+A fix 3, 6 és 10 m/s szél-fixture-öket a P0.v2 mátrix maga építi fel és rögzíti
+a riportban; kézi előkészítés nem kell. Kézi vizsgálathoz a pontos parancsot a
+fő README `Run the expanded P0.v2 matrix` része tartalmazza.
+
+Egy szél-fixture három részből áll, és mindhárom kötelező: a világ (`PX4_GZ_WORLD_FILE`),
+a szélre reagáló váz (`PX4_GZ_MODELS`) és a szélrendszert betöltő server config
+(`PX4_GZ_SERVER_CONFIG`). Önmagában a szeles világ semmit nem bizonyít: a Gazebo
+csak azokra a linkekre fejt ki szelet, amelyek `enable_wind`-del kérik, és csak akkor,
+ha a `WindEffects` rendszer be van töltve — a PX4 gyári X500-a egyiket sem teljesíti.
+A szélerő a twin `aerodynamics` légellenállásához van skálázva; a Gazebo 1.0-s
+alapértéke nem légellenállás-modell, hanem szélsebességre gyorsítja a gépet.
+
+Csak a fixture-t ténylegesen betöltő PX4/Gazebo report jelölhető wind-evidence-nek.
+A 10 m/s-os futás emellett jelzi, hogy a drag modell 2–9 m/s-os validált sávján kívül
+extrapolál.
 
 Apple Silicon nightly vagy kézi regressziós belépési pont:
 
