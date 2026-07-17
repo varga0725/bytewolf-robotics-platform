@@ -1,0 +1,194 @@
+{
+  "started_at": "2026-07-16T20:45:56.704808+00:00",
+  "overall_status": "failed",
+  "results": [
+    {
+      "identifier": "boot-prearm-check",
+      "module": "brain.cli.check_boot_prearm",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.check_boot_prearm",
+        "--preflight-wait-seconds",
+        "60",
+        "--mavsdk-server-port",
+        "55098",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/boot-prearm-check"
+      ],
+      "status": "failed",
+      "returncode": 1,
+      "stdout": "Checking PX4 boot and pre-arm telemetry at udpin://0.0.0.0:14540...\n",
+      "stderr": "Traceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/check_boot_prearm.py\", line 124, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/check_boot_prearm.py\", line 120, in main\n    asyncio.run(run(parse_arguments(arguments)))\n    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/base_events.py\", line 725, in run_until_complete\n    return future.result()\n           ~~~~~~~~~~~~~^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/check_boot_prearm.py\", line 100, in run\n    f\"(battery {telemetry.battery_percent:.1f}% if reported). No flight command was sent.\"\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: unsupported format string passed to NoneType.__format__\nException ignored in: <function System.__del__ at 0x11092f7e0>\nTraceback (most recent call last):\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/mavsdk/system.py\", line 146, in __del__\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/mavsdk/system.py\", line 186, in _stop_mavsdk_server\nImportError: sys.meta_path is None, Python is likely shutting down\n",
+      "version": "p0.v2",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-fail-closed-before-arm-if-prearm-is-invalid",
+      "fallback_expectation": "no-flight-command",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/boot-prearm-check"
+    },
+    {
+      "identifier": "takeoff-2m-hover-10s-land",
+      "module": "brain.cli.fly_takeoff_hover_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_takeoff_hover_land",
+        "--altitude",
+        "2",
+        "--hover-seconds",
+        "10",
+        "--preflight-wait-seconds",
+        "60",
+        "--mavsdk-server-port",
+        "55367",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/takeoff-2m-hover-10s-land"
+      ],
+      "status": "passed",
+      "returncode": 0,
+      "stdout": "Connecting to PX4 at udpin://0.0.0.0:14540...\nApproved: take off to 2 m, hover for 10 s, then land.\nMission completed: arming -> taking_off -> hovering -> landing -> completed\n",
+      "stderr": "",
+      "version": "p0.v2",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-not-bypass-safety-gate",
+      "fallback_expectation": "land-once-after-airborne-failure",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/takeoff-2m-hover-10s-land"
+    },
+    {
+      "identifier": "waypoint-square-land",
+      "module": "brain.cli.fly_waypoint_square_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_waypoint_square_land",
+        "--takeoff-altitude",
+        "2",
+        "--side-length",
+        "5",
+        "--waypoint-altitude",
+        "2",
+        "--hover-seconds",
+        "3",
+        "--preflight-wait-seconds",
+        "60",
+        "--mavsdk-server-port",
+        "55403",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/waypoint-square-land"
+      ],
+      "status": "passed",
+      "returncode": 0,
+      "stdout": "Connecting to PX4 at udpin://0.0.0.0:14540...\nApproved: take off to 2 m, fly a 5 m four-point square, then land.\nMission completed: arming -> taking_off -> navigating -> hovering -> landing -> completed\n",
+      "stderr": "Received ack for not-existing command: 176! Ignoring... (mavlink_command_sender.cpp:304)\n",
+      "version": "p0.v2",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-not-bypass-safety-gate",
+      "fallback_expectation": "confirm-four-corners-then-land-once",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/waypoint-square-land"
+    },
+    {
+      "identifier": "mission-interrupt-hold-cleanup-land",
+      "module": "brain.cli.fly_controlled_interruption",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_controlled_interruption",
+        "--interruption-action",
+        "hold",
+        "--interrupt-after-seconds",
+        "3",
+        "--hold-cleanup-seconds",
+        "1",
+        "--preflight-wait-seconds",
+        "60",
+        "--mavsdk-server-port",
+        "53448",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/mission-interrupt-hold-cleanup-land"
+      ],
+      "status": "passed",
+      "returncode": 0,
+      "stdout": "Connecting to PX4 at udpin://0.0.0.0:14540...\nApproved: take off to 2 m, then HOLD after 3 s.\nMission completed: arming -> taking_off -> hovering -> holding -> landing -> completed\n",
+      "stderr": "Received ack for not-existing command: 176! Ignoring... (mavlink_command_sender.cpp:304)\n",
+      "version": "p0.v2",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-not-bypass-safety-gate",
+      "fallback_expectation": "command-hold-then-cleanup-land-once",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/mission-interrupt-hold-cleanup-land"
+    },
+    {
+      "identifier": "mission-interrupt-land",
+      "module": "brain.cli.fly_controlled_interruption",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_controlled_interruption",
+        "--interruption-action",
+        "land",
+        "--interrupt-after-seconds",
+        "3",
+        "--preflight-wait-seconds",
+        "60",
+        "--mavsdk-server-port",
+        "56719",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/mission-interrupt-land"
+      ],
+      "status": "passed",
+      "returncode": 0,
+      "stdout": "Connecting to PX4 at udpin://0.0.0.0:14540...\nApproved: take off to 2 m, then LAND after 3 s.\nMission completed: arming -> taking_off -> hovering -> landing -> completed\n",
+      "stderr": "",
+      "version": "p0.v2",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-not-bypass-safety-gate",
+      "fallback_expectation": "command-land-once-after-interrupt",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/mission-interrupt-land"
+    },
+    {
+      "identifier": "reject-geofence-violation",
+      "module": "brain.cli.check_geofence_violation",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.check_geofence_violation",
+        "--mavsdk-server-port",
+        "56134",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/reject-geofence-violation"
+      ],
+      "status": "failed",
+      "returncode": 2,
+      "stdout": "",
+      "stderr": "usage: check_geofence_violation.py [-h] [--north NORTH] [--east EAST]\n                                   [--altitude ALTITUDE]\n                                   [--safety-profile SAFETY_PROFILE]\n                                   [--artifact-dir ARTIFACT_DIR]\ncheck_geofence_violation.py: error: unrecognized arguments: --mavsdk-server-port 56134\n",
+      "version": "p0.v2",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-reject-geofence-violation-before-arm",
+      "fallback_expectation": "no-flight-command",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T204556Z-6af873bc0b2843be950817fcb725a67f/mission-artifacts/reject-geofence-violation"
+    }
+  ]
+}

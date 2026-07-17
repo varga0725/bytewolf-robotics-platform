@@ -1,0 +1,31 @@
+{
+  "minimum_success_rate": 0.9,
+  "nominal_scenarios": [
+    "takeoff-hover-land",
+    "waypoint-land",
+    "return-to-home"
+  ],
+  "overall_status": "failed",
+  "repetitions": 10,
+  "run_reports": [
+    "simulation/artifacts/headless/repeatability-20260716T153832Z/run-01/p0-20260716T153832Z.json",
+    "simulation/artifacts/headless/repeatability-20260716T153832Z/run-02/p0-20260716T154025Z.json",
+    "simulation/artifacts/headless/repeatability-20260716T153832Z/run-03/p0-20260716T154218Z.json",
+    "simulation/artifacts/headless/repeatability-20260716T153832Z/run-04/p0-20260716T154412Z.json",
+    "simulation/artifacts/headless/repeatability-20260716T153832Z/run-05/p0-20260716T154607Z.json",
+    "simulation/artifacts/headless/repeatability-20260716T153832Z/run-06/p0-20260716T154802Z.json",
+    "simulation/artifacts/headless/repeatability-20260716T153832Z/run-07/p0-20260716T154959Z.json",
+    "simulation/artifacts/headless/repeatability-20260716T153832Z/run-08/p0-20260716T155156Z.json",
+    "simulation/artifacts/headless/repeatability-20260716T153832Z/run-09/p0-20260716T155336Z.json",
+    "simulation/artifacts/headless/repeatability-20260716T153832Z/run-10/p0-20260716T155530Z.json"
+  ],
+  "started_at": "2026-07-16T15:38:32.822148+00:00",
+  "success_rates": {
+    "takeoff-hover-land": 0.9,
+    "waypoint-land": 0.9,
+    "return-to-home": 0.9,
+    "reject-unsafe-altitude": 0.9,
+    "waypoint-timeout-fallback": 0.9,
+    "link-unavailable": 0.9
+  }
+}
