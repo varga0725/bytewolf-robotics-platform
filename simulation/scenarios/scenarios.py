@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 import json
@@ -16,6 +16,14 @@ import sys
 import time
 from typing import Protocol
 from uuid import uuid4
+
+from simulation.gazebo.wind_profiles import (
+    SUPPORTED_WIND_SPEEDS_M_S,
+    LinearDragModel,
+    WindProfileError,
+    create_wind_fixture,
+    load_linear_drag_model,
+)
 
 
 class CompletedProcess(Protocol):
@@ -54,6 +62,22 @@ class Scenario:
     expected_returncode: int = 0
     requires_mavsdk_server: bool = True
     requires_fresh_sitl_lifecycle: bool = False
+    # A scenario that claims a wind condition must name the speed it needs, so
+    # the runner can build the fixture and the report can prove it was loaded.
+    wind_speed_m_s: float | None = None
+
+
+@dataclass(frozen=True)
+class WindEvidence:
+    """The exact wind condition a run loaded, recorded so a claim can be audited."""
+
+    speed_m_s: float
+    world_file: str
+    server_config: str
+    models_root: str
+    scaling_factor_per_s: float
+    extrapolates_drag_model: bool
+    verification_level: str = "px4-gazebo-fault-injection"
 
 
 @dataclass(frozen=True)
@@ -73,6 +97,9 @@ class ScenarioResult:
     fallback_expectation: str
     expected_returncode: int
     artifact_directory: str
+    # Absent unless the run actually loaded a wind fixture; a wind scenario that
+    # reports no evidence here is not a wind run.
+    wind: WindEvidence | None = None
 
 
 P0_SCENARIOS: tuple[Scenario, ...] = (
@@ -195,6 +222,18 @@ P0_V2_SCENARIOS: tuple[Scenario, ...] = (
         fallback_expectation="no-flight-command",
         requires_mavsdk_server=False,
     ),
+    *(
+        Scenario(
+            f"takeoff-hover-land-wind-{speed:g}ms",
+            "brain.cli.fly_takeoff_hover_land",
+            ("--altitude", "2", "--hover-seconds", "10", "--preflight-wait-seconds", "60"),
+            version="p0.v2",
+            fallback_expectation="land-once-after-airborne-failure",
+            requires_fresh_sitl_lifecycle=True,
+            wind_speed_m_s=speed,
+        )
+        for speed in SUPPORTED_WIND_SPEEDS_M_S
+    ),
 )
 
 
@@ -216,12 +255,17 @@ class ScenarioRunner:
         sitl_start_attempts: int = 2,
         sitl_retry_delay_s: float = 1.0,
         sleep: Callable[[float], None] = time.sleep,
+        px4_root: Path | None = None,
+        twin_path: Path | None = None,
     ) -> None:
         self._command_runner = command_runner
         self._uses_default_command_runner = command_runner is subprocess.run
         self._now = now or (lambda: datetime.now(UTC))
         self._python_executable = python_executable
         self._project_root = project_root or Path(__file__).resolve().parents[2]
+        self._px4_root = px4_root or self._project_root / "PX4-Autopilot"
+        self._twin_path = twin_path or self._project_root / "shared/config/x500v2/twin.yaml"
+        self._cached_drag_model: LinearDragModel | None = None
         self.sitl_command = sitl_command
         self._process_starter = process_starter
         self._readiness_check = readiness_check or _process_started
@@ -290,19 +334,68 @@ class ScenarioRunner:
 
     def _run_with_fresh_sitl(self, scenario: Scenario, output_directory: Path) -> ScenarioResult:
         """Run one disruptive scenario against a brand-new bounded SITL lifecycle."""
+        try:
+            environment, wind = self._wind_environment(scenario, output_directory)
+        except WindProfileError as error:
+            # A wind scenario must never fall back to a still-air run: that would
+            # record a wind condition the simulation never applied.
+            return self._blocked_result(scenario, f"Could not build the wind fixture: {error}", output_directory)
+
         sitl_process: ManagedProcess | None = None
         try:
-            sitl_process = self._start_sitl()
+            sitl_process = self._start_sitl(environment)
             if sitl_process is not None:
                 self._sleep(self._startup_wait_s)
             if sitl_process is not None and not self._readiness_check(sitl_process):
-                return self._blocked_result(scenario, "SITL readiness check failed.", output_directory)
-            return self._run_scenario(scenario, output_directory)
+                return self._blocked_result(scenario, "SITL readiness check failed.", output_directory, wind)
+            return self._run_scenario(scenario, output_directory, wind)
         except OSError as error:
-            return self._blocked_result(scenario, f"Could not start SITL: {error}.", output_directory)
+            return self._blocked_result(scenario, f"Could not start SITL: {error}.", output_directory, wind)
         finally:
             if sitl_process is not None:
                 self._stop_sitl(sitl_process)
+
+    def _wind_environment(
+        self, scenario: Scenario, output_directory: Path
+    ) -> tuple[Mapping[str, str] | None, WindEvidence | None]:
+        """Build the scenario's wind fixture, or prove it needs none."""
+        if scenario.wind_speed_m_s is None:
+            return None, None
+
+        fixture_root = output_directory / "wind-fixtures" / f"{scenario.wind_speed_m_s:g}ms"
+        px4_worlds = self._px4_root / "Tools/simulation/gz/worlds"
+        fixture = create_wind_fixture(
+            px4_worlds / "windy.sdf",
+            fixture_root / "world.sdf",
+            scenario.wind_speed_m_s,
+            source_models=self._px4_root / "Tools/simulation/gz/models",
+            models_root=fixture_root / "models",
+            source_server_config=self._px4_root / "Tools/simulation/gz/server.config",
+            output_server_config=fixture_root / "server.config",
+            drag_model=self._drag_model(),
+        )
+        environment = {
+            # The fixture is derived from PX4's windy world, so PX4 must wait on
+            # and spawn into that world's own name.
+            "PX4_GZ_WORLD": "windy",
+            "PX4_GZ_WORLD_FILE": str(fixture.output_world),
+            "PX4_GZ_MODELS": str(fixture.models_root),
+            "PX4_GZ_SERVER_CONFIG": str(fixture.server_config),
+        }
+        evidence = WindEvidence(
+            speed_m_s=fixture.speed_m_s,
+            world_file=str(fixture.output_world),
+            server_config=str(fixture.server_config),
+            models_root=str(fixture.models_root),
+            scaling_factor_per_s=fixture.scaling_factor_per_s,
+            extrapolates_drag_model=fixture.extrapolates_drag_model,
+        )
+        return environment, evidence
+
+    def _drag_model(self) -> LinearDragModel:
+        if self._cached_drag_model is None:
+            self._cached_drag_model = load_linear_drag_model(self._twin_path)
+        return self._cached_drag_model
 
     def run_repeated(
         self,
@@ -370,7 +463,13 @@ class ScenarioRunner:
         )
         return aggregate_path
 
-    def _run_scenario(self, scenario: Scenario, output_directory: Path) -> ScenarioResult:
+    def _run_scenario(
+        self, scenario: Scenario, output_directory: Path, wind: WindEvidence | None = None
+    ) -> ScenarioResult:
+        """Run one scenario, stamping every outcome with the wind it actually loaded."""
+        return _with_wind(self._execute_scenario(scenario, output_directory), wind)
+
+    def _execute_scenario(self, scenario: Scenario, output_directory: Path) -> ScenarioResult:
         artifact_directory = self._artifact_directory(output_directory, scenario)
         command = (
             self._python_executable,
@@ -457,14 +556,16 @@ class ScenarioRunner:
             scenario, command, inferred_returncode, stdout, stderr, artifact_directory
         )
 
-    def _start_sitl(self) -> ManagedProcess | None:
+    def _start_sitl(self, environment: Mapping[str, str] | None = None) -> ManagedProcess | None:
         if self.sitl_command is None:
             return None
+        launch_environment = {**os.environ, **environment} if environment else None
         for attempt in range(self._sitl_start_attempts):
             try:
                 return self._process_starter(
                     self.sitl_command,
                     cwd=self._project_root,
+                    env=launch_environment,
                     # The process is intentionally long-lived and its output is never
                     # consumed here.  Keeping it in pipes can block PX4 once a pipe
                     # fills, preventing MAVLink from ever becoming available.
@@ -487,11 +588,14 @@ class ScenarioRunner:
             os.kill(process.pid, signal.SIGKILL)
             process.wait(timeout=5.0)
 
-    def _blocked_result(self, scenario: Scenario, reason: str, output_directory: Path) -> ScenarioResult:
+    def _blocked_result(
+        self, scenario: Scenario, reason: str, output_directory: Path, wind: WindEvidence | None = None
+    ) -> ScenarioResult:
         artifact_directory = self._artifact_directory(output_directory, scenario)
         command = (self._python_executable, "-m", scenario.module, *scenario.arguments)
-        return self._result_from_process(
-            scenario, command, -1, "", reason, artifact_directory, status="blocked"
+        return _with_wind(
+            self._result_from_process(scenario, command, -1, "", reason, artifact_directory, status="blocked"),
+            wind,
         )
 
     @staticmethod
@@ -523,6 +627,11 @@ class ScenarioRunner:
             expected_returncode=scenario.expected_returncode,
             artifact_directory=str(artifact_directory),
         )
+
+
+def _with_wind(result: ScenarioResult, wind: WindEvidence | None) -> ScenarioResult:
+    """Attach the loaded wind condition to a result without rebuilding it."""
+    return result if wind is None else replace(result, wind=wind)
 
 
 def _process_started(process: ManagedProcess) -> bool:

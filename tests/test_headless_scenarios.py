@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 import json
 from pathlib import Path
@@ -17,6 +18,43 @@ from simulation.scenarios.scenarios import (
     ScenarioRunner,
     parse_arguments,
 )
+
+
+def _write_px4_wind_sources(root: Path) -> Path:
+    """Write the smallest PX4 tree a wind fixture can be rendered from."""
+    worlds = root / "Tools/simulation/gz/worlds"
+    worlds.mkdir(parents=True)
+    (worlds / "windy.sdf").write_text(
+        "<sdf><world name='windy'><wind><linear_velocity>5 2 0</linear_velocity></wind></world></sdf>",
+        encoding="utf-8",
+    )
+    models = root / "Tools/simulation/gz/models"
+    (models / "x500_base").mkdir(parents=True)
+    (models / "x500_base" / "model.sdf").write_text(
+        "<sdf><model name='x500_base'><link name=\"base_link\"><inertial><mass>2.0</mass></inertial>"
+        "</link></model></sdf>",
+        encoding="utf-8",
+    )
+    (models / "x500").mkdir(parents=True)
+    (models / "x500" / "model.sdf").write_text(
+        "<sdf><model name='x500'><include merge='true'><uri>model://x500_base</uri></include></model></sdf>",
+        encoding="utf-8",
+    )
+    (root / "Tools/simulation/gz/server.config").write_text(
+        "<server_config>\n  <plugins>\n  </plugins>\n</server_config>\n", encoding="utf-8"
+    )
+    return root
+
+
+def _write_twin(root: Path) -> Path:
+    twin = root / "twin.yaml"
+    twin.write_text(
+        "aerodynamics:\n"
+        "  linear_drag_coefficient_kg_s: 0.285\n"
+        "  linear_drag_valid_airspeed_m_s: [2.0, 9.0]\n",
+        encoding="utf-8",
+    )
+    return twin
 
 
 class HeadlessScenarioTests(unittest.TestCase):
@@ -42,6 +80,116 @@ class HeadlessScenarioTests(unittest.TestCase):
             ("boot-prearm-check", "takeoff-2m-hover-10s-land"),
         )
         self.assertIn("waypoint-square-land", tuple(scenario.identifier for scenario in P0_V2_SCENARIOS))
+
+    def test_p0_v2_covers_each_required_wind_speed_with_a_fresh_lifecycle(self) -> None:
+        wind_scenarios = tuple(scenario for scenario in P0_V2_SCENARIOS if scenario.wind_speed_m_s is not None)
+
+        self.assertEqual(
+            tuple(scenario.identifier for scenario in wind_scenarios),
+            ("takeoff-hover-land-wind-3ms", "takeoff-hover-land-wind-6ms", "takeoff-hover-land-wind-10ms"),
+        )
+        self.assertEqual(tuple(scenario.wind_speed_m_s for scenario in wind_scenarios), (3.0, 6.0, 10.0))
+        # Wind changes the world, so it cannot share a lifecycle with a still-air run.
+        self.assertTrue(all(scenario.requires_fresh_sitl_lifecycle for scenario in wind_scenarios))
+        self.assertTrue(all(scenario.version == "p0.v2" for scenario in wind_scenarios))
+
+    def test_only_wind_scenarios_declare_a_wind_speed(self) -> None:
+        self.assertTrue(all(scenario.wind_speed_m_s is None for scenario in P0_SCENARIOS))
+
+
+class WindScenarioEvidenceTests(unittest.TestCase):
+    """A wind run's report has to prove which wind the simulation actually loaded."""
+
+    _WIND_SCENARIO = Scenario(
+        "takeoff-hover-land-wind-6ms",
+        "brain.cli.fly_takeoff_hover_land",
+        version="p0.v2",
+        requires_fresh_sitl_lifecycle=True,
+        wind_speed_m_s=6.0,
+    )
+
+    def _runner(self, root: Path, **overrides: object) -> ScenarioRunner:
+        defaults: dict[str, object] = {
+            "command_runner": Mock(return_value=Mock(returncode=0, stdout="", stderr="")),
+            "now": lambda: datetime(2026, 7, 17, 8, 0, tzinfo=UTC),
+            "process_starter": Mock(return_value=Mock(pid=4242)),
+            "terminate_process": Mock(),
+            "sitl_command": ("launcher",),
+            "sleep": Mock(),
+            "px4_root": _write_px4_wind_sources(root / "px4"),
+            "twin_path": _write_twin(root),
+        }
+        return ScenarioRunner(**{**defaults, **overrides})
+
+    def test_records_the_exact_fixture_the_run_loaded(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self._runner(root)
+
+            report_path = runner.run((self._WIND_SCENARIO,), output_directory=root / "out")
+            wind = json.loads(report_path.read_text(encoding="utf-8"))["results"][0]["wind"]
+
+            self.assertEqual(wind["speed_m_s"], 6.0)
+            self.assertEqual(wind["verification_level"], "px4-gazebo-fault-injection")
+            self.assertAlmostEqual(wind["scaling_factor_per_s"], 0.1425)
+            self.assertFalse(wind["extrapolates_drag_model"])
+            self.assertIn("6ms", wind["world_file"])
+            self.assertIn("<linear_velocity>6 0 0</linear_velocity>", Path(wind["world_file"]).read_text())
+            self.assertIn("WindEffects", Path(wind["server_config"]).read_text())
+
+    def test_hands_the_fixture_to_the_launcher(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            starter = Mock(return_value=Mock(pid=4242))
+            runner = self._runner(root, process_starter=starter)
+
+            runner.run((self._WIND_SCENARIO,), output_directory=root / "out")
+            environment = starter.call_args.kwargs["env"]
+
+            self.assertEqual(environment["PX4_GZ_WORLD"], "windy")
+            self.assertIn("6ms", environment["PX4_GZ_WORLD_FILE"])
+            self.assertIn("6ms", environment["PX4_GZ_MODELS"])
+            self.assertIn("6ms", environment["PX4_GZ_SERVER_CONFIG"])
+
+    def test_a_still_air_scenario_neither_builds_a_fixture_nor_claims_wind(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            starter = Mock(return_value=Mock(pid=4242))
+            runner = self._runner(root, process_starter=starter)
+
+            report_path = runner.run((P0_V2_SCENARIOS[1],), output_directory=root / "out")
+            result = json.loads(report_path.read_text(encoding="utf-8"))["results"][0]
+
+            self.assertIsNone(result["wind"])
+            self.assertIsNone(starter.call_args.kwargs["env"])
+
+    def test_blocks_a_wind_run_whose_fixture_cannot_be_built(self) -> None:
+        """A wind scenario must never silently fall back to a still-air run."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            command_runner = Mock(return_value=Mock(returncode=0, stdout="", stderr=""))
+            unknown_drag_twin = root / "twin-without-drag.yaml"
+            unknown_drag_twin.write_text("aerodynamics:\n  linear_drag_coefficient_kg_s: null\n", encoding="utf-8")
+            runner = self._runner(root, twin_path=unknown_drag_twin, command_runner=command_runner)
+
+            report_path = runner.run((self._WIND_SCENARIO,), output_directory=root / "out")
+            result = json.loads(report_path.read_text(encoding="utf-8"))["results"][0]
+
+            self.assertEqual(result["status"], "blocked")
+            self.assertIn("wind fixture", result["stderr"])
+            self.assertIsNone(result["wind"])
+            command_runner.assert_not_called()
+
+    def test_marks_a_wind_speed_outside_the_backed_drag_band(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self._runner(root)
+            scenario = replace(self._WIND_SCENARIO, identifier="wind-10ms", wind_speed_m_s=10.0)
+
+            report_path = runner.run((scenario,), output_directory=root / "out")
+            wind = json.loads(report_path.read_text(encoding="utf-8"))["results"][0]["wind"]
+
+            self.assertTrue(wind["extrapolates_drag_model"])
 
     def test_runner_can_select_the_expanded_p0_v2_matrix_without_replacing_v1(self) -> None:
         self.assertEqual(parse_arguments(()).matrix_version, "p0.v1")
