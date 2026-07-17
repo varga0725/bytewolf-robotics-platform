@@ -269,6 +269,18 @@ class UnknownBatteryThenZeroDrone(FakeDrone):
         self.telemetry = UnknownBatteryThenZeroTelemetry()
 
 
+class FailingArmAction(FakeAction):
+    async def arm(self) -> None:
+        self._events.append("arm")
+        raise RuntimeError("arm command rejected")
+
+
+class FailingArmDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.action = FailingArmAction(self.events)
+
+
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_unreadable_battery_fails_closed_before_arming(self) -> None:
         """The X500 profile no longer permits an unknown battery: PX4 SITL does model one."""
@@ -445,6 +457,49 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
             await adapter.execute_waypoint_mission(mission)
 
         self.assertEqual(drone.events.count("land"), 1)
+
+    async def test_retains_the_phases_reached_when_an_airborne_mission_fails(self) -> None:
+        """A raising mission returns no execution, so the trail must survive on the adapter."""
+        drone = FailingWaypointDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffWaypointLandMission(
+            takeoff=TakeoffCommand(2.0),
+            waypoint=WaypointCommand(north_m=5.0, east_m=0.0, target_altitude_m=2.0),
+            hover_duration_s=1.0,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "navigation command rejected"):
+            await adapter.execute_waypoint_mission(mission)
+
+        self.assertEqual(
+            tuple(event.phase for event in adapter.execution.events),
+            (
+                MissionPhase.ARMING,
+                MissionPhase.TAKING_OFF,
+                MissionPhase.NAVIGATING,
+                MissionPhase.LANDING,
+                MissionPhase.FAILED,
+            ),
+        )
+
+    async def test_reports_the_original_failure_when_the_vehicle_never_left_the_ground(self) -> None:
+        """A pre-airborne failure records FAILED directly; it must not claim a landing."""
+        drone = FailingArmDrone()
+        adapter = MavsdkMissionAdapter(drone, sleep=asyncio.sleep)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.01)
+
+        with self.assertRaisesRegex(RuntimeError, "arm command rejected"):
+            await adapter.execute(mission)
+
+        self.assertEqual(
+            tuple(event.phase for event in adapter.execution.events),
+            (MissionPhase.ARMING, MissionPhase.FAILED),
+        )
+        self.assertNotIn("land", drone.events)
 
     async def test_lands_once_when_gnss_becomes_invalid_during_waypoint_navigation(self) -> None:
         drone = GnssDropoutDrone()

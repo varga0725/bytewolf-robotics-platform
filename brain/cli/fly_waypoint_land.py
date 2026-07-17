@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
-from brain.cli.artifacts import write_run_artifact
+from brain.cli.artifacts import recorded_execution, write_run_artifact
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
 from brain.mission.execution import MissionExecution
 from brain.mission.flight import authorize_takeoff_waypoint_land
@@ -83,6 +83,7 @@ async def run(arguments: argparse.Namespace) -> None:
         if safety_decision == "not-evaluated":
             safety_decision = "rejected"
         failure_reason = f"{type(error).__name__}: {error}"
+        execution = recorded_execution(adapter, execution)
         raise
     finally:
         stop_owned_mavsdk_server(system)

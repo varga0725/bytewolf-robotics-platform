@@ -122,6 +122,47 @@ class CliMissionArtifactTests(unittest.TestCase):
                 self.assertEqual(artifact["safety_decision"], "approved")
                 self.assertEqual(artifact["outcome"], "completed")
 
+    def test_each_cli_records_the_phases_reached_before_an_airborne_failure(self) -> None:
+        """The trail is most useful on the failure path, so it must reach the artifact."""
+        execution = (
+            MissionExecution.empty()
+            .transition(MissionPhase.ARMING)
+            .transition(MissionPhase.TAKING_OFF)
+            .transition(MissionPhase.LANDING)
+            .transition(MissionPhase.FAILED)
+        )
+        for module, authorizer_name, executor_name in CLI_CASES:
+            with self.subTest(cli=module.__name__), tempfile.TemporaryDirectory() as directory:
+                adapter = MagicMock()
+                adapter.connect = AsyncMock()
+                adapter.execution = execution
+                setattr(
+                    adapter,
+                    executor_name,
+                    AsyncMock(side_effect=RuntimeError("low battery fallback")),
+                )
+                arguments = module.parse_arguments(("--artifact-dir", directory))
+                mavsdk = ModuleType("mavsdk")
+                mavsdk.System = MagicMock()  # type: ignore[attr-defined]
+                with (
+                    patch.dict(sys.modules, {"mavsdk": mavsdk}),
+                    patch.object(module, "load_safety_profile", return_value=MagicMock()),
+                    patch.object(module, authorizer_name, return_value=_mission()),
+                    patch.object(module, "MavsdkMissionAdapter", return_value=adapter),
+                    self.assertRaisesRegex(RuntimeError, "low battery fallback"),
+                ):
+                    asyncio.run(module.run(arguments))
+
+                artifact_paths = list(Path(directory).glob("*.json"))
+                self.assertEqual(len(artifact_paths), 1)
+                artifact = json.loads(artifact_paths[0].read_text(encoding="utf-8"))
+                self.assertEqual(
+                    [event["phase"] for event in artifact["events"]],
+                    ["arming", "taking_off", "landing", "failed"],
+                )
+                self.assertEqual(artifact["outcome"], "failed")
+                self.assertIn("low battery fallback", artifact["failure_reason"])
+
     def test_each_cli_writes_an_artifact_before_reraising_a_failure(self) -> None:
         for module, authorizer_name, _ in CLI_CASES:
             with self.subTest(cli=module.__name__), tempfile.TemporaryDirectory() as directory:

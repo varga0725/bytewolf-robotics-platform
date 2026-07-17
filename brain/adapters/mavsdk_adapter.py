@@ -84,6 +84,7 @@ class MavsdkMissionAdapter:
         self._safety_profile = safety_profile or load_safety_profile()
         self._preflight_wait_s = preflight_wait_s
         self._preflight_telemetry: MissionTelemetrySnapshot | None = None
+        self._execution = MissionExecution.empty()
         self._runtime_watchdog = RuntimeTelemetryWatchdog(
             minimum_battery_percent=self._runtime_policy.minimum_battery_percent_to_continue,
             telemetry_sample_timeout_s=self._runtime_policy.telemetry_sample_timeout_s,
@@ -93,6 +94,19 @@ class MavsdkMissionAdapter:
     def preflight_telemetry(self) -> MissionTelemetrySnapshot | None:
         """The immutable evidence captured immediately before mission authorization."""
         return self._preflight_telemetry
+
+    @property
+    def execution(self) -> MissionExecution:
+        """The phases reached so far, readable after a mission raises instead of returning."""
+        return self._execution
+
+    def _begin_execution(self) -> MissionExecution:
+        return self._record(MissionExecution.empty(), MissionPhase.ARMING)
+
+    def _record(self, execution: MissionExecution, phase: MissionPhase) -> MissionExecution:
+        """Transition and retain the trail, so a failure boundary keeps the phases reached."""
+        self._execution = execution.transition(phase)
+        return self._execution
 
     async def connect(self, system_address: str) -> None:
         await self._drone.connect(system_address=system_address)
@@ -110,15 +124,15 @@ class MavsdkMissionAdapter:
     async def execute(self, mission: TakeoffHoverLandMission) -> MissionExecution:
         """Execute takeoff-hover-land and confirm the normal landing by telemetry."""
         await self._require_preflight()
-        execution = MissionExecution.empty().transition(MissionPhase.ARMING)
+        execution = self._begin_execution()
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
         try:
             await self._drone.action.arm()
-            execution = execution.transition(MissionPhase.TAKING_OFF)
+            execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
-            execution = execution.transition(MissionPhase.HOVERING)
+            execution = self._record(execution, MissionPhase.HOVERING)
             await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
         except Exception:
             await self._fallback_land_after_airborne_failure(
@@ -137,19 +151,19 @@ class MavsdkMissionAdapter:
         interval the adapter sends exactly one normal LAND command.
         """
         await self._require_preflight()
-        execution = MissionExecution.empty().transition(MissionPhase.ARMING)
+        execution = self._begin_execution()
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
         try:
             await self._drone.action.arm()
-            execution = execution.transition(MissionPhase.TAKING_OFF)
+            execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
-            execution = execution.transition(MissionPhase.HOVERING)
+            execution = self._record(execution, MissionPhase.HOVERING)
             await self._sleep_with_runtime_watchdog(mission.interrupt_after_s)
             if mission.interruption_action is InterruptionAction.HOLD:
                 await self._drone.action.hold()
-                execution = execution.transition(MissionPhase.HOLDING)
+                execution = self._record(execution, MissionPhase.HOLDING)
                 await self._sleep_with_runtime_watchdog(mission.hold_cleanup_s)
         except Exception:
             await self._fallback_land_after_airborne_failure(
@@ -194,23 +208,23 @@ class MavsdkMissionAdapter:
     ) -> MissionExecution:
         """Take off, visit one waypoint, then land with telemetry confirmation."""
         await self._require_preflight()
-        execution = MissionExecution.empty().transition(MissionPhase.ARMING)
+        execution = self._begin_execution()
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
         try:
             await self._drone.action.arm()
-            execution = execution.transition(MissionPhase.TAKING_OFF)
+            execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
             await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
-            execution = execution.transition(MissionPhase.NAVIGATING)
+            execution = self._record(execution, MissionPhase.NAVIGATING)
             target = await self.goto_relative_waypoint(mission.waypoint)
             await self.wait_until_waypoint_reached(
                 target,
                 mission.waypoint_tolerance_m,
                 min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s),
             )
-            execution = execution.transition(MissionPhase.HOVERING)
+            execution = self._record(execution, MissionPhase.HOVERING)
             await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
         except Exception:
             await self._fallback_land_after_airborne_failure(
@@ -228,23 +242,23 @@ class MavsdkMissionAdapter:
         failure causes one bounded landing fallback and propagates the error.
         """
         await self._require_preflight()
-        execution = MissionExecution.empty().transition(MissionPhase.ARMING)
+        execution = self._begin_execution()
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
         try:
             await self._drone.action.arm()
-            execution = execution.transition(MissionPhase.TAKING_OFF)
+            execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
             await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
-            execution = execution.transition(MissionPhase.NAVIGATING)
+            execution = self._record(execution, MissionPhase.NAVIGATING)
             timeout_s = min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s)
             for waypoint in mission.waypoints:
                 target = await self.goto_relative_waypoint(waypoint)
                 await self.wait_until_waypoint_reached(
                     target, mission.waypoint_tolerance_m, timeout_s
                 )
-            execution = execution.transition(MissionPhase.HOVERING)
+            execution = self._record(execution, MissionPhase.HOVERING)
             await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
         except Exception:
             await self._fallback_land_after_airborne_failure(
@@ -273,19 +287,19 @@ class MavsdkMissionAdapter:
         """Delegate return-and-land to PX4; use one land fallback only on failure."""
         await self._require_preflight()
         home = await self._global_position_sample("home")
-        execution = MissionExecution.empty().transition(MissionPhase.ARMING)
+        execution = self._begin_execution()
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         await self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m)
         airborne = False
         try:
             await self._drone.action.arm()
-            execution = execution.transition(MissionPhase.TAKING_OFF)
+            execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
             await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
-            execution = execution.transition(MissionPhase.HOVERING)
+            execution = self._record(execution, MissionPhase.HOVERING)
             await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
-            execution = execution.transition(MissionPhase.RETURNING)
+            execution = self._record(execution, MissionPhase.RETURNING)
             await self._drone.action.return_to_launch()
             await self.wait_until_landed(
                 min(mission.landing_timeout_s, self._runtime_policy.landing_confirmation_timeout_s)
@@ -298,16 +312,13 @@ class MavsdkMissionAdapter:
                     f"RTL landed {home_error_m:.1f} m from home; limit is {mission.home_tolerance_m:.1f} m."
                 )
         except Exception:
-            if not airborne:
-                execution = execution.transition(MissionPhase.LANDING).transition(MissionPhase.FAILED)
-                raise
             await self._fallback_land_after_airborne_failure(
                 execution,
                 airborne,
                 min(mission.landing_timeout_s, self._runtime_policy.landing_confirmation_timeout_s),
             )
             raise
-        return execution.transition(MissionPhase.COMPLETED)
+        return self._record(execution, MissionPhase.COMPLETED)
 
     async def _require_preflight(self) -> None:
         """Verify PX4 telemetry before issuing any configuration or flight command."""
@@ -513,25 +524,25 @@ class MavsdkMissionAdapter:
         self, execution: MissionExecution, confirmation_timeout_s: float
     ) -> MissionExecution:
         """Send the one normal land command and require telemetry confirmation."""
-        execution = execution.transition(MissionPhase.LANDING)
+        execution = self._record(execution, MissionPhase.LANDING)
         try:
             await self._drone.action.land()
             await self.wait_until_landed(confirmation_timeout_s, require_airborne_observation=False)
         except Exception:
-            execution = execution.transition(MissionPhase.FAILED)
+            execution = self._record(execution, MissionPhase.FAILED)
             raise
-        return execution.transition(MissionPhase.COMPLETED)
+        return self._record(execution, MissionPhase.COMPLETED)
 
     async def _fallback_land_after_airborne_failure(
         self, execution: MissionExecution, airborne: bool, confirmation_timeout_s: float
     ) -> MissionExecution:
         """Use exactly one fallback land after a pre-landing airborne failure."""
         if not airborne:
-            return execution.transition(MissionPhase.FAILED)
-        execution = execution.transition(MissionPhase.LANDING)
+            return self._record(execution, MissionPhase.FAILED)
+        execution = self._record(execution, MissionPhase.LANDING)
         try:
             await self._drone.action.land()
             await self.wait_until_landed(confirmation_timeout_s, require_airborne_observation=False)
         finally:
-            execution = execution.transition(MissionPhase.FAILED)
+            execution = self._record(execution, MissionPhase.FAILED)
         return execution

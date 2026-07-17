@@ -11,6 +11,14 @@ from brain.mission.artifacts import (
 from brain.mission.execution import MissionExecution
 
 
+def recorded_execution(adapter: object, execution: MissionExecution) -> MissionExecution:
+    """Recover the phase trail an adapter reached but could not return by raising."""
+    if execution.events:
+        return execution
+    recorded = getattr(adapter, "execution", None)
+    return recorded if isinstance(recorded, MissionExecution) else execution
+
+
 def write_run_artifact(
     directory: Path | None,
     execution: MissionExecution,
