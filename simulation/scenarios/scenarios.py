@@ -17,6 +17,7 @@ import time
 from typing import Protocol
 from uuid import uuid4
 
+from simulation.gazebo.fault_injection import FaultInjectionError, apply_px4_parameters
 from simulation.gazebo.wind_probe import GazeboPoseObserver, expected_hover_tilt_deg
 from simulation.gazebo.wind_profiles import (
     SUPPORTED_WIND_SPEEDS_M_S,
@@ -72,6 +73,10 @@ class Scenario:
     # A scenario that claims a wind condition must name the speed it needs, so
     # the runner can build the fixture and the report can prove it was loaded.
     wind_speed_m_s: float | None = None
+    # PX4 parameters applied to the booted SITL before the mission runs. This is
+    # the only fault injection PX4 actually supports for us; see FAULT_INJECTION
+    # in simulation/gazebo/fault_injection.py for what it can and cannot reach.
+    px4_parameters: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -112,6 +117,8 @@ class ScenarioResult:
     # Absent unless the run actually loaded a wind fixture; a wind scenario that
     # reports no evidence here is not a wind run.
     wind: WindEvidence | None = None
+    # The PX4 parameters this run injected, as PX4 itself read them back.
+    injected_faults: list[dict[str, object]] | None = None
 
 
 P0_SCENARIOS: tuple[Scenario, ...] = (
@@ -234,6 +241,20 @@ P0_V2_SCENARIOS: tuple[Scenario, ...] = (
         fallback_expectation="no-flight-command",
         requires_mavsdk_server=False,
     ),
+    Scenario(
+        "low-battery-land-fallback",
+        "brain.cli.fly_takeoff_hover_land",
+        ("--altitude", "2", "--hover-seconds", "20", "--preflight-wait-seconds", "60"),
+        version="p0.v2",
+        safety_rejection="must-land-once-when-the-live-battery-crosses-the-reserve",
+        fallback_expectation="land-once-after-low-battery",
+        expected_returncode=1,
+        requires_fresh_sitl_lifecycle=True,
+        # PX4 drains the battery only while armed and resets it on disarm, so the
+        # reserve can only be crossed in flight. A 20 s full-discharge drains
+        # 5%/s, passing the 35% reserve well inside the hover.
+        px4_parameters=(("SIM_BAT_DRAIN", 20.0), ("SIM_BAT_MIN_PCT", 20.0)),
+    ),
     *(
         Scenario(
             f"takeoff-hover-land-wind-{speed:g}ms",
@@ -270,8 +291,10 @@ class ScenarioRunner:
         px4_root: Path | None = None,
         twin_path: Path | None = None,
         wind_observer: Callable[[str, str, Path], object] = GazeboPoseObserver,
+        apply_px4_parameters: Callable[..., tuple] = apply_px4_parameters,
     ) -> None:
         self._wind_observer = wind_observer
+        self._apply_px4_parameters = apply_px4_parameters
         self._command_runner = command_runner
         self._uses_default_command_runner = command_runner is subprocess.run
         self._now = now or (lambda: datetime.now(UTC))
@@ -362,9 +385,17 @@ class ScenarioRunner:
                 self._sleep(self._startup_wait_s)
             if sitl_process is not None and not self._readiness_check(sitl_process):
                 return self._blocked_result(scenario, "SITL readiness check failed.", output_directory, wind)
-            if wind is None:
-                return self._run_scenario(scenario, output_directory)
-            return self._run_observed_wind_scenario(scenario, output_directory, wind)
+            try:
+                injected = self._inject_faults(scenario)
+            except FaultInjectionError as error:
+                # Running the mission anyway would record a fault it never had.
+                return self._blocked_result(scenario, f"Could not inject the fault: {error}", output_directory, wind)
+            result = (
+                self._run_scenario(scenario, output_directory)
+                if wind is None
+                else self._run_observed_wind_scenario(scenario, output_directory, wind)
+            )
+            return result if injected is None else replace(result, injected_faults=injected)
         except OSError as error:
             return self._blocked_result(scenario, f"Could not start SITL: {error}.", output_directory, wind)
         finally:
@@ -436,6 +467,15 @@ class ScenarioRunner:
             total_mass_kg=fixture.total_mass_kg,
         )
         return environment, evidence
+
+    def _inject_faults(self, scenario: Scenario) -> list[dict[str, object]] | None:
+        """Apply the scenario's PX4 fault parameters and record what PX4 confirmed."""
+        if not scenario.px4_parameters:
+            return None
+        applied = self._apply_px4_parameters(
+            scenario.px4_parameters, px4_build_directory=self._px4_root / "build/px4_sitl_default"
+        )
+        return [asdict(parameter) for parameter in applied]
 
     def _drag_model(self) -> LinearDragModel:
         if self._cached_drag_model is None:

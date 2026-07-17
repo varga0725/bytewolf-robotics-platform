@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
+from simulation.gazebo.fault_injection import AppliedParameter, FaultInjectionError
 from simulation.gazebo.wind_probe import TiltObservation
 
 from simulation.scenarios.scenarios import (
@@ -261,6 +262,74 @@ class WindScenarioEvidenceTests(unittest.TestCase):
             )
 
         self.assertEqual(observed_targets, [("windy", "x500_0")])
+
+    def test_records_the_faults_px4_confirmed_holding(self) -> None:
+        scenario = replace(
+            self._WIND_SCENARIO,
+            identifier="low-battery",
+            wind_speed_m_s=None,
+            px4_parameters=(("SIM_BAT_DRAIN", 20.0),),
+        )
+        applied = Mock(return_value=(AppliedParameter("SIM_BAT_DRAIN", 20.0, 20.0),))
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self._runner(root, apply_px4_parameters=applied)
+
+            report_path = runner.run((scenario,), output_directory=root / "out")
+            result = json.loads(report_path.read_text(encoding="utf-8"))["results"][0]
+
+            self.assertEqual(
+                result["injected_faults"], [{"name": "SIM_BAT_DRAIN", "requested": 20.0, "confirmed": 20.0}]
+            )
+            self.assertIn("px4_sitl_default", str(applied.call_args.kwargs["px4_build_directory"]))
+
+    def test_blocks_a_scenario_whose_fault_px4_would_not_take(self) -> None:
+        """Flying anyway would record a fault the vehicle never had."""
+        scenario = replace(
+            self._WIND_SCENARIO,
+            identifier="low-battery",
+            wind_speed_m_s=None,
+            px4_parameters=(("SIM_BAT_DRAIN", 20.0),),
+        )
+        command_runner = Mock(return_value=Mock(returncode=0, stdout="", stderr=""))
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self._runner(
+                root,
+                command_runner=command_runner,
+                apply_px4_parameters=Mock(side_effect=FaultInjectionError("reads back 60")),
+            )
+
+            report_path = runner.run((scenario,), output_directory=root / "out")
+            result = json.loads(report_path.read_text(encoding="utf-8"))["results"][0]
+
+            self.assertEqual(result["status"], "blocked")
+            self.assertIn("Could not inject the fault", result["stderr"])
+            command_runner.assert_not_called()
+
+    def test_a_scenario_without_faults_neither_injects_nor_claims_one(self) -> None:
+        applied = Mock()
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            report_path = self._runner(root, apply_px4_parameters=applied).run(
+                (P0_V2_SCENARIOS[1],), output_directory=root / "out"
+            )
+            result = json.loads(report_path.read_text(encoding="utf-8"))["results"][0]
+
+            self.assertIsNone(result["injected_faults"])
+            applied.assert_not_called()
+
+    def test_p0_v2_injects_the_low_battery_fault_px4_actually_supports(self) -> None:
+        """PX4 drains only while armed, so the reserve is crossed in flight, not at arm."""
+        scenario = next(s for s in P0_V2_SCENARIOS if s.identifier == "low-battery-land-fallback")
+
+        self.assertEqual(scenario.px4_parameters, (("SIM_BAT_DRAIN", 20.0), ("SIM_BAT_MIN_PCT", 20.0)))
+        self.assertEqual(scenario.expected_returncode, 1)
+        self.assertEqual(scenario.fallback_expectation, "land-once-after-low-battery")
+        self.assertTrue(scenario.requires_fresh_sitl_lifecycle)
 
     def test_marks_a_wind_speed_outside_the_backed_drag_band(self) -> None:
         with TemporaryDirectory() as directory:
