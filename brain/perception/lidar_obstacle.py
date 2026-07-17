@@ -47,6 +47,52 @@ class LidarObstacleError(ValueError):
     """Raised when a scan is too malformed to speak about obstacles safely."""
 
 
+def laser_scan_from_gz_json(message: dict) -> LaserScan:
+    """Parse a Gazebo ``LaserScan`` message into a :class:`LaserScan`.
+
+    ``gz topic --json-output`` names fields in camelCase and encodes a
+    no-return beam as the string ``"Infinity"``, so a return is read here as a
+    float or as one of those sentinels, and anything else is refused rather than
+    guessed at.
+    """
+    try:
+        angle_min = float(message["angleMin"])
+        angle_step = float(message["angleStep"])
+        range_min = float(message["rangeMin"])
+        range_max = float(message["rangeMax"])
+        raw_ranges = message["ranges"]
+    except (KeyError, TypeError, ValueError) as error:
+        raise LidarObstacleError(f"Gazebo LaserScan is missing or malforming a field: {error}.") from error
+    if not isinstance(raw_ranges, list) or not raw_ranges:
+        raise LidarObstacleError("Gazebo LaserScan must carry a non-empty ranges array.")
+    return LaserScan(
+        angle_min_rad=angle_min,
+        angle_increment_rad=angle_step,
+        ranges_m=tuple(_gz_range(value) for value in raw_ranges),
+        range_min_m=range_min,
+        range_max_m=range_max,
+    )
+
+
+def _gz_range(value: object) -> float:
+    """Read one gz range: a number, or the string sentinels gz emits in JSON."""
+    if type(value) in (int, float):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text in ("Infinity", "inf", "Inf"):
+            return float("inf")
+        if text in ("-Infinity", "-inf", "-Inf"):
+            return float("-inf")
+        if text in ("NaN", "nan"):
+            return float("nan")
+        try:
+            return float(text)
+        except ValueError as error:
+            raise LidarObstacleError(f"Gazebo LaserScan range '{value}' is not a number.") from error
+    raise LidarObstacleError(f"Gazebo LaserScan range {value!r} is neither a number nor a known sentinel.")
+
+
 @dataclass(frozen=True)
 class LaserScan:
     """The minimum a planar lidar must provide, independent of any gz message type.

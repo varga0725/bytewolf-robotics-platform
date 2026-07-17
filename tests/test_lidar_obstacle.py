@@ -6,15 +6,21 @@ that guards every observation guards this one.
 """
 
 from datetime import UTC, datetime
+import json
 from math import inf, nan, radians
+from pathlib import Path
 import unittest
 
 from brain.perception.lidar_obstacle import (
     LaserScan,
     LidarObstacleError,
+    laser_scan_from_gz_json,
     obstacle_observation,
 )
 from brain.telemetry.observation import ObservationState, load_observation
+
+
+_GROUND_TRUTH_SCAN = Path(__file__).resolve().parent / "fixtures/lidar/scan_front_and_left_obstacles.json"
 
 
 _OBSERVED_AT = datetime(2026, 7, 17, 12, 0, 0, tzinfo=UTC)
@@ -216,6 +222,65 @@ class MalformedScanTests(unittest.TestCase):
 
         # A NaN return is not a measurement, so the swept sector stays clear.
         self.assertEqual(_sector_at(document, 0.0)["coverage"], "clear")
+
+
+class GzJsonParsingTests(unittest.TestCase):
+    def test_parses_camelcase_fields_and_infinity_sentinels(self) -> None:
+        message = {
+            "angleMin": -2.356195, "angleMax": 2.356195, "angleStep": 0.00436737,
+            "rangeMin": 0.1, "rangeMax": 30.0, "count": 3,
+            "ranges": ["Infinity", 4.2, "Infinity"],
+        }
+
+        scan = laser_scan_from_gz_json(message)
+
+        self.assertEqual(scan.angle_min_rad, -2.356195)
+        self.assertEqual(scan.ranges_m, (inf, 4.2, inf))
+        self.assertEqual((scan.range_min_m, scan.range_max_m), (0.1, 30.0))
+
+    def test_refuses_a_message_missing_a_field(self) -> None:
+        with self.assertRaisesRegex(LidarObstacleError, "missing or malforming"):
+            laser_scan_from_gz_json({"angleMin": 0.0, "ranges": [1.0]})
+
+    def test_refuses_an_unparseable_range(self) -> None:
+        message = {
+            "angleMin": 0.0, "angleStep": 0.01, "rangeMin": 0.1, "rangeMax": 30.0,
+            "ranges": ["not-a-number"],
+        }
+        with self.assertRaisesRegex(LidarObstacleError, "is not a number"):
+            laser_scan_from_gz_json(message)
+
+
+class GroundTruthScanTests(unittest.TestCase):
+    """A real scan captured from SITL with obstacles at known bearings.
+
+    Front box at world +X (drone facing +X) and left box at world +Y. This is
+    the empirical confirmation the synthetic frame tests cannot give: the sign
+    of the gz-to-FRD flip is checked against physical ground truth, not asserted.
+    """
+
+    def test_the_captured_scan_matches_the_sensor_the_baseline_pins(self) -> None:
+        message = json.loads(_GROUND_TRUTH_SCAN.read_text(encoding="utf-8"))
+        scan = laser_scan_from_gz_json(message)
+
+        self.assertEqual(len(scan.ranges_m), 1080)
+        self.assertAlmostEqual(scan.range_max_m, 30.0)
+        self.assertAlmostEqual(scan.range_min_m, 0.1)
+
+    def test_a_front_obstacle_appears_straight_ahead_and_a_left_one_at_negative_yaw(self) -> None:
+        message = json.loads(_GROUND_TRUTH_SCAN.read_text(encoding="utf-8"))
+        document = obstacle_observation(
+            laser_scan_from_gz_json(message), vehicle_id="x500v2_reference_01",
+            observed_at=_OBSERVED_AT, sensor_id="lidar_2d",
+        )
+
+        load_observation(document)  # the contract accepts a real scan
+        measured = {sector["yaw_deg"]: sector["distance_m"] for sector in _sectors(document) if sector["coverage"] == "measured"}
+        self.assertIn(0.0, measured, "front box should be straight ahead")
+        self.assertIn(-90.0, measured, "left box should be at negative yaw")
+        # Sanity on the physical distances: front box near face ~4.4 m, left ~5.5 m.
+        self.assertAlmostEqual(measured[0.0], 4.4, delta=0.3)
+        self.assertAlmostEqual(measured[-90.0], 5.5, delta=0.3)
 
 
 if __name__ == "__main__":
