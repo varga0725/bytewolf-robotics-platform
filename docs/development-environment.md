@@ -119,10 +119,22 @@ Az új forgatókönyveket külön verzióval futtasd:
 ```
 
 A P0.v2 MAVSDK-s forgatókönyvei egymástól független PX4/Gazebo lifecycle-ben
-indulnak. Az artifact `app+SITL` bizonyíték: a live watchdog egység- és
-szerződés-tesztjei külön fedik a low battery, GNSS-invalid és telemetria-kiesés
-esetét. Leállt MAVSDK kliensnél nem alkalmazásoldali LAND történik, hanem a
-PX4-failsafe felelőssége.
+indulnak. Az artifact alapesetben `app+SITL` bizonyíték.
+
+A low battery ennél erősebb: `PX4/Gazebo fault-injection`. A mátrix a valódi akkut
+meríti le a tartalék alá lebegés közben (`SIM_BAT_DRAIN`, `SIM_BAT_MIN_PCT`), és a
+riport rögzíti, hogy a PX4 milyen értéket erősített meg. A PX4 csak armolt állapotban
+merít és disarmnál 100%-ra állít vissza, ezért az **armolási** tartalék így nem érhető el.
+
+A repülés közbeni GNSS-invalid és a telemetria-kiesés `unit/contract` szinten marad:
+a PX4 `SIM_GZ_EN_GPS` paramétere `reboot_required`, tehát a GNSS menet közben nem vehető el.
+Leállt MAVSDK kliensnél nem alkalmazásoldali LAND történik, hanem a PX4-failsafe
+felelőssége — ez nem injektálható, és nem is állítunk róla SITL-bizonyítékot.
+
+A MAVSDK `remaining_percent` mezője **0–100** skálán jön. Soha ne skálázd át: amikor a kód
+0–1 törtként olvasta, minden érték érvénytelennek látszott, amit az
+`allow_missing_battery_telemetry` elnyelt, és ezzel némán kikapcsolta az armolási akku-kaput
+és a repülés közbeni akku-figyelést is.
 
 A fix 3, 6 és 10 m/s szél-fixture-öket a P0.v2 mátrix maga építi fel és rögzíti
 a riportban; kézi előkészítés nem kell. Kézi vizsgálathoz a pontos parancsot a

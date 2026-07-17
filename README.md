@@ -99,10 +99,14 @@ The report identifies the outcome of each scenario. Treat its proof level
 carefully:
 
 - P0.v2 scenario reports are app+SITL evidence.
-- Watchdog unit/contract tests cover low battery, GNSS invalidity, and missing
-  telemetry while the MAVSDK client is alive.
+- Low battery is PX4/Gazebo fault-injection evidence: the matrix drains the real
+  battery past the reserve mid-hover and the report records the parameters PX4
+  confirmed holding. PX4 drains only while armed, so the arm reserve itself is
+  not reachable this way.
+- In-flight GNSS invalidity and missing telemetry stay unit/contract: PX4's
+  `SIM_GZ_EN_GPS` is boot-time only, so GNSS cannot be dropped mid-flight.
 - A stopped MAVSDK process cannot send a command; PX4's configured failsafe is
-  the safety authority for that condition.
+  the safety authority for that condition, and nothing injects it.
 
 The P0.v2 matrix builds its own 3, 6, and 10 m/s wind fixtures, so a wind run
 needs no manual setup; each report records the fixture it loaded. To inspect a

@@ -126,6 +126,17 @@ over the airframe mass. Gazebo's default of 1.0 is not a drag model — it accel
 vehicle to wind speed. That coefficient is literature-derived, not X500-measured, and is
 backed only across 2-9 m/s, so the 10 m/s fixture reports that it extrapolates.
 
+`simulation/gazebo/fault_injection.py` applies PX4's own fault parameters and documents
+what PX4 can actually reach: **battery** in flight (`SIM_BAT_DRAIN`/`SIM_BAT_MIN_PCT`;
+PX4 drains only while armed and resets on disarm, so the reserve is never crossable before
+arming); **GNSS** at boot only (`SIM_GZ_EN_GPS` is `reboot_required`), so in-flight GNSS
+loss stays unit/contract; **MAVLink/client loss** is not injectable at all — PX4's failsafe
+is the authority. Every parameter is read back, and an unconfirmed write blocks the run.
+
+MAVSDK reports `remaining_percent` on a **0-100** scale. Reading it as a 0-1 fraction made
+every value look invalid, which `allow_missing_battery_telemetry` then swallowed, silently
+disabling both the arm reserve and the in-flight battery watchdog. Never rescale it.
+
 ## Notion is the source of truth for status
 
 The project lives in Notion under **ByteWolf Robotics Platform — Drone Digital Twin**
