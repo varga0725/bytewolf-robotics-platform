@@ -1,0 +1,18 @@
+{
+  "started_at": "2026-07-17T17:56:26.120760Z",
+  "verification_level": "px4-gazebo-fault-injection",
+  "flight_mode": "auto/hold (goto_location)",
+  "note": "PX4 Collision Prevention runs only in Position mode; this measures the mission path.",
+  "cp_dist_m": 5.0,
+  "obstacle_xy_m": [
+    0.0,
+    10.0
+  ],
+  "obstacle_half_width_m": 0.5,
+  "pose_samples": 1977,
+  "min_clearance_m": 0.357,
+  "approached_obstacle": true,
+  "cp_intervened": false,
+  "verdict": "measured",
+  "detail": "CP_DIST was 5.0 m; the vehicle closed to 0.36 m on the mission path. Collision Prevention did not intervene -- the mission path is unshielded, as expected in Auto/Hold."
+}
