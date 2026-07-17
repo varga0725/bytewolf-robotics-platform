@@ -75,6 +75,8 @@ Az eddigi határtesztek futtatása:
 
 Ezen a macOS fejlesztői gépen a `ros2` parancs és a Python `rclpy` modul nincs telepítve. Ez szándékos: a ROS adapter opcionális, és a P0/P1 macOS SITL útvonalat nem blokkolhatja. A következő lépések kizárólag az Ubuntu VM-ben, ROS 2 Humble környezetben végezhetők el.
 
+Az itteni `python3` szándékosan a ROS 2 rendszer-Pythonja, nem a projekt `.venv`-je: az `rclpy` csak abban érhető el. A bridge viszont a projekt függőségeit (`mavsdk`) is igényli, tehát ennek a Pythonnak mindkettőt látnia kell — például `python3 -m venv --system-site-packages` környezettel. **Ez a szakasz még soha nem futott le**: környezet híján a P1 Ubuntu smoke halasztva van, így a pontos telepítési lépés akkor rögzül, amikor a környezet elkészül. Addig ez terv, nem igazolt eljárás.
+
 ```bash
 source /opt/ros/humble/setup.bash
 cd /path/to/ByteWolf-Robotics-Platform
