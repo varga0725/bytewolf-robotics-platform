@@ -1,5 +1,12 @@
 # Versioned configuration contract for the first X500 V2 digital-twin baseline.
 # Unknown physical values stay null until they are measured or manufacturer-sourced.
+#
+# A null here describes the real Holybro X500 V2, which nobody has measured. The
+# simulation still has to fly on some number, and it uses PX4's generic x500
+# model -- which has never been compared against an X500 V2. The `provenance`
+# section at the end records that gap per parameter: what the simulation flies
+# on today, and how the real value gets resolved. Every null below must appear
+# there, so an unmeasured parameter cannot pass as a settled one.
 vehicle:
   id: x500v2_reference_01
   hardware_baseline: holybro_x500_v2_developer_kit_v0
@@ -118,3 +125,88 @@ sensors:
     height: 720
     fps: 30
     latency_ms: 60
+
+# Source or measurement plan for every critical parameter, keyed by its dotted
+# path above. Enforced by tests/test_twin_provenance.py: a critical parameter
+# left null without an entry here fails the suite.
+#
+# status:
+#   simulated - the simulation flies on this value today, taken from PX4's
+#               generic x500 model. It is NOT an X500 V2 measurement and has
+#               never been checked against one.
+#   derived   - computed from published measurements of a comparable airframe.
+#   vendor    - published by Holybro for the X500 V2.
+#   measured  - measured on this project's own vehicle.
+provenance:
+  vehicle.mass_kg:
+    status: simulated
+    simulated_value: 2.0
+    simulated_source: PX4 models/x500_base/model.sdf, base_link mass
+    plan: Weigh the assembled airframe with its flight battery once hardware is bought.
+  vehicle.inertia_kg_m2.ixx:
+    status: simulated
+    simulated_value: 0.02166666666666667
+    simulated_source: PX4 models/x500_base/model.sdf, base_link inertia
+    plan: Bifilar pendulum measurement on the assembled airframe, or a CAD-derived vendor figure.
+  vehicle.inertia_kg_m2.iyy:
+    status: simulated
+    simulated_value: 0.02166666666666667
+    simulated_source: PX4 models/x500_base/model.sdf, base_link inertia
+    plan: Bifilar pendulum measurement on the assembled airframe, or a CAD-derived vendor figure.
+  vehicle.inertia_kg_m2.izz:
+    status: simulated
+    simulated_value: 0.04000000000000001
+    simulated_source: PX4 models/x500_base/model.sdf, base_link inertia
+    plan: Bifilar pendulum measurement on the assembled airframe, or a CAD-derived vendor figure.
+  propulsion.motor_constant:
+    status: simulated
+    simulated_value: 8.54858e-06
+    simulated_source: PX4 models/x500/model.sdf, MulticopterMotorModel
+    plan: Motor test bench thrust curve for the X500 V2's shipped motor and propeller pairing.
+  propulsion.moment_constant:
+    status: simulated
+    simulated_value: 0.016
+    simulated_source: PX4 models/x500/model.sdf, MulticopterMotorModel
+    plan: Motor test bench torque curve, measured alongside the thrust curve.
+  propulsion.max_rotor_velocity_rad_s:
+    status: simulated
+    simulated_value: 1000.0
+    simulated_source: PX4 models/x500/model.sdf, MulticopterMotorModel
+    plan: Motor test bench at full throttle on the shipped battery.
+  propulsion.time_constant_up_s:
+    status: simulated
+    simulated_value: 0.0125
+    simulated_source: PX4 models/x500/model.sdf, MulticopterMotorModel
+    plan: Step response on the motor test bench.
+  propulsion.time_constant_down_s:
+    status: simulated
+    simulated_value: 0.025
+    simulated_source: PX4 models/x500/model.sdf, MulticopterMotorModel
+    plan: Step response on the motor test bench.
+  battery.cells:
+    status: unknown
+    plan: Read from the battery the build actually ships with; the X500 V2 kit does not include one.
+  battery.capacity_mah:
+    status: unknown
+    plan: Read from the chosen battery's label, then confirm by a measured discharge.
+  battery.nominal_voltage_v:
+    status: unknown
+    plan: Derived from the chosen battery's cell count once selected.
+  battery.internal_resistance_ohm:
+    status: unknown
+    plan: Measure under a known load, or read from the smart battery if the build uses one.
+  sensors.imu.gyro_noise_density:
+    status: unknown
+    plan: Allan variance on a static bench recording from the flight controller actually bought.
+  sensors.imu.accel_noise_density:
+    status: unknown
+    plan: Allan variance on a static bench recording from the flight controller actually bought.
+  sensors.barometer.noise_pa:
+    status: unknown
+    plan: Static bench recording at a known altitude, from the flight controller actually bought.
+  aerodynamics.linear_drag_coefficient_kg_s:
+    status: derived
+    plan: >-
+      Wind generator sweep across 2-9 m/s measuring hover bank angle, mirroring the IMAV 2022
+      method the current value is extrapolated from. Until then the wind results are simulation
+      regressions, not flight-representative claims.
