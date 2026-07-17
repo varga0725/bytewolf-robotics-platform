@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 PX4-Autopilot
 var/mission-runs/
+
+# Generated Gazebo worlds: rebuilt from the committed OSM snapshot on demand.
+simulation/worlds/generated/
