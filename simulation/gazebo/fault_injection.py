@@ -30,7 +30,12 @@ import subprocess
 
 # PX4's parameter client talks to the daemon over its working directory.
 PX4_BUILD_DIRECTORY = Path("PX4-Autopilot/build/px4_sitl_default")
-_PARAM_VALUE = re.compile(r"^\s*[x+*]?\s*(\S+)\s*\[\d+,\d+\]\s*:\s*(\S+)\s*$", re.MULTILINE)
+
+# PX4 prefixes each parameter with any of its status symbols -- 'x' used,
+# '+' saved, '*' unsaved -- and a freshly set one carries two of them
+# ("x * SIM_BAT_DRAIN [837,1415] : 20.0000"), which is exactly the state a
+# fault injection reads back.
+_PARAM_VALUE = re.compile(r"^\s*(?:[x+*]\s+)*(\S+)\s+\[\d+,\d+\]\s*:\s*(\S+)\s*$", re.MULTILINE)
 
 # PX4 stores parameters as float32, so a read-back is not bit-identical.
 _READ_BACK_TOLERANCE = 1e-4

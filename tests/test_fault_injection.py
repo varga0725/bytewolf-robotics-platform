@@ -12,8 +12,16 @@ from unittest.mock import Mock
 from simulation.gazebo.fault_injection import FaultInjectionError, apply_px4_parameters
 
 
-def _param_output(name: str, value: str) -> str:
-    return f"Symbols: x = used, + = saved, * = unsaved\nx   {name} [836,1417] : {value}\n\n 1000/1920 parameters used.\n"
+def _param_output(name: str, value: str, symbols: str = "x * ") -> str:
+    """Mirror PX4's real output.
+
+    A parameter that was just set reads back as used *and* unsaved, so it
+    carries two symbols -- which is the only state a read-back ever sees.
+    """
+    return (
+        "Symbols: x = used, + = saved, * = unsaved\n"
+        f"{symbols}{name} [836,1417] : {value}\n\n 1000/1920 parameters used.\n"
+    )
 
 
 def _runner(values: dict[str, str], returncode: int = 0) -> Mock:
@@ -56,6 +64,24 @@ class ApplyPx4ParametersTests(unittest.TestCase):
 
         with self.assertRaisesRegex(FaultInjectionError, "reads back 60"):
             apply_px4_parameters((("SIM_BAT_DRAIN", 20.0),), px4_build_directory=Path("build"), run_command=run)
+
+    def test_reads_every_status_symbol_combination_px4_emits(self) -> None:
+        """PX4 marks a parameter used, saved, unsaved, or several at once."""
+        for symbols in ("x * ", "x   ", "x + ", "* ", "    "):
+            with self.subTest(symbols=symbols):
+                run = Mock(
+                    side_effect=lambda command, _s=symbols, **_k: Mock(
+                        returncode=0,
+                        stdout=_param_output("SIM_BAT_DRAIN", "20.0000", _s) if command[1] == "show" else "",
+                        stderr="",
+                    )
+                )
+
+                applied = apply_px4_parameters(
+                    (("SIM_BAT_DRAIN", 20.0),), px4_build_directory=Path("build"), run_command=run
+                )
+
+                self.assertEqual(applied[0].confirmed, 20.0)
 
     def test_refuses_a_parameter_px4_does_not_report(self) -> None:
         run = Mock(return_value=Mock(returncode=0, stdout="no such parameter\n", stderr=""))
