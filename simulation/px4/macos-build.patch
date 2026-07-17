@@ -1,0 +1,72 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d827f7a..3f5ad33 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -267,8 +267,12 @@ endif()
+ 
+ set(package-contact "px4users@googlegroups.com")
+ 
+-set(CMAKE_CXX_STANDARD 14)
++set(CMAKE_CXX_STANDARD 17)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
++if(APPLE)
++	add_compile_options(-Wno-error=double-promotion -Wno-error=deprecated-declarations -Wno-error=unused-private-field)
++	link_directories(/opt/homebrew/lib)
++endif()
+ set(CMAKE_C_STANDARD 11)
+ set(CMAKE_C_STANDARD_REQUIRED ON)
+ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+diff --git a/src/modules/simulation/gz_msgs/CMakeLists.txt b/src/modules/simulation/gz_msgs/CMakeLists.txt
+index 2501811..e658322 100644
+--- a/src/modules/simulation/gz_msgs/CMakeLists.txt
++++ b/src/modules/simulation/gz_msgs/CMakeLists.txt
+@@ -24,6 +24,9 @@ if (Protobuf_FOUND)
+             ${Protobuf_INCLUDE_DIRS}
+     )
+     target_link_libraries(px4_gz_msgs PUBLIC ${PROTOBUF_LIBRARIES})
++    if (APPLE)
++        target_compile_options(px4_gz_msgs PRIVATE -Wno-error=double-promotion)
++    endif()
+     if (Protobuf_VERSION VERSION_LESS "3.8")
+         target_compile_options(px4_gz_msgs PRIVATE -Wno-error=float-equal)
+     endif()
+diff --git a/src/modules/simulation/gz_plugins/moving_platform_controller/MovingPlatformController.cpp b/src/modules/simulation/gz_plugins/moving_platform_controller/MovingPlatformController.cpp
+index f8f1ab2..dc00b8c 100644
+--- a/src/modules/simulation/gz_plugins/moving_platform_controller/MovingPlatformController.cpp
++++ b/src/modules/simulation/gz_plugins/moving_platform_controller/MovingPlatformController.cpp
+@@ -234,12 +234,12 @@ void MovingPlatformController::updateWrenchCommand(
+ 		const gz::math::Vector3d feedback_force = -pos_gains * platform_pos_error - vel_gains * platform_vel_error;
+ 
+ 		// Clip horizontal force to avoid large accelerations, which might cause the drone to slip off the platform.
+-		const float max_accel = 2.; // [m/s^2]
++		const double max_accel = 2.; // [m/s^2]
+ 		const gz::math::Vector2d _force_xy = gz::math::Vector2d(feedback_force.X(), feedback_force.Y());
+-		const float accel_xy = _force_xy.Length() / _platform_mass;
++		const double accel_xy = _force_xy.Length() / _platform_mass;
+ 
+ 		if (accel_xy > max_accel) {
+-			const float scaling = max_accel / accel_xy;
++			const double scaling = max_accel / accel_xy;
+ 			_force += feedback_force * gz::math::Vector3d(scaling, scaling, 1.);
+ 
+ 		} else {
+diff --git a/src/modules/simulation/gz_plugins/optical_flow/optical_flow.cmake b/src/modules/simulation/gz_plugins/optical_flow/optical_flow.cmake
+index 8ac1c1f..623980c 100644
+--- a/src/modules/simulation/gz_plugins/optical_flow/optical_flow.cmake
++++ b/src/modules/simulation/gz_plugins/optical_flow/optical_flow.cmake
+@@ -41,7 +41,7 @@ if(NOT TARGET OpticalFlow)
+         PREFIX ${CMAKE_BINARY_DIR}/OpticalFlow
+         INSTALL_DIR ${CMAKE_BINARY_DIR}/OpticalFlow/install
+         CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
+-        BUILD_BYPRODUCTS ${CMAKE_BINARY_DIR}/OpticalFlow/install/lib/libOpticalFlow.so
++        BUILD_BYPRODUCTS ${CMAKE_BINARY_DIR}/OpticalFlow/install/lib/libOpticalFlow${CMAKE_SHARED_LIBRARY_SUFFIX}
+         UPDATE_DISCONNECTED ON
+         BUILD_ALWAYS OFF
+         STEP_TARGETS build
+@@ -49,5 +49,5 @@ if(NOT TARGET OpticalFlow)
+ 
+     ExternalProject_Get_Property(OpticalFlow install_dir)
+     set(OpticalFlow_INCLUDE_DIRS ${install_dir}/include CACHE INTERNAL "")
+-    set(OpticalFlow_LIBS ${install_dir}/lib/libOpticalFlow.so CACHE INTERNAL "")
++    set(OpticalFlow_LIBS ${install_dir}/lib/libOpticalFlow${CMAKE_SHARED_LIBRARY_SUFFIX} CACHE INTERNAL "")
+ endif()

@@ -8,7 +8,16 @@ A safety-first digital twin for a Holybro X500 V2 multicopter. Python mission/sa
 layer → MAVSDK → PX4 SITL v1.17.0 → Gazebo Harmonic, running natively on Apple
 Silicon macOS. `PX4-Autopilot` is a symlink to `~/bytewolf-robotics/PX4-Autopilot`
 (the physical path must stay space-free — a PX4 subproject breaks on spaces in the
-build path) and is git-ignored third-party source: never edit it.
+build path) and is git-ignored third-party source.
+
+Never add ad-hoc edits to PX4. It carries exactly one recorded change,
+`simulation/px4/macos-build.patch`, because v1.17.0 does not build on Apple Silicon
+as released; a patched tree reports `v1.17.0-dirty`, which is the baseline, not drift.
+`shared/config/x500v2/baseline.yaml` pins that tree by commit and by the sha256 of
+every PX4 file this platform reads, renders fixtures from, or patches, since a
+drifted PX4 or Gazebo silently changes what a passing scenario means. Check it with
+`.venv/bin/python -m simulation.baseline`, which changes nothing and exits non-zero
+on drift. Anything else found modified in the PX4 tree is a bug to surface, not to keep.
 
 ## Commands
 
@@ -148,9 +157,10 @@ claiming a phase is done, and record status changes back to it with the commit h
 artifact paths that prove them. Notion pages are written in Hungarian; code and docstrings
 are English.
 
-Current state: P0 closed (10/10 repeatability). P0.v2 wind closed — the matrix runs 9/9 and
-each wind run confirms its own condition from the vehicle's hover tilt against Gazebo
-ground truth (`simulation/gazebo/wind_probe.py`), so a fixture that fails to load can no
-longer pass. A measured X500 drag coefficient is gated on hardware the project has not
-bought. P1 locally complete; the Ubuntu 22.04 + ROS 2 Humble topic smoke is deferred for
-lack of an environment.
+Current state: P0 closed (10/10 repeatability). P0.v2 wind and fault closed — the matrix
+runs 10/10 (`p0-20260717T122444Z.json`, commit `595cc5e`). Each wind run confirms its own
+condition from the vehicle's hover tilt against Gazebo ground truth
+(`simulation/gazebo/wind_probe.py`), so a fixture that fails to load can no longer pass,
+and the battery fault reads its parameters back from PX4. A measured X500 drag coefficient
+is gated on hardware the project has not bought. P1 locally complete; the Ubuntu 22.04 +
+ROS 2 Humble topic smoke is deferred for lack of an environment.

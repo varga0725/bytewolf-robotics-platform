@@ -23,11 +23,36 @@ outside this structure at `PX4-Autopilot`.
 
 - Primary simulation environment: native Apple Silicon macOS.
 - Flight controller: PX4 SITL v1.17.0.
-- Simulator: Gazebo Harmonic.
+- Simulator: Gazebo Harmonic (gz-sim 8.12.0).
 - Baseline world: PX4's built-in `default` world.
 
 The Linux VM remains optional for future ROS 2 development; it is not needed to
 run the native macOS PX4/Gazebo simulator.
+
+## Verify the simulation baseline
+
+PX4 and Gazebo live outside this repository, so a drifted tree would quietly
+change what a passing scenario means. `shared/config/x500v2/baseline.yaml` pins
+the exact stack the committed evidence was produced against — PX4 and submodule
+commits, the Gazebo release, and the sha256 of every PX4 file this platform
+reads, renders fixtures from, or patches. Check a local environment against it:
+
+```zsh
+.venv/bin/python -m simulation.baseline
+```
+
+It changes nothing and exits non-zero on any drift.
+
+PX4 v1.17.0 does not build on Apple Silicon macOS as released, so the checkout
+needs the recorded patch set — C++17, Apple warning suppressions, the Homebrew
+library path, and the shared-library suffix the optical flow build assumes:
+
+```zsh
+git -C PX4-Autopilot apply "$PWD/simulation/px4/macos-build.patch"
+```
+
+A patched tree reports itself as `v1.17.0-dirty`; that is the expected baseline,
+not drift. Beyond applying that patch, nothing here modifies PX4's source tree.
 
 ## Run the simulator
 
