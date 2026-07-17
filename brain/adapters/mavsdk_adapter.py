@@ -415,13 +415,14 @@ class MavsdkMissionAdapter:
 
     @staticmethod
     def _battery_percent(battery: object) -> float:
+        """Read MAVSDK's battery percentage, which is already a 0-100 value."""
         try:
             remaining = float(getattr(battery, "remaining_percent"))
         except (AttributeError, TypeError, ValueError) as error:
             raise MissionPreflightError("Preflight rejected: battery telemetry is unavailable.") from error
-        if not isfinite(remaining) or not 0.0 <= remaining <= 1.0:
+        if not isfinite(remaining) or not 0.0 <= remaining <= 100.0:
             raise MissionPreflightError("Preflight rejected: battery telemetry is invalid.")
-        return remaining * 100.0
+        return remaining
 
     async def _sleep_with_runtime_watchdog(self, duration_s: float) -> None:
         """Observe live battery and GNSS while the controller is intentionally waiting.

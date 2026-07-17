@@ -31,13 +31,13 @@ class RuntimeTelemetryWatchdogTests(unittest.TestCase):
         )
 
     def test_allows_valid_runtime_samples_above_the_reserve(self) -> None:
-        decision = self.watchdog.evaluate(Battery(0.36), Position())
+        decision = self.watchdog.evaluate(Battery(36.0), Position())
 
         self.assertTrue(decision.permitted)
         self.assertIsNone(decision.fault)
 
     def test_orders_one_land_fallback_for_low_battery_while_client_is_alive(self) -> None:
-        decision = self.watchdog.evaluate(Battery(0.34), Position())
+        decision = self.watchdog.evaluate(Battery(34.0), Position())
 
         self.assertFalse(decision.permitted)
         self.assertEqual(decision.action, RuntimeSafetyAction.LAND)
@@ -46,7 +46,7 @@ class RuntimeTelemetryWatchdogTests(unittest.TestCase):
             decision.fault.kind = RuntimeFaultKind.GNSS_INVALID  # type: ignore[misc]
 
     def test_orders_one_land_fallback_for_invalid_gnss(self) -> None:
-        decision = self.watchdog.evaluate(Battery(0.8), Position(float("nan")))
+        decision = self.watchdog.evaluate(Battery(80.0), Position(float("nan")))
 
         self.assertFalse(decision.permitted)
         self.assertEqual(decision.action, RuntimeSafetyAction.LAND)

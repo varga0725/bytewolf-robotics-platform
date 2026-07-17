@@ -18,13 +18,9 @@ class Position:
 
 
 class Battery:
-    remaining_percent = 0.78
+    """MAVSDK reports battery charge as a 0-100 percentage."""
 
-
-class PercentageBattery:
-    """SITL reports battery charge on the 0–100 MAVSDK boundary."""
-
-    remaining_percent = 78.5
+    remaining_percent = 78.0
 
 
 async def samples(*values: object):
@@ -79,7 +75,7 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_invalid_samples_without_overwriting_last_safe_snapshot(self) -> None:
         class InvalidTelemetry(Telemetry):
             def battery(self):
-                return samples(type("InvalidBattery", (), {"remaining_percent": 1.2})())
+                return samples(type("InvalidBattery", (), {"remaining_percent": float("nan")})())
 
         class InvalidDrone:
             telemetry = InvalidTelemetry()
@@ -94,24 +90,25 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(destination.read_text(encoding="utf-8"), '{"preserved": true}')
 
-    async def test_normalizes_percentage_battery_samples_before_domain_routing(self) -> None:
-        class PercentageTelemetry(Telemetry):
+    async def test_passes_the_mavsdk_percentage_through_without_rescaling(self) -> None:
+        """A near-empty battery must reach the dashboard as near-empty."""
+        class LowBatteryTelemetry(Telemetry):
             def battery(self):
-                return samples(PercentageBattery())
+                return samples(type("LowBattery", (), {"remaining_percent": 1.0})())
 
-        class PercentageDrone:
-            telemetry = PercentageTelemetry()
+        class LowBatteryDrone:
+            telemetry = LowBatteryTelemetry()
 
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "telemetry.json"
-            relay = MavsdkTelemetryRelay(PercentageDrone(), destination)
+            relay = MavsdkTelemetryRelay(LowBatteryDrone(), destination)
 
             await relay.run_until_streams_complete()
 
             document = json.loads(destination.read_text(encoding="utf-8"))
-            self.assertEqual(document["battery"], {"remaining_percent": 78.5})
+            self.assertEqual(document["battery"], {"remaining_percent": 1.0})
 
-    async def test_rejects_ambiguous_or_out_of_range_percentage_battery_samples(self) -> None:
+    async def test_rejects_a_battery_percentage_outside_the_mavsdk_range(self) -> None:
         class InvalidPercentageTelemetry(Telemetry):
             def battery(self):
                 return samples(type("InvalidBattery", (), {"remaining_percent": 100.1})())
@@ -122,20 +119,7 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             relay = MavsdkTelemetryRelay(InvalidPercentageDrone(), Path(directory) / "telemetry.json")
 
-            with self.assertRaisesRegex(ValueError, "0.0 to 1.0"):
-                await relay.run_until_streams_complete()
-
-        class AmbiguousPercentageTelemetry(Telemetry):
-            def battery(self):
-                return samples(type("AmbiguousBattery", (), {"remaining_percent": 1.5})())
-
-        class AmbiguousPercentageDrone:
-            telemetry = AmbiguousPercentageTelemetry()
-
-        with tempfile.TemporaryDirectory() as directory:
-            relay = MavsdkTelemetryRelay(AmbiguousPercentageDrone(), Path(directory) / "telemetry.json")
-
-            with self.assertRaisesRegex(ValueError, "ambiguous"):
+            with self.assertRaisesRegex(ValueError, "0.0 and 100.0"):
                 await relay.run_until_streams_complete()
 
     async def test_cancels_the_other_streams_when_one_stream_is_invalid(self) -> None:
@@ -154,7 +138,7 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
                 return endless_positions()
 
             def battery(self):
-                return samples(type("InvalidBattery", (), {"remaining_percent": 1.2})())
+                return samples(type("InvalidBattery", (), {"remaining_percent": float("nan")})())
 
         class InvalidDrone:
             telemetry = InvalidTelemetry()

@@ -88,9 +88,9 @@ def _position_event(topic: str, sample: object, observed_at: datetime) -> Positi
 
 def _battery_event(topic: str, sample: object, observed_at: datetime) -> BatteryTelemetryEvent:
     remaining_percent = _finite_attribute(sample, "remaining_percent")
-    if not 0.0 <= remaining_percent <= 1.0:
+    if not 0.0 <= remaining_percent <= 100.0:
         raise TelemetryContractError(
-            "Telemetry field 'remaining_percent' must be between 0.0 and 1.0."
+            "Telemetry field 'remaining_percent' must be between 0.0 and 100.0."
         )
     return BatteryTelemetryEvent(topic, remaining_percent, observed_at)
 

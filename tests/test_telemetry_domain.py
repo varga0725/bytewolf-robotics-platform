@@ -23,7 +23,7 @@ class PositionSample:
 
 
 class BatterySample:
-    remaining_percent = 0.75
+    remaining_percent = 75.0
 
 
 class TelemetryDomainTests(unittest.TestCase):
@@ -55,7 +55,7 @@ class TelemetryDomainTests(unittest.TestCase):
             battery,
             BatteryTelemetryEvent(
                 topic="/bytewolf/x500v2_reference_01/telemetry/battery",
-                remaining_percent=0.75,
+                remaining_percent=75.0,
                 observed_at=self.observed_at,
             ),
         )
@@ -85,8 +85,8 @@ class TelemetryDomainTests(unittest.TestCase):
             route_mavsdk_telemetry("MAVSDK telemetry.position", bad_position)
 
         bad_battery = BatterySample()
-        bad_battery.remaining_percent = 1.1
-        with self.assertRaisesRegex(TelemetryContractError, "between 0.0 and 1.0"):
+        bad_battery.remaining_percent = 100.1
+        with self.assertRaisesRegex(TelemetryContractError, "between 0.0 and 100.0"):
             route_mavsdk_telemetry("MAVSDK telemetry.battery", bad_battery)
 
 

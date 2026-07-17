@@ -106,13 +106,14 @@ class RuntimeTelemetryWatchdog:
 
 
 def _battery_percent(battery: object) -> float | None:
+    """Read MAVSDK's battery percentage, which is already a 0-100 value."""
     try:
         remaining = float(getattr(battery, "remaining_percent"))
     except (AttributeError, TypeError, ValueError):
         return None
-    if not isfinite(remaining) or not 0.0 <= remaining <= 1.0:
+    if not isfinite(remaining) or not 0.0 <= remaining <= 100.0:
         return None
-    return remaining * 100.0
+    return remaining
 
 
 def _valid_position(position: object) -> bool:

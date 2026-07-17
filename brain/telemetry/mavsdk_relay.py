@@ -44,13 +44,6 @@ class TelemetryVehicle(Protocol):
 
 
 @dataclass(frozen=True)
-class _NormalizedBatterySample:
-    """Fractional battery value accepted by the telemetry-domain boundary."""
-
-    remaining_percent: float
-
-
-@dataclass(frozen=True)
 class DashboardTelemetryState:
     """Immutable dashboard state collected from declared telemetry sources."""
 
@@ -82,7 +75,7 @@ class DashboardTelemetryState:
                 "absolute_altitude_m": self.position.absolute_altitude_m,
                 "relative_altitude_m": self.position.relative_altitude_m,
             },
-            "battery": {"remaining_percent": self.battery.remaining_percent * 100.0},
+            "battery": {"remaining_percent": self.battery.remaining_percent},
             "in_air": self.flight_state.in_air,
             "captured_at": _format_timestamp(captured_at),
         }
@@ -141,11 +134,7 @@ class MavsdkTelemetryRelay:
 
     async def _consume(self, source: str, stream: AsyncIterator[object]) -> None:
         async for sample in stream:
-            event = route_mavsdk_telemetry(
-                source,
-                _normalize_battery_sample(source, sample),
-                observed_at=self._clock(),
-            )
+            event = route_mavsdk_telemetry(source, sample, observed_at=self._clock())
             self._state = self._state.with_event(event)
             if self._on_event is not None:
                 self._on_event(event)
@@ -153,29 +142,6 @@ class MavsdkTelemetryRelay:
                 _write_atomic_json(self._destination, self._state.as_dashboard_document(self._clock()))
 
 
-def _normalize_battery_sample(source: str, sample: object) -> object:
-    """Adapt the MAVSDK 0–100 battery variant without relaxing domain checks.
-
-    MAVSDK integrations may report either a 0–1 fraction or a 2–100 percentage.
-    Values between the representations are rejected because their unit is unclear.
-    """
-    if source != "MAVSDK telemetry.battery":
-        return sample
-    value = getattr(sample, "remaining_percent", None)
-    if type(value) not in (int, float) or not isfinite(float(value)):
-        raise TelemetryContractError("Telemetry field 'remaining_percent' must be a finite number.")
-    remaining_percent = float(value)
-    if 0.0 <= remaining_percent <= 1.0:
-        return sample
-    if 2.0 <= remaining_percent <= 100.0:
-        return _NormalizedBatterySample(remaining_percent / 100.0)
-    if 1.0 < remaining_percent < 2.0:
-        raise TelemetryContractError(
-            "Telemetry field 'remaining_percent' is ambiguous between fractional and percentage units."
-        )
-    raise TelemetryContractError(
-        "Telemetry field 'remaining_percent' must be a 0.0 to 1.0 fraction or a 2.0 to 100.0 percentage."
-    )
 
 
 def _format_timestamp(timestamp: datetime) -> str:

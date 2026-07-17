@@ -1,8 +1,9 @@
 import asyncio
+from dataclasses import replace
 import unittest
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter, MissionPreflightError
-from brain.safety.profile import SafetyProfile
+from brain.safety.profile import SafetyProfile, load_safety_profile
 from brain.mission.runtime_policy import RuntimePolicy
 from brain.mission.commands import TakeoffCommand, WaypointCommand
 from brain.mission.execution import MissionPhase
@@ -83,7 +84,7 @@ class FakeTelemetry:
 
     async def battery(self):
         while True:
-            yield Battery(remaining_percent=0.75)
+            yield Battery(remaining_percent=75.0)
             await asyncio.sleep(0)
 
 
@@ -199,10 +200,10 @@ class RuntimeLowBatteryTelemetry(FakeTelemetry):
     async def battery(self):
         self._battery_calls += 1
         if self._battery_calls == 1:
-            yield Battery(remaining_percent=0.75)
+            yield Battery(remaining_percent=75.0)
             return
         while True:
-            yield Battery(remaining_percent=0.34)
+            yield Battery(remaining_percent=34.0)
             await asyncio.sleep(0)
 
     async def position(self):
@@ -225,7 +226,7 @@ class RuntimeTelemetryDropoutTelemetry(FakeTelemetry):
     async def battery(self):
         self._battery_calls += 1
         if self._battery_calls == 1:
-            yield Battery(remaining_percent=0.75)
+            yield Battery(remaining_percent=75.0)
         return
 
     async def position(self):
@@ -241,7 +242,7 @@ class RuntimeTelemetryDropoutDrone(FakeDrone):
 
 
 class UnknownBatteryThenZeroTelemetry(FakeTelemetry):
-    """Models SITL's permitted unknown preflight battery followed by zero."""
+    """Models an unreadable preflight battery followed by a zero sample."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -269,9 +270,25 @@ class UnknownBatteryThenZeroDrone(FakeDrone):
 
 
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
-    async def test_permitted_unknown_sitl_battery_does_not_turn_a_later_zero_sample_into_low_battery(self) -> None:
+    async def test_unreadable_battery_fails_closed_before_arming(self) -> None:
+        """The X500 profile no longer permits an unknown battery: PX4 SITL does model one."""
         drone = UnknownBatteryThenZeroDrone()
         adapter = MavsdkMissionAdapter(drone, sleep=asyncio.sleep)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.01)
+
+        with self.assertRaisesRegex(RuntimeError, "battery telemetry is invalid"):
+            await adapter.execute(mission)
+
+        self.assertNotIn("arm", drone.events)
+
+    async def test_a_profile_that_permits_an_unknown_battery_does_not_read_zero_as_low(self) -> None:
+        """The escape hatch survives for profiles whose battery really is unmodelled."""
+        drone = UnknownBatteryThenZeroDrone()
+        adapter = MavsdkMissionAdapter(
+            drone,
+            sleep=asyncio.sleep,
+            safety_profile=replace(load_safety_profile(), allow_missing_battery_telemetry=True),
+        )
         mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.01)
 
         await adapter.execute(mission)

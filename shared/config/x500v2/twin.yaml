@@ -58,9 +58,11 @@ simulation:
   px4_version: v1.17.0
   gazebo_distribution: harmonic
   default_world: default
-  # PX4 SITL may expose an unknown battery percentage before an energy model is added.
-  # Physical-flight profiles must set this to false.
-  allow_missing_battery_telemetry: true
+  # PX4 SITL does model the battery: battery_simulator runs by default and MAVSDK reports a
+  # real percentage and voltage. This was true while the code misread MAVSDK's 0-100 scale as
+  # a 0-1 fraction, which made every reading look invalid and silently disabled both the arm
+  # reserve and the in-flight battery watchdog. Missing battery telemetry now fails closed.
+  allow_missing_battery_telemetry: false
   profiles:
     base: gz_x500
     vision: gz_x500_vision
