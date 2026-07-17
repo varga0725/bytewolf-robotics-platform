@@ -22,12 +22,17 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 import json
 from math import acos, atan, degrees, isfinite
+import os
 from statistics import median
 import subprocess
 from types import TracebackType
 
 
 STANDARD_GRAVITY_M_S2 = 9.80665
+
+# The launcher pins the Gazebo server to this interface, and a subscriber that
+# does not match it discovers nothing at all — which reads as a wind failure.
+GZ_TRANSPORT_INTERFACE = "127.0.0.1"
 
 # Below this altitude the vehicle is on or near the ground, where its tilt says
 # nothing about wind: it is held level by the ground, not by the controller.
@@ -187,6 +192,7 @@ class GazeboPoseObserver:
             ),
             stdout=self._stream,
             stderr=subprocess.DEVNULL,
+            env={**os.environ, "GZ_IP": GZ_TRANSPORT_INTERFACE},
         )
         return self
 

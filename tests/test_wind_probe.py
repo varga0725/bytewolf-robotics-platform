@@ -6,9 +6,13 @@ the two outcomes that matter: a tilted vehicle confirms, a level one does not.
 
 import json
 import math
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from simulation.gazebo.wind_probe import (
+    GazeboPoseObserver,
     WindProbeError,
     expected_hover_tilt_deg,
     observe_tilt,
@@ -122,6 +126,21 @@ class ObserveTiltTests(unittest.TestCase):
                 messages = [_pose_message(tilt, altitude_m=2.0) for _ in range(20)]
 
                 self.assertEqual(observe_tilt(messages, "x500_0", 8.0).matches_expected_wind, expected_match)
+
+
+class GazeboPoseObserverTests(unittest.TestCase):
+    def test_subscribes_on_the_interface_the_launcher_pins_the_server_to(self) -> None:
+        """A mismatched interface discovers nothing, which reads as a wind failure."""
+        with TemporaryDirectory() as directory, patch("subprocess.Popen") as popen:
+            capture = Path(directory) / "poses.jsonl"
+
+            with GazeboPoseObserver("windy", "x500_0", capture):
+                pass
+
+            command = popen.call_args.args[0]
+            self.assertEqual(popen.call_args.kwargs["env"]["GZ_IP"], "127.0.0.1")
+            self.assertIn("/world/windy/pose/info", command)
+            self.assertIn("--json-output", command)
 
 
 if __name__ == "__main__":
