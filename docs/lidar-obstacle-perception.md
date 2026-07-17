@@ -47,11 +47,31 @@ matching sector. The project has already paid once for trusting a frame by its
 label instead of its ground truth — the wind fixture was labelled north while
 Gazebo's ENU frame blew it east — so the mapping is asserted, not assumed.
 
+## Evidence
+
+Two headless scenarios turn the adapter into recorded evidence, each producing a
+durable artifact under `simulation/artifacts/perception/`.
+
+**Obstacle scenario** (`simulation.perception.obstacle_scenario`, gate G2). Drives
+a real `gz_x500_lidar_2d` SITL, places a box at a known bearing, captures many
+scans, and scores what the adapter saw. It passes only if the obstacle is
+detected on nearly every scan, on the right sector, at the right distance, with
+the rear blind spot unobserved throughout. First artifact: 30/30 scans detected
+the box ahead at 4.38 m against a placed 4.4 m, 0 % false-negative. This is also
+where the gz-to-FRD frame sign is confirmed against ground truth — a front box
+lands on yaw 0, a left box on yaw −90.
+
+**Collision Prevention baseline** (`simulation.perception.collision_prevention_baseline`,
+gate G3). Enables PX4 Collision Prevention (`CP_DIST=5`) and flies a
+`goto_location` mission straight at an obstacle, recording the closest approach
+from Gazebo ground truth. If CP shielded the flight the vehicle would hold near
+5 m; it closed to **0.36 m**. CP did nothing, because it runs only in Position
+mode while the project flies Auto/Hold.
+
 ## Scope
 
-This is the perception path only. PX4 Collision Prevention, the roadmap's first
-proposed shield, runs solely in Position mode and does nothing on the `goto_location`
-mission path this project flies; the mission-path runtime shield therefore moves
-to the Offboard phases (see the autonomy roadmap, 2026-07-17). The obstacle
-observation produced here is the evidence that a later shield — wherever it runs
-— consumes.
+This is the perception path plus the measured limit of the PX4 baseline shield.
+The CP baseline above settles gate G3: the mission-path runtime shield cannot be
+PX4 Collision Prevention, so it moves to the Offboard phases (autonomy roadmap,
+2026-07-17). The obstacle observation produced here is the evidence that a later
+shield — wherever it runs — consumes.
