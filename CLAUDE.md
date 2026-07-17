@@ -137,6 +137,9 @@ claiming a phase is done, and record status changes back to it with the commit h
 artifact paths that prove them. Notion pages are written in Hungarian; code and docstrings
 are English.
 
-Current state: P0 closed (10/10 repeatability). P0.v2 at 6/8 — open: real 3/6/10 m/s wind
-world runs. P1 locally complete; the Ubuntu 22.04 + ROS 2 Humble topic smoke is deferred
-for lack of an environment.
+Current state: P0 closed (10/10 repeatability). P0.v2 wind closed — the matrix runs 9/9 and
+each wind run confirms its own condition from the vehicle's hover tilt against Gazebo
+ground truth (`simulation/gazebo/wind_probe.py`), so a fixture that fails to load can no
+longer pass. A measured X500 drag coefficient is gated on hardware the project has not
+bought. P1 locally complete; the Ubuntu 22.04 + ROS 2 Humble topic smoke is deferred for
+lack of an environment.
