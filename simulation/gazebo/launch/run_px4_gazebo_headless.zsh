@@ -85,6 +85,22 @@ if [[ ! -x "$PX4_BINARY" ]]; then
   exit 2
 fi
 
+# PX4 autosaves parameters into its working directory, so sharing one directory
+# across runs lets an injected fault outlive the scenario that asked for it: a
+# low-battery run left SIM_BAT_MIN_PCT=20 behind, and every later run booted with
+# it and quietly flew a fault it never declared.  Each SITL therefore gets its
+# own throwaway working directory and always starts from PX4's own defaults.
+PX4_RUN_DIR=${PX4_RUN_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/bytewolf-px4-run.XXXXXX")}
+PX4_OWNS_RUN_DIR=0
+if [[ -z "${PX4_RUN_DIR_KEEP:-}" ]]; then
+  PX4_OWNS_RUN_DIR=1
+fi
+
+if [[ ! -d "$PX4_RUN_DIR" ]]; then
+  print -u2 "Nem hozható létre a PX4 futási könyvtár: $PX4_RUN_DIR"
+  exit 1
+fi
+
 PX4_PID=0
 
 stop_child() {
@@ -104,6 +120,9 @@ cleanup() {
   stop_child "$GZ_SERVER_PID"
   wait "$PX4_PID" 2>/dev/null || true
   wait "$GZ_SERVER_PID" 2>/dev/null || true
+  if (( PX4_OWNS_RUN_DIR )) && [[ -d "$PX4_RUN_DIR" ]]; then
+    rm -rf "$PX4_RUN_DIR"
+  fi
 }
 
 print "Headless Gazebo szerver indítása: $WORLD"
@@ -122,7 +141,10 @@ print "Headless PX4 SITL indítása: $TARGET a(z) $WORLD worldben"
 # PX4's normal interactive pxh shell continuously writes prompts to such a pipe;
 # once the pipe fills, PX4 blocks before MAVLink becomes available.  Daemon mode
 # starts the same SITL stack without the interactive shell.
+# -w is the isolation: PX4 changes into the run directory, symlinks etc/ from the
+# data path it is given, and keeps its parameters and logs there.  The data path
+# must therefore be the build's etc/, the same one PX4 picks for itself.
 cd "$PX4_BUILD_DIR"
-PX4_SIM_MODEL="$TARGET" "$PX4_BINARY" -d "$PX4_BUILD_DIR/rootfs" &
+PX4_SIM_MODEL="$TARGET" "$PX4_BINARY" -d -w "$PX4_RUN_DIR" "$PX4_BUILD_DIR/etc" &
 PX4_PID=$!
 wait "$PX4_PID"
