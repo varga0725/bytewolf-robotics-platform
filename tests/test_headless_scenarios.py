@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 import json
@@ -10,6 +11,8 @@ import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
+
+from simulation.gazebo.wind_probe import TiltObservation
 
 from simulation.scenarios.scenarios import (
     P0_SCENARIOS,
@@ -44,6 +47,40 @@ def _write_px4_wind_sources(root: Path) -> Path:
         "<server_config>\n  <plugins>\n  </plugins>\n</server_config>\n", encoding="utf-8"
     )
     return root
+
+
+class _FakeWindObserver:
+    """Replay a scripted pose stream instead of watching a real Gazebo."""
+
+    def __init__(self, world_name: str, model_name: str, capture_path: Path, tilt_deg: float | None) -> None:
+        self.world_name = world_name
+        self.model_name = model_name
+        self._capture_path = capture_path
+        self._tilt_deg = tilt_deg
+
+    def __enter__(self) -> "_FakeWindObserver":
+        self._capture_path.parent.mkdir(parents=True, exist_ok=True)
+        self._capture_path.write_text("scripted\n", encoding="utf-8")
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def observation(self, expected_tilt_deg: float) -> TiltObservation:
+        observed = expected_tilt_deg if self._tilt_deg is None else self._tilt_deg
+        matches = abs(observed - expected_tilt_deg) <= max(1.0, 0.4 * expected_tilt_deg)
+        return TiltObservation(
+            samples=200,
+            airborne_samples=100,
+            median_airborne_tilt_deg=observed,
+            expected_tilt_deg=expected_tilt_deg,
+            matches_expected_wind=matches,
+            detail=f"Median airborne tilt {observed:.2f} deg against {expected_tilt_deg:.2f} deg expected.",
+        )
+
+
+def _observer_flying(tilt_deg: float | None = None) -> Callable[[str, str, Path], _FakeWindObserver]:
+    return lambda world, model, path: _FakeWindObserver(world, model, path, tilt_deg)
 
 
 def _write_twin(root: Path) -> Path:
@@ -118,6 +155,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
             "sleep": Mock(),
             "px4_root": _write_px4_wind_sources(root / "px4"),
             "twin_path": _write_twin(root),
+            "wind_observer": _observer_flying(),
         }
         return ScenarioRunner(**{**defaults, **overrides})
 
@@ -179,6 +217,50 @@ class WindScenarioEvidenceTests(unittest.TestCase):
             self.assertIn("wind fixture", result["stderr"])
             self.assertIsNone(result["wind"])
             command_runner.assert_not_called()
+
+    def test_confirms_the_wind_from_the_vehicles_own_attitude(self) -> None:
+        """The report must prove PX4 loaded the fixture, not just that it was handed over."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self._runner(root)
+
+            report_path = runner.run((self._WIND_SCENARIO,), output_directory=root / "out")
+            result = json.loads(report_path.read_text(encoding="utf-8"))["results"][0]
+
+            self.assertEqual(result["status"], "passed")
+            observed = result["wind"]["observed"]
+            self.assertTrue(observed["matches_expected_wind"])
+            self.assertGreater(observed["airborne_samples"], 0)
+            # 2.0 kg pushed at 0.1425 1/s by 6 m/s of wind, against a 2.016 kg airframe.
+            self.assertAlmostEqual(observed["expected_tilt_deg"], 4.98, places=1)
+
+    def test_fails_a_flown_mission_whose_wind_never_reached_the_vehicle(self) -> None:
+        """A dropped fixture leaves the vehicle level; that must not pass as a wind run."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = self._runner(root, wind_observer=_observer_flying(tilt_deg=0.0))
+
+            report_path = runner.run((self._WIND_SCENARIO,), output_directory=root / "out")
+            result = json.loads(report_path.read_text(encoding="utf-8"))["results"][0]
+
+            self.assertEqual(result["status"], "failed")
+            self.assertIn("Wind not confirmed", result["stderr"])
+            self.assertFalse(result["wind"]["observed"]["matches_expected_wind"])
+
+    def test_watches_the_world_and_model_px4_actually_spawns(self) -> None:
+        observed_targets: list[tuple[str, str]] = []
+
+        def observer(world: str, model: str, path: Path) -> _FakeWindObserver:
+            observed_targets.append((world, model))
+            return _FakeWindObserver(world, model, path, None)
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._runner(root, wind_observer=observer).run(
+                (self._WIND_SCENARIO,), output_directory=root / "out"
+            )
+
+        self.assertEqual(observed_targets, [("windy", "x500_0")])
 
     def test_marks_a_wind_speed_outside_the_backed_drag_band(self) -> None:
         with TemporaryDirectory() as directory:

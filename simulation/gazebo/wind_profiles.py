@@ -69,6 +69,8 @@ class WindWorldFixture:
     east_m_s: float
     scaling_factor_per_s: float
     extrapolates_drag_model: bool
+    airframe_mass_kg: float
+    total_mass_kg: float
 
     @property
     def speed_m_s(self) -> float:
@@ -142,6 +144,25 @@ def read_airframe_mass_kg(source: str) -> float:
     if not isfinite(value) or value <= 0.0:
         raise WindProfileError("Source X500 base_link mass must be positive and finite.")
     return value
+
+
+def read_total_mass_kg(source: str) -> float:
+    """Return the whole airframe's mass, which the wind force is judged against."""
+    masses = [float(match.group(1)) for match in _MASS_ELEMENT.finditer(source) if _is_number(match.group(1))]
+    if not masses:
+        raise WindProfileError("Source X500 base model must declare at least one mass.")
+    total = sum(masses)
+    if not isfinite(total) or total <= 0.0:
+        raise WindProfileError("Source X500 total mass must be positive and finite.")
+    return total
+
+
+def _is_number(value: str) -> bool:
+    try:
+        float(value)
+    except ValueError:
+        return False
+    return True
 
 
 def render_wind_effects_plugin(scaling_factor_per_s: float) -> str:
@@ -274,7 +295,9 @@ def create_wind_fixture(
 ) -> WindWorldFixture:
     """Write a reproducible 3/6/10 m/s world, wind system, and the X500 that feels it."""
     base_source = _read(source_models / "x500_base" / "model.sdf", "source X500 base model")
-    scaling_factor = drag_model.scaling_factor_per_s(read_airframe_mass_kg(base_source))
+    airframe_mass = read_airframe_mass_kg(base_source)
+    total_mass = read_total_mass_kg(base_source)
+    scaling_factor = drag_model.scaling_factor_per_s(airframe_mass)
 
     world = render_fixed_speed_wind_world(_read(source_world, "source Gazebo world"), speed_m_s)
     server_config = render_wind_server_config(
@@ -300,6 +323,8 @@ def create_wind_fixture(
         speed_m_s,
         scaling_factor,
         drag_model.extrapolates_at(speed_m_s),
+        airframe_mass,
+        total_mass,
     )
 
 

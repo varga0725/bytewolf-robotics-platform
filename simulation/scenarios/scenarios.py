@@ -17,6 +17,7 @@ import time
 from typing import Protocol
 from uuid import uuid4
 
+from simulation.gazebo.wind_probe import GazeboPoseObserver, expected_hover_tilt_deg
 from simulation.gazebo.wind_profiles import (
     SUPPORTED_WIND_SPEEDS_M_S,
     LinearDragModel,
@@ -24,6 +25,12 @@ from simulation.gazebo.wind_profiles import (
     create_wind_fixture,
     load_linear_drag_model,
 )
+
+
+# The fixture is rendered from PX4's windy world, and PX4 names the model it
+# spawns after the airframe and instance.
+WIND_WORLD_NAME = "windy"
+WIND_MODEL_NAME = "x500_0"
 
 
 class CompletedProcess(Protocol):
@@ -77,7 +84,12 @@ class WindEvidence:
     models_root: str
     scaling_factor_per_s: float
     extrapolates_drag_model: bool
+    airframe_mass_kg: float
+    total_mass_kg: float
     verification_level: str = "px4-gazebo-fault-injection"
+    # What the vehicle's own attitude proved about the wind it actually flew in.
+    # Absent means the wind was handed over but never confirmed.
+    observed: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -257,7 +269,9 @@ class ScenarioRunner:
         sleep: Callable[[float], None] = time.sleep,
         px4_root: Path | None = None,
         twin_path: Path | None = None,
+        wind_observer: Callable[[str, str, Path], object] = GazeboPoseObserver,
     ) -> None:
+        self._wind_observer = wind_observer
         self._command_runner = command_runner
         self._uses_default_command_runner = command_runner is subprocess.run
         self._now = now or (lambda: datetime.now(UTC))
@@ -348,12 +362,41 @@ class ScenarioRunner:
                 self._sleep(self._startup_wait_s)
             if sitl_process is not None and not self._readiness_check(sitl_process):
                 return self._blocked_result(scenario, "SITL readiness check failed.", output_directory, wind)
-            return self._run_scenario(scenario, output_directory, wind)
+            if wind is None:
+                return self._run_scenario(scenario, output_directory)
+            return self._run_observed_wind_scenario(scenario, output_directory, wind)
         except OSError as error:
             return self._blocked_result(scenario, f"Could not start SITL: {error}.", output_directory, wind)
         finally:
             if sitl_process is not None:
                 self._stop_sitl(sitl_process)
+
+    def _run_observed_wind_scenario(
+        self, scenario: Scenario, output_directory: Path, wind: WindEvidence
+    ) -> ScenarioResult:
+        """Fly the scenario while watching whether the vehicle really feels the wind."""
+        expected_tilt = expected_hover_tilt_deg(
+            wind.speed_m_s, wind.scaling_factor_per_s, wind.airframe_mass_kg, wind.total_mass_kg
+        )
+        capture_path = output_directory / "wind-observations" / f"{scenario.identifier}.jsonl"
+        with self._wind_observer(WIND_WORLD_NAME, WIND_MODEL_NAME, capture_path) as observer:
+            result = self._run_scenario(scenario, output_directory)
+        observation = observer.observation(expected_tilt)
+        # The raw stream is every entity in the world at ~50 Hz; the verdict is
+        # the evidence, and keeping the stream would bloat every run directory.
+        capture_path.unlink(missing_ok=True)
+
+        confirmed_wind = replace(wind, observed=asdict(observation))
+        if result.status == "passed" and not observation.matches_expected_wind:
+            # The mission flew, but not in the wind this run claims. A pass here
+            # would be exactly the unprovable wind evidence this check exists for.
+            return replace(
+                result,
+                status="failed",
+                stderr=f"{result.stderr}\nWind not confirmed: {observation.detail}",
+                wind=confirmed_wind,
+            )
+        return replace(result, wind=confirmed_wind)
 
     def _wind_environment(
         self, scenario: Scenario, output_directory: Path
@@ -389,6 +432,8 @@ class ScenarioRunner:
             models_root=str(fixture.models_root),
             scaling_factor_per_s=fixture.scaling_factor_per_s,
             extrapolates_drag_model=fixture.extrapolates_drag_model,
+            airframe_mass_kg=fixture.airframe_mass_kg,
+            total_mass_kg=fixture.total_mass_kg,
         )
         return environment, evidence
 

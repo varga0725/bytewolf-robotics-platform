@@ -15,6 +15,7 @@ from simulation.gazebo.wind_profiles import (
     create_wind_fixture,
     load_linear_drag_model,
     read_airframe_mass_kg,
+    read_total_mass_kg,
     render_fixed_speed_wind_world,
     render_wind_effects_plugin,
     render_wind_enabled_airframe_model,
@@ -82,7 +83,16 @@ class LinearDragModelTests(unittest.TestCase):
         self.assertTrue(_DRAG_MODEL.extrapolates_at(10.0))
 
     def test_reads_the_airframe_mass_from_px4s_own_model(self) -> None:
+        """The wind pushes base_link, so its mass alone scales the force."""
         self.assertEqual(read_airframe_mass_kg(_SOURCE_BASE_MODEL), 2.0)
+
+    def test_reads_the_whole_vehicle_mass_that_the_wind_is_judged_against(self) -> None:
+        """The weight resisting the tilt is every link, not just the one wind pushes."""
+        self.assertEqual(read_total_mass_kg(_SOURCE_BASE_MODEL), 2.016)
+
+    def test_rejects_a_model_without_any_mass(self) -> None:
+        with self.assertRaisesRegex(WindProfileError, "at least one mass"):
+            read_total_mass_kg("<sdf><model name='x500_base'/></sdf>")
 
     def test_rejects_a_base_link_without_a_usable_mass(self) -> None:
         with self.assertRaisesRegex(WindProfileError, "must declare a mass"):
