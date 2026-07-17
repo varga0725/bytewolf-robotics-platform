@@ -20,7 +20,8 @@ case "$PROFILE" in
   lidar-2d) TARGET=gz_x500_lidar_2d ;;
   -h|--help)
     print "Használat: $0 [base|vision|depth|mono-front|mono-down|lidar-down|lidar-front|lidar-2d]"
-    print "Választható környezet: PX4_ROOT, PX4_GZ_WORLD"
+    print "Választható környezet: PX4_ROOT, PX4_GZ_WORLD, PX4_GZ_WORLD_FILE,"
+    print "                      PX4_GZ_MODELS, PX4_GZ_SERVER_CONFIG"
     exit 0
     ;;
   *)
@@ -46,10 +47,32 @@ if [[ ! -f "$WORLD_FILE" ]]; then
   exit 2
 fi
 
+# A fixture may override the spawned model set (PX4_GZ_MODELS) and the loaded
+# Gazebo systems (PX4_GZ_SERVER_CONFIG); a wind run needs both.  PX4 only
+# derives these itself in its non-standalone branch, so the launcher must be
+# explicit about them here.  Overlay models come first, and PX4's own package
+# stays on the path so an overlay can reference PX4's meshes without copying.
+PX4_STOCK_MODELS="$PX4_ROOT/Tools/simulation/gz/models"
+export PX4_GZ_MODELS="${PX4_GZ_MODELS:-$PX4_STOCK_MODELS}"
+PX4_GZ_MODELS=${PX4_GZ_MODELS:A}
+
+if [[ ! -d "$PX4_GZ_MODELS" ]]; then
+  print -u2 "Nem található a Gazebo modellkönyvtár: $PX4_GZ_MODELS"
+  exit 2
+fi
+
+GZ_SERVER_CONFIG=${PX4_GZ_SERVER_CONFIG:-$PX4_ROOT/Tools/simulation/gz/server.config}
+GZ_SERVER_CONFIG=${GZ_SERVER_CONFIG:A}
+
+if [[ ! -f "$GZ_SERVER_CONFIG" ]]; then
+  print -u2 "Nem található a Gazebo server config: $GZ_SERVER_CONFIG"
+  exit 2
+fi
+
 # Start the Gazebo server explicitly.  With HEADLESS=1, relying on the PX4 make
 # target to launch it can leave PX4 alive without a world or simulated GPS.
-export GZ_SIM_RESOURCE_PATH="$PX4_ROOT/Tools/simulation/gz/models:${GZ_SIM_RESOURCE_PATH:-}"
-export GZ_SIM_SERVER_CONFIG_PATH="$PX4_ROOT/Tools/simulation/gz/server.config"
+export GZ_SIM_RESOURCE_PATH="$PX4_GZ_MODELS:$PX4_STOCK_MODELS:${GZ_SIM_RESOURCE_PATH:-}"
+export GZ_SIM_SERVER_CONFIG_PATH="$GZ_SERVER_CONFIG"
 # PX4's gz_bridge is launched with this interface; the server must use the same one.
 export GZ_IP=127.0.0.1
 export PX4_GZ_STANDALONE=1

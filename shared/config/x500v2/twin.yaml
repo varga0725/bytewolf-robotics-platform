@@ -38,6 +38,22 @@ propulsion:
   time_constant_up_s: null
   time_constant_down_s: null
 
+aerodynamics:
+  # Airframe drag against the relative airspeed: ||D|| = linear_drag_coefficient_kg_s * airspeed.
+  # A quadrotor's drag is linear, not quadratic, across roughly 2-9 m/s, because rotor drag
+  # dominates at low airspeed; it only turns quadratic above ~8-10 m/s. Measured on a 0.47 m
+  # quadrotor in a wind generator by Hattenberger, Bronz & Condomines, "Evaluation of drag
+  # coefficient for a quadrotor model", IMAV 2022: https://www.imavs.org/papers/2022/4.pdf
+  #
+  # Literature-derived, NOT measured on an X500: the paper's mass regression
+  # k = 0.105 + 0.087 * mass_kg is evaluated at the 2.064 kg simulated airframe. The paper
+  # fits 0.55-1.07 kg frames, so this extrapolates beyond its data. Replace it with a
+  # measured X500 V2 value before any wind result is called flight-representative.
+  linear_drag_coefficient_kg_s: 0.285
+  # The airspeed band the linear model above is backed by. A wind fixture outside this band
+  # records that it extrapolates, so no run can quietly claim validated aerodynamics.
+  linear_drag_valid_airspeed_m_s: [2.0, 9.0]
+
 simulation:
   px4_version: v1.17.0
   gazebo_distribution: harmonic

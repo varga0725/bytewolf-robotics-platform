@@ -9,13 +9,21 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from simulation.gazebo.wind_profiles import (
+    DEFAULT_TWIN_PATH,
+    LinearDragModel,
     WindProfileError,
     create_wind_fixture,
+    load_linear_drag_model,
+    read_airframe_mass_kg,
     render_fixed_speed_wind_world,
+    render_wind_effects_plugin,
     render_wind_enabled_airframe_model,
     render_wind_enabled_base_model,
     render_wind_server_config,
 )
+
+
+_DRAG_MODEL = LinearDragModel(0.285, (2.0, 9.0))
 
 
 _SOURCE_WORLD = "<sdf><world name='windy'><wind><linear_velocity>5 2 0</linear_velocity></wind></world></sdf>"
@@ -27,8 +35,9 @@ _SOURCE_SERVER_CONFIG = (
 )
 _SOURCE_BASE_MODEL = (
     "<sdf><model name='x500_base'><link name=\"base_link\">"
+    "<inertial><mass>2.0</mass></inertial>"
     "<visual name='v'><uri>model://x500_base/meshes/body.dae</uri></visual>"
-    "</link><link name='rotor_0'></link></model></sdf>"
+    "</link><link name='rotor_0'><inertial><mass>0.016</mass></inertial></link></model></sdf>"
 )
 _SOURCE_AIRFRAME_MODEL = (
     "<sdf><model name='x500'><include merge='true'><uri>model://x500_base</uri></include></model></sdf>"
@@ -56,23 +65,80 @@ class WindWorldTests(unittest.TestCase):
             render_fixed_speed_wind_world(with_plugin, 3.0)
 
 
+class LinearDragModelTests(unittest.TestCase):
+    def test_scales_gazebos_force_by_the_mass_it_pushes(self) -> None:
+        """Gazebo's force is mass * factor * airspeed, so factor = drag / mass."""
+        self.assertAlmostEqual(_DRAG_MODEL.scaling_factor_per_s(2.0), 0.1425)
+
+    def test_rejects_a_mass_that_cannot_scale_a_force(self) -> None:
+        for mass in (0.0, -1.0, float("nan"), float("inf")):
+            with self.subTest(mass=mass), self.assertRaisesRegex(WindProfileError, "Airframe mass"):
+                _DRAG_MODEL.scaling_factor_per_s(mass)
+
+    def test_reports_wind_speeds_outside_the_backed_band(self) -> None:
+        """The literature backs the linear model across 2-9 m/s only."""
+        self.assertFalse(_DRAG_MODEL.extrapolates_at(3.0))
+        self.assertFalse(_DRAG_MODEL.extrapolates_at(6.0))
+        self.assertTrue(_DRAG_MODEL.extrapolates_at(10.0))
+
+    def test_reads_the_airframe_mass_from_px4s_own_model(self) -> None:
+        self.assertEqual(read_airframe_mass_kg(_SOURCE_BASE_MODEL), 2.0)
+
+    def test_rejects_a_base_link_without_a_usable_mass(self) -> None:
+        with self.assertRaisesRegex(WindProfileError, "must declare a mass"):
+            read_airframe_mass_kg("<sdf><model name='x500_base'><link name=\"base_link\"></link></model></sdf>")
+
+    def test_the_shipped_twin_defines_a_usable_drag_model(self) -> None:
+        model = load_linear_drag_model(DEFAULT_TWIN_PATH)
+
+        self.assertGreater(model.coefficient_kg_s, 0.0)
+        self.assertEqual(model.valid_airspeed_m_s, (2.0, 9.0))
+
+    def test_refuses_to_model_wind_from_an_unknown_drag(self) -> None:
+        with TemporaryDirectory() as directory:
+            twin = Path(directory) / "twin.yaml"
+            twin.write_text("aerodynamics:\n  linear_drag_coefficient_kg_s: null\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(WindProfileError, "must be a positive number"):
+                load_linear_drag_model(twin)
+
+    def test_refuses_a_twin_without_an_aerodynamics_section(self) -> None:
+        with TemporaryDirectory() as directory:
+            twin = Path(directory) / "twin.yaml"
+            twin.write_text("safety:\n  max_altitude_m: 20\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(WindProfileError, "'aerodynamics' mapping"):
+                load_linear_drag_model(twin)
+
+
 class WindServerConfigTests(unittest.TestCase):
     def test_adds_the_wind_system_alongside_the_px4_systems(self) -> None:
         """A <wind> vector alone is inert: Gazebo needs the WindEffects system."""
-        rendered = render_wind_server_config(_SOURCE_SERVER_CONFIG)
+        rendered = render_wind_server_config(_SOURCE_SERVER_CONFIG, 0.1425)
 
         self.assertIn('filename="gz-sim-wind-effects-system"', rendered)
         self.assertIn('name="gz::sim::systems::WindEffects"', rendered)
         self.assertIn("gz-sim-physics-system", rendered)
         self.assertLess(rendered.index("WindEffects"), rendered.index("</plugins>"))
 
+    def test_always_states_the_scaling_factor(self) -> None:
+        """Gazebo's default of 1.0 is not a drag model; it drags the vehicle to wind speed."""
+        rendered = render_wind_server_config(_SOURCE_SERVER_CONFIG, 0.1425)
+
+        self.assertIn("<force_approximation_scaling_factor>0.1425</force_approximation_scaling_factor>", rendered)
+
+    def test_rejects_a_scaling_factor_that_is_not_a_drag(self) -> None:
+        for factor in (0.0, -0.5, float("nan"), float("inf")):
+            with self.subTest(factor=factor), self.assertRaisesRegex(WindProfileError, "scaling factor"):
+                render_wind_effects_plugin(factor)
+
     def test_rejects_a_source_that_already_drives_wind_itself(self) -> None:
         with self.assertRaisesRegex(WindProfileError, "already loads a wind system"):
-            render_wind_server_config(render_wind_server_config(_SOURCE_SERVER_CONFIG))
+            render_wind_server_config(render_wind_server_config(_SOURCE_SERVER_CONFIG, 0.1425), 0.1425)
 
     def test_rejects_a_config_without_the_expected_plugin_list(self) -> None:
         with self.assertRaisesRegex(WindProfileError, "exactly once"):
-            render_wind_server_config("<server_config/>")
+            render_wind_server_config("<server_config/>", 0.1425)
 
 
 class WindEnabledModelTests(unittest.TestCase):
@@ -133,6 +199,7 @@ class WindFixtureTests(unittest.TestCase):
             models_root=models_root,
             source_server_config=source_config,
             output_server_config=output_config,
+            drag_model=_DRAG_MODEL,
         )
         return output_world, models_root, output_config
 
@@ -152,6 +219,7 @@ class WindFixtureTests(unittest.TestCase):
                 models_root=models_root,
                 source_server_config=source_config,
                 output_server_config=output_config,
+                drag_model=_DRAG_MODEL,
             )
 
             self.assertEqual(fixture.speed_m_s, 6.0)
@@ -160,6 +228,10 @@ class WindFixtureTests(unittest.TestCase):
                 output_world.read_text(encoding="utf-8"), render_fixed_speed_wind_world(_SOURCE_WORLD, 6.0)
             )
             self.assertIn("WindEffects", output_config.read_text(encoding="utf-8"))
+            # 0.285 kg/s of drag spread over the 2.0 kg base_link Gazebo pushes.
+            self.assertAlmostEqual(fixture.scaling_factor_per_s, 0.1425)
+            self.assertFalse(fixture.extrapolates_drag_model)
+            self.assertIn("0.1425", output_config.read_text(encoding="utf-8"))
             self.assertIn(
                 "<enable_wind>true</enable_wind>",
                 (models_root / "x500_wind_base" / "model.sdf").read_text(encoding="utf-8"),

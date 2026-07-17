@@ -13,9 +13,18 @@ closed when a source does not have the exact shape the rendering relies on:
 * the world carries one exact horizontal vector, and no plugins of its own —
   any ``<plugin>`` in a world makes Gazebo ignore the server config entirely,
   which would drop both the wind system and PX4's own systems;
-* the server config gains the ``WindEffects`` system alongside PX4's systems;
+* the server config gains the ``WindEffects`` system alongside PX4's systems,
+  scaled to the twin's drag rather than left at Gazebo's default;
 * an overlay X500 opts its ``base_link`` into wind and is spawned in place of
   the stock airframe via ``PX4_GZ_MODELS``.
+
+Gazebo applies ``force = link_mass * scaling_factor * (wind_velocity -
+link_velocity)``, i.e. drag linear in airspeed.  That happens to be the model
+the literature validates for a quadrotor between ~2 and ~9 m/s, where rotor drag
+dominates, so the scaling factor is just the twin's linear drag coefficient over
+the airframe mass.  Gazebo's default of 1.0 is not a drag model at all: it drags
+the vehicle up to wind speed like a balloon, which slides a grounded X500 across
+the world at 10 m/s before it can arm.
 
 Nothing under the PX4 checkout is modified; the overlay only ever adds files.
 """
@@ -28,21 +37,21 @@ from math import isfinite
 from pathlib import Path
 import re
 
+import yaml
+
 
 SUPPORTED_WIND_SPEEDS_M_S = (3.0, 6.0, 10.0)
+
+DEFAULT_TWIN_PATH = Path(__file__).resolve().parents[2] / "shared/config/x500v2/twin.yaml"
 
 # Gazebo's world frame is ENU, so the first component of the wind vector is the
 # eastward speed.  The fixture keeps the wind purely horizontal and eastward.
 _WIND_ELEMENT = re.compile(r"<linear_velocity>\s*([^<]+?)\s*</linear_velocity>")
 _BASE_LINK_OPEN = re.compile(r"<link\s+name=['\"]base_link['\"]\s*>")
+_MASS_ELEMENT = re.compile(r"<mass>\s*([^<]+?)\s*</mass>")
 _LINK_CLOSE = "</link>"
 _PLUGINS_CLOSE = "</plugins>"
 _X500_BASE_URI = "model://x500_base"
-
-WIND_EFFECTS_PLUGIN = (
-    '    <plugin entity_name="*" entity_type="world" filename="gz-sim-wind-effects-system"'
-    ' name="gz::sim::systems::WindEffects"/>\n'
-)
 
 WIND_BASE_MODEL_NAME = "x500_wind_base"
 AIRFRAME_MODEL_NAME = "x500"
@@ -58,6 +67,8 @@ class WindWorldFixture:
     models_root: Path
     north_m_s: float
     east_m_s: float
+    scaling_factor_per_s: float
+    extrapolates_drag_model: bool
 
     @property
     def speed_m_s(self) -> float:
@@ -66,6 +77,88 @@ class WindWorldFixture:
 
 class WindProfileError(ValueError):
     """Raised when a wind fixture cannot prove its configured condition."""
+
+
+@dataclass(frozen=True)
+class LinearDragModel:
+    """The twin's literature-backed linear airframe drag: ||D|| = coefficient * airspeed."""
+
+    coefficient_kg_s: float
+    valid_airspeed_m_s: tuple[float, float]
+
+    def scaling_factor_per_s(self, airframe_mass_kg: float) -> float:
+        """Return Gazebo's factor, which divides the drag by the mass it pushes."""
+        if not isfinite(airframe_mass_kg) or airframe_mass_kg <= 0.0:
+            raise WindProfileError("Airframe mass must be a positive, finite value.")
+        return self.coefficient_kg_s / airframe_mass_kg
+
+    def extrapolates_at(self, airspeed_m_s: float) -> bool:
+        """Report whether a wind speed sits outside the band the model is backed by."""
+        lower, upper = self.valid_airspeed_m_s
+        return not lower <= airspeed_m_s <= upper
+
+
+def load_linear_drag_model(twin_path: Path) -> LinearDragModel:
+    """Read the twin's drag model, failing closed rather than guessing a default."""
+    try:
+        document = yaml.safe_load(twin_path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise WindProfileError(f"Cannot read twin profile '{twin_path}': {error.strerror}.") from error
+    except yaml.YAMLError as error:
+        raise WindProfileError(f"Twin profile '{twin_path}' is not valid YAML.") from error
+
+    aerodynamics = document.get("aerodynamics") if isinstance(document, dict) else None
+    if not isinstance(aerodynamics, dict):
+        raise WindProfileError("Twin profile must define an 'aerodynamics' mapping to model wind.")
+    coefficient = aerodynamics.get("linear_drag_coefficient_kg_s")
+    band = aerodynamics.get("linear_drag_valid_airspeed_m_s")
+    if type(coefficient) not in (int, float) or not isfinite(float(coefficient)) or coefficient <= 0.0:
+        raise WindProfileError(
+            "Twin profile field 'aerodynamics.linear_drag_coefficient_kg_s' must be a positive number; "
+            "wind cannot be simulated from an unknown drag."
+        )
+    if not isinstance(band, list) or len(band) != 2 or any(type(value) not in (int, float) for value in band):
+        raise WindProfileError(
+            "Twin profile field 'aerodynamics.linear_drag_valid_airspeed_m_s' must be a two-number band."
+        )
+    lower, upper = float(band[0]), float(band[1])
+    if not (isfinite(lower) and isfinite(upper) and 0.0 <= lower < upper):
+        raise WindProfileError("Twin profile drag validity band must be an increasing, finite, non-negative range.")
+    return LinearDragModel(float(coefficient), (lower, upper))
+
+
+def read_airframe_mass_kg(source: str) -> float:
+    """Return the mass of the link the wind pushes, from PX4's own model."""
+    match = _BASE_LINK_OPEN.search(source)
+    if match is None:
+        raise WindProfileError("Source X500 base model must declare a base_link to receive wind.")
+    mass = _MASS_ELEMENT.search(source, match.end())
+    if mass is None:
+        raise WindProfileError("Source X500 base_link must declare a mass to scale the wind force.")
+    try:
+        value = float(mass.group(1))
+    except ValueError as error:
+        raise WindProfileError("Source X500 base_link mass must be a number.") from error
+    if not isfinite(value) or value <= 0.0:
+        raise WindProfileError("Source X500 base_link mass must be positive and finite.")
+    return value
+
+
+def render_wind_effects_plugin(scaling_factor_per_s: float) -> str:
+    """Return the wind system entry, scaled to the twin's drag.
+
+    Gazebo's own default is 1.0, which is not a drag model: it accelerates the
+    vehicle until it matches the wind, so it must always be set explicitly.
+    """
+    if not isfinite(scaling_factor_per_s) or scaling_factor_per_s <= 0.0:
+        raise WindProfileError("Wind force scaling factor must be a positive, finite value.")
+    return (
+        '    <plugin entity_name="*" entity_type="world" filename="gz-sim-wind-effects-system"'
+        ' name="gz::sim::systems::WindEffects">\n'
+        f"      <force_approximation_scaling_factor>{scaling_factor_per_s:.6g}"
+        "</force_approximation_scaling_factor>\n"
+        "    </plugin>\n"
+    )
 
 
 def render_fixed_speed_wind_world(source: str, speed_m_s: float) -> str:
@@ -92,8 +185,8 @@ def render_fixed_speed_wind_world(source: str, speed_m_s: float) -> str:
     return source[: matches[0].start(1)] + wind_value + source[matches[0].end(1) :]
 
 
-def render_wind_server_config(source: str) -> str:
-    """Return PX4's Gazebo server config with the wind system added.
+def render_wind_server_config(source: str, scaling_factor_per_s: float) -> str:
+    """Return PX4's Gazebo server config with the scaled wind system added.
 
     The wind system has to travel with PX4's own systems: Gazebo loads either a
     world's plugins or the server config's, never both.
@@ -102,7 +195,8 @@ def render_wind_server_config(source: str) -> str:
         raise WindProfileError("Source server config already loads a wind system; the fixture cannot prove its speed.")
     if source.count(_PLUGINS_CLOSE) != 1:
         raise WindProfileError("Source server config must close its plugins element exactly once.")
-    return source.replace(_PLUGINS_CLOSE, f"{WIND_EFFECTS_PLUGIN}{_PLUGINS_CLOSE}")
+    plugin = render_wind_effects_plugin(scaling_factor_per_s)
+    return source.replace(_PLUGINS_CLOSE, f"{plugin}{_PLUGINS_CLOSE}")
 
 
 def render_wind_enabled_base_model(source: str) -> str:
@@ -176,13 +270,17 @@ def create_wind_fixture(
     models_root: Path,
     source_server_config: Path,
     output_server_config: Path,
+    drag_model: LinearDragModel,
 ) -> WindWorldFixture:
     """Write a reproducible 3/6/10 m/s world, wind system, and the X500 that feels it."""
+    base_source = _read(source_models / "x500_base" / "model.sdf", "source X500 base model")
+    scaling_factor = drag_model.scaling_factor_per_s(read_airframe_mass_kg(base_source))
+
     world = render_fixed_speed_wind_world(_read(source_world, "source Gazebo world"), speed_m_s)
-    server_config = render_wind_server_config(_read(source_server_config, "source Gazebo server config"))
-    base_model = render_wind_enabled_base_model(
-        _read(source_models / "x500_base" / "model.sdf", "source X500 base model")
+    server_config = render_wind_server_config(
+        _read(source_server_config, "source Gazebo server config"), scaling_factor
     )
+    base_model = render_wind_enabled_base_model(base_source)
     airframe_model = render_wind_enabled_airframe_model(
         _read(source_models / AIRFRAME_MODEL_NAME / "model.sdf", "source X500 model")
     )
@@ -193,7 +291,16 @@ def create_wind_fixture(
     _write(models_root / WIND_BASE_MODEL_NAME / "model.config", _model_config(WIND_BASE_MODEL_NAME))
     _write(models_root / AIRFRAME_MODEL_NAME / "model.sdf", airframe_model)
     _write(models_root / AIRFRAME_MODEL_NAME / "model.config", _model_config(AIRFRAME_MODEL_NAME))
-    return WindWorldFixture(source_world, output_world, output_server_config, models_root, 0.0, speed_m_s)
+    return WindWorldFixture(
+        source_world,
+        output_world,
+        output_server_config,
+        models_root,
+        0.0,
+        speed_m_s,
+        scaling_factor,
+        drag_model.extrapolates_at(speed_m_s),
+    )
 
 
 def parse_arguments(arguments: tuple[str, ...] | None = None) -> argparse.Namespace:
@@ -207,6 +314,9 @@ def parse_arguments(arguments: tuple[str, ...] | None = None) -> argparse.Namesp
     )
     parser.add_argument("--source-server-config", type=Path, required=True, help="PX4's read-only Gazebo server config.")
     parser.add_argument("--output-server-config", type=Path, required=True)
+    parser.add_argument(
+        "--twin", type=Path, default=DEFAULT_TWIN_PATH, help="Twin profile holding the airframe drag model."
+    )
     return parser.parse_args(arguments)
 
 
@@ -220,10 +330,13 @@ def main(arguments: tuple[str, ...] | None = None) -> None:
         models_root=parsed.models_root,
         source_server_config=parsed.source_server_config,
         output_server_config=parsed.output_server_config,
+        drag_model=load_linear_drag_model(parsed.twin),
     )
+    extrapolation = " EXTRAPOLATED drag model" if fixture.extrapolates_drag_model else ""
     print(
         f"Wind fixture: {fixture.output_world} ({fixture.speed_m_s:g} m/s east; "
-        f"wind system {fixture.server_config}; models {fixture.models_root}; source {fixture.source_world})"
+        f"scaling {fixture.scaling_factor_per_s:.6g} 1/s{extrapolation}; wind system {fixture.server_config}; "
+        f"models {fixture.models_root}; source {fixture.source_world})"
     )
 
 
