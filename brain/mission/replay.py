@@ -47,8 +47,8 @@ def replay_artifact(path: Path) -> MissionReplay:
         document = json.loads(path.read_text(encoding="utf-8"))
     except OSError as error:
         raise MissionReplayError(f"Cannot read replay artifact '{path}': {error.strerror}.") from error
-    except json.JSONDecodeError as error:
-        raise MissionReplayError(f"Replay artifact '{path}' is not valid JSON.") from error
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise MissionReplayError(f"Replay artifact '{path}' is not valid JSON or UTF-8.") from error
     return replay_document(document)
 
 

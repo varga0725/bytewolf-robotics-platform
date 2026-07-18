@@ -180,7 +180,7 @@ class MavsdkTelemetryRelay:
         self._state = self._state.with_event(event)
         if self._on_event is not None:
             await asyncio.to_thread(self._on_event, event)
-        if self._state.complete:
+        if not isinstance(event, SupplementalTelemetryEvent) and self._state.complete:
             document = self._state.as_dashboard_document(self._clock())
             await asyncio.to_thread(_write_atomic_json, self._destination, document)
 

@@ -183,6 +183,13 @@ class MissionReplayTests(unittest.TestCase):
             with self.assertRaisesRegex(MissionReplayError, "out of chronological order"):
                 replay_artifact(path)
 
+    def test_rejects_non_utf8_artifacts_as_unreadable_replay_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "corrupt.json"
+            path.write_bytes(b"\xff\xfe")
+            with self.assertRaisesRegex(MissionReplayError, "UTF-8"):
+                replay_artifact(path)
+
     def test_rejects_an_impossible_but_chronological_phase_sequence(self) -> None:
         document = {
             "events": [
