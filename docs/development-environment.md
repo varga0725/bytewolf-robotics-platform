@@ -48,6 +48,16 @@ külön Ubuntu ROS 2 Humble smoke pontos lépései a
 
 ## Automatizált és integrációs ellenőrzések
 
+A tesztek a projekt `.venv` környezetében futnak; a `requirements.txt` telepíti
+a MissionSpec-, perception- és telemetry-sémákhoz szükséges `jsonschema`
+függőséget. Ha az aktuális `python3` nem tartalmaz `venv` modult, teljes CPython
+interpreterrel hozd létre a környezetet, például:
+
+```zsh
+/opt/homebrew/bin/python3.13 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
 A következő automatizált tesztekhez nem kell PX4 SITL: fake MAVSDK/PX4
 együttműködőkkel futnak, így a mission- és adapterviselkedést ellenőrzik.
 
@@ -64,6 +74,35 @@ ellenőrzések; a jelenlegi tesztcsomag nem indít headless SITL-regressziót:
 .venv/bin/python -m brain.cli.fly_waypoint_land
 .venv/bin/python -m brain.cli.fly_return_to_home
 ```
+
+Minden connected flight CLI kötelezően külön, append-only, csak olvasható
+telemetria-előzményt ír a mission artifact könyvtárán belül. Ez nem vezérlési
+bemenet és offline replayhez használható. A `--telemetry-history` csak a
+kötelező history célhelyének explicit megadására való:
+
+```zsh
+.venv/bin/python -m brain.cli.fly_takeoff_hover_land \
+  --telemetry-history var/mission-runs/takeoff-telemetry.jsonl
+```
+
+Az audit és a history azonos `run_id`-t hordoz. Offline elemzéshez a
+`brain.mission.replay.replay_run(artifact_path)` a standard
+`telemetry-history/<run_id>.jsonl` fájlt tölti be, és minden rekordnál
+ellenőrzi az egyezést. Egyedi `--telemetry-history` útvonal esetén a history
+útvonala expliciten átadható a `replay_run` második paramétereként.
+
+A perception producer a `TelemetryHistoryStore.append_observation()` hívással
+ugyanebbe a futáshoz kötött historyba írhat. Az observation contract szerinti
+`valid`, `invalid` és `missing` állapotok is megmaradnak; a replay nem alakítja
+át a hiányzó vagy érvénytelen megfigyelést méréssé.
+
+Ha PX4 egy lezárt nyers logot adott, minden flight CLI `--px4-ulog /path/to/log.ulg`
+paramétere a futás artifact könyvtárának `px4-ulogs/` részébe archiválja. A
+run-linked manifest SHA-256-ot, méretet és `captured` státuszt ír. Forrás nélkül
+is keletkezik `unavailable` manifest; ez szándékosan nem állítja, hogy az ULog
+rögzült. A nyers ULogot az audit/history retentionnél hosszabb ideig kell
+megőrizni, és csak hitelesített másolat megléte után szabad operatív tárból
+eltávolítani.
 
 A waypoint-küldetés GPS-telemetriával igazolja a célba érkezést. A Return-to-Home
 küldetés a PX4 saját RTL módját használja. Sikeres futásnál az `in_air` telemetria

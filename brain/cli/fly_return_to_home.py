@@ -6,12 +6,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
-from brain.cli.artifacts import recorded_execution, write_run_artifact
+from brain.cli.artifacts import prepare_flight_run_recording, recorded_execution, write_run_artifact
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
 from brain.mission.execution import MissionExecution
 from brain.mission.flight import authorize_takeoff_return_to_home
 from brain.safety.gate import SafetyGate
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
+from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
+from brain.telemetry.persistence import TelemetryHistoryStore
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -40,16 +42,35 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=None,
         help="Directory for the immutable mission audit artifact.",
     )
+    parser.add_argument(
+        "--dashboard-snapshot",
+        type=Path,
+        default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
+        help="Read-only telemetry JSON snapshot, updated during this mission.",
+    )
+    parser.add_argument(
+        "--telemetry-history",
+        type=Path,
+        default=None,
+        help="Destination for the mandatory append-only JSONL telemetry history used by offline replay.",
+    )
+    parser.add_argument(
+        "--px4-ulog", type=Path, default=None,
+        help="Completed PX4 .ulg file to archive with a run-linked integrity manifest.",
+    )
     return parser.parse_args(arguments)
 
 
 async def run(arguments: argparse.Namespace) -> None:
+    recording = prepare_flight_run_recording(arguments.artifact_dir, arguments.telemetry_history)
     execution = MissionExecution.empty()
     system = None
     adapter: MavsdkMissionAdapter | None = None
     safety_decision = "not-evaluated"
     outcome = "failed"
     failure_reason: str | None = None
+    dashboard_stop_event: asyncio.Event | None = None
+    dashboard_relay_task: asyncio.Task[None] | None = None
     try:
         try:
             from mavsdk import System
@@ -71,6 +92,15 @@ async def run(arguments: argparse.Namespace) -> None:
         adapter = MavsdkMissionAdapter(system, safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
+        dashboard_stop_event = asyncio.Event()
+        history_store = TelemetryHistoryStore(recording.telemetry_history_path, recording.run_id)
+        dashboard_relay_task = asyncio.create_task(
+            MavsdkTelemetryRelay(
+                system,
+                arguments.dashboard_snapshot,
+                on_event=history_store.append,
+            ).run(dashboard_stop_event)
+        )
         print(
             f"Approved: take off to {mission.takeoff.target_altitude_m:g} m, hover for "
             f"{mission.hover_duration_s:g} s, then PX4 returns to launch and lands."
@@ -85,6 +115,17 @@ async def run(arguments: argparse.Namespace) -> None:
         execution = recorded_execution(adapter, execution)
         raise
     finally:
+        relay_error: Exception | None = None
+        if dashboard_stop_event is not None:
+            dashboard_stop_event.set()
+        if dashboard_relay_task is not None:
+            try:
+                await dashboard_relay_task
+            except Exception as error:
+                relay_error = error
+                if failure_reason is None:
+                    outcome = "failed"
+                    failure_reason = f"{type(error).__name__}: mandatory telemetry relay failed: {error}"
         stop_owned_mavsdk_server(system)
         write_run_artifact(
             getattr(arguments, "artifact_dir", None),
@@ -93,7 +134,11 @@ async def run(arguments: argparse.Namespace) -> None:
             outcome,
             failure_reason,
             getattr(adapter, "preflight_telemetry", None),
+            recording.run_id,
+            arguments.px4_ulog,
         )
+        if relay_error is not None and failure_reason and "mandatory telemetry relay failed" in failure_reason:
+            raise relay_error
 
 
 def main(arguments: Sequence[str] | None = None) -> None:
