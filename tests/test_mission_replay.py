@@ -109,6 +109,59 @@ class MissionReplayTests(unittest.TestCase):
                     with self.assertRaisesRegex(MissionReplayError, error):
                         replay_run(artifact_path)
 
+    def test_acceptance_replays_nominal_and_fallback_runs_with_their_original_terminal_state(self) -> None:
+        started_at = datetime(2026, 7, 18, 10, 0, tzinfo=UTC)
+        cases = (
+            (
+                "nominal-takeoff-land",
+                (
+                    MissionPhase.ARMING,
+                    MissionPhase.TAKING_OFF,
+                    MissionPhase.HOVERING,
+                    MissionPhase.LANDING,
+                    MissionPhase.COMPLETED,
+                ),
+                "completed",
+                None,
+            ),
+            (
+                "fallback-low-battery",
+                (MissionPhase.ARMING, MissionPhase.FAILED),
+                "failed",
+                "LowBatteryError: fallback landing completed",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            artifact_directory = Path(directory)
+            for run_id, phases, outcome, failure_reason in cases:
+                with self.subTest(run_id=run_id):
+                    execution = MissionExecution.empty()
+                    for offset, phase in enumerate(phases):
+                        execution = execution.transition(
+                            phase, started_at.replace(second=started_at.second + offset)
+                        )
+                    artifact_path = MissionArtifactWriter(artifact_directory).write(
+                        MissionAuditArtifact.from_execution(
+                            run_id,
+                            execution,
+                            recorded_at=started_at,
+                            safety_decision="approved",
+                            outcome=outcome,
+                            failure_reason=failure_reason,
+                        )
+                    )
+                    history_path = artifact_directory / "telemetry-history" / f"{run_id}.jsonl"
+                    TelemetryHistoryStore(history_path, run_id=run_id).append(
+                        BatteryTelemetryEvent("battery", 75.0, started_at)
+                    )
+
+                    replay = replay_run(artifact_path)
+
+                    self.assertEqual(replay.terminal_phase, phases[-1])
+                    self.assertEqual(replay.outcome, outcome)
+                    self.assertEqual(replay.failure_reason, failure_reason)
+                    self.assertEqual(replay.telemetry_events[0].remaining_percent, 75.0)
+
     def test_rejects_corrupt_or_out_of_order_artifacts(self) -> None:
         document = {
             "events": [
