@@ -91,6 +91,11 @@ Az audit és a history azonos `run_id`-t hordoz. Offline elemzéshez a
 ellenőrzi az egyezést. Egyedi `--telemetry-history` útvonal esetén a history
 útvonala expliciten átadható a `replay_run` második paramétereként.
 
+A perception producer a `TelemetryHistoryStore.append_observation()` hívással
+ugyanebbe a futáshoz kötött historyba írhat. Az observation contract szerinti
+`valid`, `invalid` és `missing` állapotok is megmaradnak; a replay nem alakítja
+át a hiányzó vagy érvénytelen megfigyelést méréssé.
+
 A waypoint-küldetés GPS-telemetriával igazolja a célba érkezést. A Return-to-Home
 küldetés a PX4 saját RTL módját használja. Sikeres futásnál az `in_air` telemetria
 előbb repülést, majd leszállást jelez; timeout vagy RTL-hiba esetén az adapter

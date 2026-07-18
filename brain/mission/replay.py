@@ -9,8 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from brain.mission.execution import MissionEvent, MissionExecution, MissionPhase, MissionTransitionError
-from brain.telemetry.domain import TelemetryEvent
-from brain.telemetry.persistence import load_telemetry_history
+from brain.telemetry.persistence import TelemetryHistoryEvent, load_telemetry_history
 
 
 SUPPORTED_ARTIFACT_VERSIONS = frozenset({"v0.2"})
@@ -34,7 +33,7 @@ class MissionReplay:
     preflight_navigation_ready: bool | None
     preflight_home_position_valid: bool | None
     preflight_global_position_valid: bool | None
-    telemetry_events: tuple[TelemetryEvent, ...] = ()
+    telemetry_events: tuple[TelemetryHistoryEvent, ...] = ()
 
     @property
     def terminal_phase(self) -> MissionPhase | None:

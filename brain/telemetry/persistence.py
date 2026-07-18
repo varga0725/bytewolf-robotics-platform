@@ -19,9 +19,22 @@ from brain.telemetry.domain import (
     TelemetryEvent,
     route_mavsdk_telemetry,
 )
+from brain.telemetry.observation import Observation, ObservationContractError, load_observation
 
 
 TELEMETRY_HISTORY_VERSION = "v0.1"
+
+
+@dataclass(frozen=True)
+class ObservationHistoryEvent:
+    """A versioned perception observation retained beside vehicle telemetry."""
+
+    topic: str
+    observation: Observation
+    observed_at: datetime
+
+
+TelemetryHistoryEvent = TelemetryEvent | ObservationHistoryEvent
 
 
 @dataclass(frozen=True)
@@ -40,16 +53,39 @@ class TelemetryHistoryStore:
             output.write(f"{payload}\n")
             output.flush()
 
+    def append_observation(self, document: object) -> ObservationHistoryEvent:
+        """Durably record a schema-valid observation without turning it into a command."""
+        try:
+            observation = load_observation(document)
+        except ObservationContractError as error:
+            raise ValueError(f"Telemetry history observation is invalid: {error}") from error
+        event = ObservationHistoryEvent(
+            topic=f"telemetry/history/observation/{observation.kind}",
+            observation=observation,
+            observed_at=observation.observed_at,
+        )
+        payload = json.dumps(
+            _observation_document(event, document, self.run_id),
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        self.destination.parent.mkdir(parents=True, exist_ok=True)
+        with self.destination.open("a", encoding="utf-8") as output:
+            output.write(f"{payload}\n")
+            output.flush()
+        return event
+
 
 def load_telemetry_history(
     path: Path, *, expected_run_id: str | None = None
-) -> tuple[TelemetryEvent, ...]:
+) -> tuple[TelemetryHistoryEvent, ...]:
     """Load a durable event sequence for offline replay; it cannot contact a vehicle."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as error:
         raise ValueError(f"Cannot read telemetry history '{path}': {error.strerror}.") from error
-    events: list[TelemetryEvent] = []
+    events: list[TelemetryHistoryEvent] = []
     previous_at: datetime | None = None
     for line_number, line in enumerate(lines, start=1):
         if not line:
@@ -99,7 +135,26 @@ def _event_document(event: TelemetryEvent, run_id: str | None) -> dict[str, obje
     return {**common, "event_type": "flight_state", "in_air": event.in_air}
 
 
-def _load_event(document: object, line_number: int) -> TelemetryEvent:
+def _observation_document(
+    event: ObservationHistoryEvent, document: object, run_id: str | None
+) -> dict[str, object]:
+    if not isinstance(document, dict):
+        raise ValueError("Telemetry history observation must be an object.")
+    payload: dict[str, object] = {
+        "event_type": "observation",
+        "observed_at": _format_timestamp(event.observed_at),
+        "observation": document,
+        "topic": event.topic,
+        "version": TELEMETRY_HISTORY_VERSION,
+    }
+    if run_id is not None:
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError("Telemetry history run_id must be a non-empty string.")
+        payload["run_id"] = run_id
+    return payload
+
+
+def _load_event(document: object, line_number: int) -> TelemetryHistoryEvent:
     if not isinstance(document, dict):
         raise ValueError(f"Telemetry history line {line_number} must be an object.")
     if _required_string(document, "version", line_number) != TELEMETRY_HISTORY_VERSION:
@@ -152,6 +207,18 @@ def _load_event(document: object, line_number: int) -> TelemetryEvent:
                 f"Telemetry history line {line_number} supplemental payload does not match the declared source schema."
             )
         return event
+    if event_type == "observation":
+        raw_observation = document.get("observation")
+        try:
+            observation = load_observation(raw_observation)
+        except ObservationContractError as error:
+            raise ValueError(f"Telemetry history line {line_number} observation is invalid: {error}") from error
+        expected_topic = f"telemetry/history/observation/{observation.kind}"
+        if topic != expected_topic or observation.observed_at != observed_at:
+            raise ValueError(
+                f"Telemetry history line {line_number} observation does not match its topic or timestamp."
+            )
+        return ObservationHistoryEvent(topic, observation, observed_at)
     raise ValueError(f"Telemetry history line {line_number} has an unknown event_type.")
 
 

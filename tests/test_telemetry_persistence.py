@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from brain.perception.lidar_obstacle import LaserScan, obstacle_observation
 from brain.telemetry.domain import (
     BatteryTelemetryEvent,
     FlightStateTelemetryEvent,
@@ -66,6 +67,27 @@ class TelemetryHistoryStoreTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "different run"):
                 load_telemetry_history(destination, expected_run_id="second-run")
+
+    def test_persists_valid_invalid_and_missing_observation_evidence_for_replay(self) -> None:
+        observed_at = datetime(2026, 7, 18, 10, 0, tzinfo=UTC)
+        valid = obstacle_observation(
+            LaserScan(0.0, 0.1, (3.0, float("inf")), 0.2, 20.0),
+            vehicle_id="x500_0",
+            observed_at=observed_at,
+            sensor_id="lidar_2d",
+        )
+        invalid = {**valid, "validity": "invalid"}
+        missing = {key: value for key, value in valid.items() if key != "payload"}
+        missing["validity"] = "missing"
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "telemetry.jsonl"
+            store = TelemetryHistoryStore(destination, run_id="perception-run")
+            for document in (valid, invalid, missing):
+                store.append_observation(document)
+            replayed = load_telemetry_history(destination, expected_run_id="perception-run")
+
+        self.assertEqual([event.observation.declared_validity for event in replayed], ["valid", "invalid", "missing"])
 
     def test_reloads_validated_supplemental_history_against_their_declared_schema(self) -> None:
         observed_at = datetime(2026, 7, 18, 10, 0, tzinfo=UTC)
