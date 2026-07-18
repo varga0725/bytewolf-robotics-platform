@@ -29,10 +29,11 @@ class TelemetryHistoryStore:
     """Persist validated events as a durable JSONL sequence without control access."""
 
     destination: Path
+    run_id: str | None = None
 
     def append(self, event: TelemetryEvent) -> None:
         """Append one immutable, timestamped event after serializing it canonically."""
-        document = _event_document(event)
+        document = _event_document(event, self.run_id)
         payload = json.dumps(document, allow_nan=False, separators=(",", ":"), sort_keys=True)
         self.destination.parent.mkdir(parents=True, exist_ok=True)
         with self.destination.open("a", encoding="utf-8") as output:
@@ -40,7 +41,9 @@ class TelemetryHistoryStore:
             output.flush()
 
 
-def load_telemetry_history(path: Path) -> tuple[TelemetryEvent, ...]:
+def load_telemetry_history(
+    path: Path, *, expected_run_id: str | None = None
+) -> tuple[TelemetryEvent, ...]:
     """Load a durable event sequence for offline replay; it cannot contact a vehicle."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -55,6 +58,8 @@ def load_telemetry_history(path: Path) -> tuple[TelemetryEvent, ...]:
             document = json.loads(line)
         except json.JSONDecodeError as error:
             raise ValueError(f"Telemetry history line {line_number} is not valid JSON.") from error
+        if expected_run_id is not None and _required_string(document, "run_id", line_number) != expected_run_id:
+            raise ValueError(f"Telemetry history line {line_number} belongs to a different run.")
         event = _load_event(document, line_number)
         if previous_at is not None and event.observed_at < previous_at:
             raise ValueError("Telemetry history events are out of chronological order.")
@@ -63,12 +68,16 @@ def load_telemetry_history(path: Path) -> tuple[TelemetryEvent, ...]:
     return tuple(events)
 
 
-def _event_document(event: TelemetryEvent) -> dict[str, object]:
+def _event_document(event: TelemetryEvent, run_id: str | None) -> dict[str, object]:
     common: dict[str, object] = {
         "observed_at": _format_timestamp(event.observed_at),
         "topic": event.topic,
         "version": TELEMETRY_HISTORY_VERSION,
     }
+    if run_id is not None:
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError("Telemetry history run_id must be a non-empty string.")
+        common["run_id"] = run_id
     if isinstance(event, PositionTelemetryEvent):
         return {
             **common,

@@ -89,9 +89,7 @@ async def run(arguments: argparse.Namespace) -> None:
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         dashboard_stop_event = asyncio.Event()
-        history_store = TelemetryHistoryStore(
-            recording.telemetry_history_path
-        )
+        history_store = TelemetryHistoryStore(recording.telemetry_history_path, recording.run_id)
         dashboard_relay_task = asyncio.create_task(
             MavsdkTelemetryRelay(
                 system,

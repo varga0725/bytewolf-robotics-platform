@@ -85,6 +85,12 @@ kötelező history célhelyének explicit megadására való:
   --telemetry-history var/mission-runs/takeoff-telemetry.jsonl
 ```
 
+Az audit és a history azonos `run_id`-t hordoz. Offline elemzéshez a
+`brain.mission.replay.replay_run(artifact_path)` a standard
+`telemetry-history/<run_id>.jsonl` fájlt tölti be, és minden rekordnál
+ellenőrzi az egyezést. Egyedi `--telemetry-history` útvonal esetén a history
+útvonala expliciten átadható a `replay_run` második paramétereként.
+
 A waypoint-küldetés GPS-telemetriával igazolja a célba érkezést. A Return-to-Home
 küldetés a PX4 saját RTL módját használja. Sikeres futásnál az `in_air` telemetria
 előbb repülést, majd leszállást jelez; timeout vagy RTL-hiba esetén az adapter

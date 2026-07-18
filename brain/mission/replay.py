@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import json
 from pathlib import Path
 from typing import Any
 
 from brain.mission.execution import MissionEvent, MissionExecution, MissionPhase, MissionTransitionError
+from brain.telemetry.domain import TelemetryEvent
+from brain.telemetry.persistence import load_telemetry_history
 
 
 SUPPORTED_ARTIFACT_VERSIONS = frozenset({"v0.2"})
@@ -32,6 +34,7 @@ class MissionReplay:
     preflight_navigation_ready: bool | None
     preflight_home_position_valid: bool | None
     preflight_global_position_valid: bool | None
+    telemetry_events: tuple[TelemetryEvent, ...] = ()
 
     @property
     def terminal_phase(self) -> MissionPhase | None:
@@ -48,6 +51,19 @@ def replay_artifact(path: Path) -> MissionReplay:
     except json.JSONDecodeError as error:
         raise MissionReplayError(f"Replay artifact '{path}' is not valid JSON.") from error
     return replay_document(document)
+
+
+def replay_run(artifact_path: Path, telemetry_history_path: Path | None = None) -> MissionReplay:
+    """Join an audit artifact to the same run's append-only telemetry history offline."""
+    replay = replay_artifact(artifact_path)
+    history_path = telemetry_history_path or (
+        artifact_path.parent / "telemetry-history" / f"{replay.run_id}.jsonl"
+    )
+    try:
+        telemetry_events = load_telemetry_history(history_path, expected_run_id=replay.run_id)
+    except ValueError as error:
+        raise MissionReplayError(f"Replay telemetry history is invalid: {error}") from error
+    return replace(replay, telemetry_events=telemetry_events)
 
 
 def replay_document(document: object) -> MissionReplay:

@@ -56,6 +56,17 @@ class TelemetryHistoryStoreTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, error):
                         load_telemetry_history(destination)
 
+    def test_rejects_history_from_a_different_recorded_run(self) -> None:
+        observed_at = datetime(2026, 7, 18, 10, 0, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "telemetry.jsonl"
+            TelemetryHistoryStore(destination, run_id="first-run").append(
+                BatteryTelemetryEvent("battery", 75.0, observed_at)
+            )
+
+            with self.assertRaisesRegex(ValueError, "different run"):
+                load_telemetry_history(destination, expected_run_id="second-run")
+
     def test_reloads_validated_supplemental_history_against_their_declared_schema(self) -> None:
         observed_at = datetime(2026, 7, 18, 10, 0, tzinfo=UTC)
         events = (
