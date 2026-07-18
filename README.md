@@ -92,6 +92,42 @@ environment:
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
+## Run a NIM Mission Agent proposal
+
+The local `apps/gateway` NIM Mission Agent converts a Hungarian or English
+request to a MissionSpec proposal. It has no direct MAVSDK/PX4 access; schema,
+SafetyGate, and executable-shape checks must approve a proposal before the CLI
+may connect to SITL. Configure `NVIDIA_API_KEY` and `NIM_MISSION_MODEL` in the
+Git-ignored `.env` file. First create and review the plan:
+
+```zsh
+set -a; source .env; set +a
+.venv/bin/python -m brain.cli.fly_nim_mission \
+  --command "Szállj fel 2 méterre, lebegj 3 másodpercig, majd szállj le."
+```
+
+Then execute the printed plan path — never a newly generated proposal — against
+a running simulator. Its sibling approval record pins the reviewed file's
+SHA-256 hash, so an edited or unreviewed plan is refused before PX4 connects:
+
+```zsh
+.venv/bin/python -m brain.cli.fly_nim_mission \
+  --mission-spec-file simulation/artifacts/agent-missions/<mission-id>.mission-spec.json \
+  --execute
+```
+
+See [`docs/nim-mission-agent-v0_1.md`](docs/nim-mission-agent-v0_1.md) for the
+supported shapes and the safety boundary.
+
+## Talk to the Mission Agent from Telegram
+
+The Telegram gateway is the conversational interface for SITL. It creates a
+reviewed plan from a natural-language message, and requires a separate
+`/execute <plan>` confirmation before it starts the existing safe execution
+CLI. It never sends MAVLink/PX4 commands itself. Configure an explicit chat-ID
+allowlist before starting it; see
+[`docs/telegram-mission-gateway-v0_1.md`](docs/telegram-mission-gateway-v0_1.md).
+
 These tests use fake MAVSDK/PX4 collaborators; they do not launch or validate
 PX4 SITL and Gazebo. Run the mission commands below separately against a
 running simulator for manual integration verification.

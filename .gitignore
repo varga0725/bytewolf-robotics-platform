@@ -1,10 +1,12 @@
 .DS_Store
 .venv/
+.env
 __pycache__/
 *.py[cod]
 .pytest_cache/
 PX4-Autopilot
 var/mission-runs/
+simulation/artifacts/agent-missions/
 
 # Generated Gazebo worlds: rebuilt from the committed OSM snapshot on demand.
 simulation/worlds/generated/

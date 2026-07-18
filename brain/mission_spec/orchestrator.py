@@ -65,6 +65,11 @@ async def execute_compiled_mission(
     )
 
 
+def require_executable_mission(mission: CompiledMission) -> None:
+    """Fail closed before connection when a MissionSpec has no lossless route."""
+    _supported_shape(mission)
+
+
 def _supported_shape(
     mission: CompiledMission,
 ) -> tuple[TakeoffCommand, tuple[WaypointCommand, ...], LandCommand | ReturnToHomeCommand, float]:

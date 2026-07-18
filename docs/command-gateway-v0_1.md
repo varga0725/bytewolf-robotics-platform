@@ -7,7 +7,7 @@ SafetyGate. It opens no PX4 connection and emits no MAVLink, actuator, or motor
 command — the words never reach the vehicle unchecked, and the deterministic
 safety layer stays the authority that approves or refuses a mission.
 
-## Deterministic, not a language model
+## Deterministic fallback, not a language model
 
 The parse is a bounded grammar, so the same request always yields the same
 MissionSpec — the `mission_id` is derived from the request text, not a clock or
@@ -26,6 +26,13 @@ demo phrasing:
 "Come back and land" is one action: RTL already lands, so a `LAND` immediately
 after an `RTL` is folded into it rather than becoming a forbidden second
 terminal step.
+
+The NIM-backed Mission Agent is a separate application boundary documented in
+[`nim-mission-agent-v0_1.md`](nim-mission-agent-v0_1.md). It proposes a
+MissionSpec through a hosted LLM, then traverses the same deterministic schema,
+SafetyGate, and executable-shape gates. This grammar remains useful as a
+deterministic fallback and a test oracle; it is not the intended final natural-
+language interface.
 
 ## Parsing proposes; the safety layer decides
 

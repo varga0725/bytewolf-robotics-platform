@@ -34,11 +34,12 @@ minta: `shared/interfaces/mission_spec/examples/takeoff_waypoint_rtl.v0_1.json`.
 
 ## Jelenlegi megvalósítási állapot
 
-A séma, a determinisztikus validátor és a fordító elkészült. A fordító
-immutábilis magas szintű parancsokat és a HOLD időtartamait állítja elő, de
-ezeket még nem hajtja végre generikus Mission Orchestrator. A jelenlegi CLI-k
-külön, előre rögzített takeoff/waypoint/RTL küldetéseket futtatnak; nem töltenek
-be és nem futtatnak MissionSpec dokumentumot.
+A séma, a determinisztikus validátor, a fordító és a korlátos Mission
+Orchestrator elkészült. Az orchestrator csak veszteségmentesen ábrázolható
+alakokat futtat: takeoff–hold–land, takeoff–waypoint–hold–land és
+takeoff–hold–RTL. A NIM Mission Agent CLI ezeket a jóváhagyott MissionSpec
+dokumentumokat futtatja; minden más valid, de még nem végrehajtható alakot
+PX4-kapcsolat előtt elutasít.
 
 A telemetria-alapú preflight feltételek, az abort policy végrehajtása és a
 teljes retry policy a következő szakasz feladatai. A séma ezért nem állítja,
