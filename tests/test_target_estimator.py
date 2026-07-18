@@ -45,18 +45,22 @@ class GeometryTests(unittest.TestCase):
         self.assertAlmostEqual(result.offset_east_m, 0.0, places=6)
         self.assertAlmostEqual(result.range_m, 10.0, places=3)
 
-    def test_right_of_centre_is_east_and_above_centre_is_north(self) -> None:
-        right = _est().estimate(_result(910, 480), altitude_agl_m=10.0, now=_NOW)
-        above = _est().estimate(_result(640, 210), altitude_agl_m=10.0, now=_NOW)
+    def test_image_axes_map_to_the_world_as_confirmed_by_ground_truth(self) -> None:
+        """At yaw 0 the body forward axis points world east (gz ENU); the down-camera
+        SITL scenario pinned this mapping after an earlier one came out rotated 90 deg."""
+        above = _est().estimate(_result(640, 210), altitude_agl_m=10.0, now=_NOW)  # image up
+        left = _est().estimate(_result(370, 480), altitude_agl_m=10.0, now=_NOW)   # image left
 
-        self.assertGreater(right.offset_east_m, 4.0)
-        self.assertAlmostEqual(right.offset_north_m, 0.0, places=6)
-        self.assertGreater(above.offset_north_m, 4.0)
-        self.assertAlmostEqual(above.offset_east_m, 0.0, places=6)
+        # Image up is body forward, which at yaw 0 is world east.
+        self.assertGreater(above.offset_east_m, 4.0)
+        self.assertAlmostEqual(above.offset_north_m, 0.0, places=6)
+        # Image left is body left, which at yaw 0 is world north.
+        self.assertGreater(left.offset_north_m, 4.0)
+        self.assertAlmostEqual(left.offset_east_m, 0.0, places=6)
 
     def test_the_ground_offset_scales_with_altitude(self) -> None:
-        low = _est().estimate(_result(910, 480), altitude_agl_m=10.0, now=_NOW)
-        high = _est().estimate(_result(910, 480), altitude_agl_m=20.0, now=_NOW)
+        low = _est().estimate(_result(640, 210), altitude_agl_m=10.0, now=_NOW)
+        high = _est().estimate(_result(640, 210), altitude_agl_m=20.0, now=_NOW)
 
         self.assertAlmostEqual(high.offset_east_m, 2 * low.offset_east_m, places=6)
 
@@ -66,18 +70,18 @@ class GeometryTests(unittest.TestCase):
 
         self.assertGreater(high.horizontal_uncertainty_m, low.horizontal_uncertainty_m)
 
-    def test_yaw_rotates_the_offset_into_the_world_frame(self) -> None:
-        """A target to the vehicle's right, with the vehicle facing east, is south."""
-        facing_east = _est().estimate(_result(910, 480), altitude_agl_m=10.0, now=_NOW, yaw_deg=90.0)
+    def test_yaw_turns_the_body_forward_axis_toward_north(self) -> None:
+        """At yaw 90 the body forward axis points world north, so image up reads north."""
+        facing_north = _est().estimate(_result(640, 210), altitude_agl_m=10.0, now=_NOW, yaw_deg=90.0)
 
-        self.assertLess(facing_east.offset_north_m, -4.0)
-        self.assertAlmostEqual(facing_east.offset_east_m, 0.0, places=6)
+        self.assertGreater(facing_north.offset_north_m, 4.0)
+        self.assertAlmostEqual(facing_north.offset_east_m, 0.0, places=6)
 
 
 class GlobalFixTests(unittest.TestCase):
     def test_a_gps_origin_yields_an_absolute_target_fix(self) -> None:
         result = _est().estimate(
-            _result(910, 480), altitude_agl_m=10.0, now=_NOW, global_position=GlobalFix(47.3977, 8.5456)
+            _result(640, 210), altitude_agl_m=10.0, now=_NOW, global_position=GlobalFix(47.3977, 8.5456)
         )
 
         self.assertIsNotNone(result.global_fix)

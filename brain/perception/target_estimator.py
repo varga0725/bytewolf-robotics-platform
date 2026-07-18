@@ -229,14 +229,17 @@ class GroundTargetEstimator:
     ) -> tuple[float, float]:
         principal_u, principal_v = self._intrinsics.principal_point
         focal = self._intrinsics.focal_length_px
-        # Convention (nadir, level): image up (smaller v) is body forward/north at
-        # yaw 0, image right (larger u) is body right/east at yaw 0. Confirmed
-        # against ground truth by the down-camera SITL scenario.
+        # Image-to-body mapping for this down-camera mount, confirmed against
+        # Gazebo ground truth (an earlier "obvious" mapping was rotated 90 deg and
+        # the SITL scenario caught it): image up (smaller v) is body forward,
+        # image left (smaller u) is body left. Magnitudes are altitude / focal.
         body_forward_m = altitude_agl_m * (principal_v - centre_v) / focal
-        body_right_m = altitude_agl_m * (centre_u - principal_u) / focal
+        body_left_m = altitude_agl_m * (principal_u - centre_u) / focal
+        # yaw_deg is the Gazebo ENU heading: 0 means the body forward axis points
+        # world +X (east), 90 means it points +Y (north).
         yaw = radians(yaw_deg)
-        north_m = body_forward_m * cos(yaw) - body_right_m * sin(yaw)
-        east_m = body_forward_m * sin(yaw) + body_right_m * cos(yaw)
+        east_m = body_forward_m * cos(yaw) - body_left_m * sin(yaw)
+        north_m = body_forward_m * sin(yaw) + body_left_m * cos(yaw)
         return north_m, east_m
 
     def _global_fix(
