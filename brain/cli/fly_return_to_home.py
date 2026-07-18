@@ -6,12 +6,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
-from brain.cli.artifacts import recorded_execution, write_run_artifact
+from brain.cli.artifacts import mandatory_telemetry_history_path, recorded_execution, write_run_artifact
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
 from brain.mission.execution import MissionExecution
 from brain.mission.flight import authorize_takeoff_return_to_home
 from brain.safety.gate import SafetyGate
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
+from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
+from brain.telemetry.persistence import TelemetryHistoryStore
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -40,6 +42,18 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=None,
         help="Directory for the immutable mission audit artifact.",
     )
+    parser.add_argument(
+        "--dashboard-snapshot",
+        type=Path,
+        default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
+        help="Read-only telemetry JSON snapshot, updated during this mission.",
+    )
+    parser.add_argument(
+        "--telemetry-history",
+        type=Path,
+        default=None,
+        help="Optional append-only JSONL telemetry history for offline replay.",
+    )
     return parser.parse_args(arguments)
 
 
@@ -50,6 +64,8 @@ async def run(arguments: argparse.Namespace) -> None:
     safety_decision = "not-evaluated"
     outcome = "failed"
     failure_reason: str | None = None
+    dashboard_stop_event: asyncio.Event | None = None
+    dashboard_relay_task: asyncio.Task[None] | None = None
     try:
         try:
             from mavsdk import System
@@ -71,6 +87,17 @@ async def run(arguments: argparse.Namespace) -> None:
         adapter = MavsdkMissionAdapter(system, safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
+        dashboard_stop_event = asyncio.Event()
+        history_store = TelemetryHistoryStore(
+            mandatory_telemetry_history_path(arguments.artifact_dir, arguments.telemetry_history)
+        )
+        dashboard_relay_task = asyncio.create_task(
+            MavsdkTelemetryRelay(
+                system,
+                arguments.dashboard_snapshot,
+                on_event=history_store.append,
+            ).run(dashboard_stop_event)
+        )
         print(
             f"Approved: take off to {mission.takeoff.target_altitude_m:g} m, hover for "
             f"{mission.hover_duration_s:g} s, then PX4 returns to launch and lands."
@@ -85,6 +112,13 @@ async def run(arguments: argparse.Namespace) -> None:
         execution = recorded_execution(adapter, execution)
         raise
     finally:
+        if dashboard_stop_event is not None:
+            dashboard_stop_event.set()
+        if dashboard_relay_task is not None:
+            try:
+                await dashboard_relay_task
+            except Exception as error:
+                print(f"Dashboard telemetry relay stopped: {type(error).__name__}: {error}")
         stop_owned_mavsdk_server(system)
         write_run_artifact(
             getattr(arguments, "artifact_dir", None),

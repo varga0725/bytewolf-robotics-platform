@@ -6,13 +6,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
-from brain.cli.artifacts import recorded_execution, write_run_artifact
+from brain.cli.artifacts import mandatory_telemetry_history_path, recorded_execution, write_run_artifact
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
 from brain.mission.execution import MissionExecution
 from brain.mission.flight import authorize_takeoff_waypoint_square_land
 from brain.safety.gate import SafetyGate
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
+from brain.telemetry.persistence import TelemetryHistoryStore
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -34,6 +35,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
         help="Read-only telemetry JSON snapshot, updated during this mission.",
     )
+    parser.add_argument("--telemetry-history", type=Path, default=None)
     return parser.parse_args(arguments)
 
 
@@ -68,8 +70,15 @@ async def run(arguments: argparse.Namespace) -> None:
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         relay_stop = asyncio.Event()
+        history_store = TelemetryHistoryStore(
+            mandatory_telemetry_history_path(arguments.artifact_dir, arguments.telemetry_history)
+        )
         relay_task = asyncio.create_task(
-            MavsdkTelemetryRelay(system, arguments.dashboard_snapshot).run(relay_stop)
+            MavsdkTelemetryRelay(
+                system,
+                arguments.dashboard_snapshot,
+                on_event=history_store.append,
+            ).run(relay_stop)
         )
         print(
             f"Approved: take off to {mission.takeoff.target_altitude_m:g} m, fly a "

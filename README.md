@@ -77,6 +77,12 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
+`requirements.txt` installs the schema validator (`jsonschema`) required by the
+mission, perception, and telemetry contracts. If the selected `python3` has no
+`venv` module, create the environment with a full CPython installation instead,
+for example `/opt/homebrew/bin/python3.13 -m venv .venv`, then run the same
+install command.
+
 ## Run the safety-core tests
 
 Run the automated unit and adapter tests from the project's isolated Python

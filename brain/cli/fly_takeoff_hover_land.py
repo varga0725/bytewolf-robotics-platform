@@ -6,13 +6,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
-from brain.cli.artifacts import recorded_execution, write_run_artifact
+from brain.cli.artifacts import mandatory_telemetry_history_path, recorded_execution, write_run_artifact
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
 from brain.mission.execution import MissionExecution
 from brain.mission.flight import authorize_takeoff_hover_land
 from brain.safety.gate import SafetyGate
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
+from brain.telemetry.persistence import TelemetryHistoryStore
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -59,6 +60,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
         help="Read-only telemetry JSON snapshot, updated during this mission.",
     )
+    parser.add_argument(
+        "--telemetry-history",
+        type=Path,
+        default=None,
+        help="Optional append-only JSONL telemetry history for offline replay.",
+    )
     return parser.parse_args(arguments)
 
 
@@ -89,7 +96,14 @@ async def run(arguments: argparse.Namespace) -> None:
         print(f"Connecting to PX4 at {arguments.endpoint}...")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         dashboard_stop_event = asyncio.Event()
-        relay = MavsdkTelemetryRelay(system, arguments.dashboard_snapshot)
+        history_store = TelemetryHistoryStore(
+            mandatory_telemetry_history_path(arguments.artifact_dir, arguments.telemetry_history)
+        )
+        relay = MavsdkTelemetryRelay(
+            system,
+            arguments.dashboard_snapshot,
+            on_event=history_store.append,
+        )
         dashboard_relay_task = asyncio.create_task(relay.run(dashboard_stop_event))
         print(
             f"Approved: take off to {mission.takeoff.target_altitude_m:g} m, "

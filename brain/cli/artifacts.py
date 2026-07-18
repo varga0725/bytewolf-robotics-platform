@@ -9,6 +9,17 @@ from brain.mission.artifacts import (
     MissionTelemetrySnapshot,
 )
 from brain.mission.execution import MissionExecution
+from brain.mission.artifacts import DEFAULT_MISSION_RUNS_DIRECTORY
+
+
+def mandatory_telemetry_history_path(
+    artifact_directory: Path | None, requested_path: Path | None
+) -> Path:
+    """Return a unique durable history path for every connected flight invocation."""
+    if requested_path is not None:
+        return requested_path
+    directory = artifact_directory or DEFAULT_MISSION_RUNS_DIRECTORY
+    return directory / "telemetry-history" / f"{uuid4()}.jsonl"
 
 
 def recorded_execution(adapter: object, execution: MissionExecution) -> MissionExecution:
