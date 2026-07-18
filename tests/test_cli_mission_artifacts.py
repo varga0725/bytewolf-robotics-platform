@@ -139,7 +139,7 @@ class CliMissionArtifactTests(unittest.TestCase):
                 75.0,
             )
 
-    def test_dashboard_relay_failure_does_not_change_the_mission_outcome(self) -> None:
+    def test_dashboard_relay_failure_fails_the_run_after_writing_its_artifact(self) -> None:
         execution = MissionExecution.empty().transition(MissionPhase.ARMING)
         relay = MagicMock()
         relay.run = AsyncMock(side_effect=RuntimeError("dashboard unavailable"))
@@ -159,7 +159,8 @@ class CliMissionArtifactTests(unittest.TestCase):
                 patch.object(fly_takeoff_hover_land, "MavsdkMissionAdapter", return_value=adapter),
                 patch.object(fly_takeoff_hover_land, "MavsdkTelemetryRelay", return_value=relay),
             ):
-                asyncio.run(fly_takeoff_hover_land.run(arguments))
+                with self.assertRaisesRegex(RuntimeError, "dashboard unavailable"):
+                    asyncio.run(fly_takeoff_hover_land.run(arguments))
 
         adapter.execute.assert_awaited_once()
 

@@ -102,13 +102,17 @@ async def run(arguments: argparse.Namespace) -> None:
         execution = recorded_execution(adapter, execution)
         raise
     finally:
+        relay_error: Exception | None = None
         if relay_stop is not None:
             relay_stop.set()
         if relay_task is not None:
             try:
                 await relay_task
             except Exception as error:
-                print(f"Dashboard telemetry relay stopped: {type(error).__name__}: {error}")
+                relay_error = error
+                if failure_reason is None:
+                    outcome = "failed"
+                    failure_reason = f"{type(error).__name__}: mandatory telemetry relay failed: {error}"
         stop_owned_mavsdk_server(system)
         write_run_artifact(
             getattr(arguments, "artifact_dir", None),
@@ -118,6 +122,8 @@ async def run(arguments: argparse.Namespace) -> None:
             recording.run_id,
             arguments.px4_ulog,
         )
+        if relay_error is not None and failure_reason and "mandatory telemetry relay failed" in failure_reason:
+            raise relay_error
 
 
 def main(arguments: Sequence[str] | None = None) -> None:
