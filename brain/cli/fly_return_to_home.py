@@ -54,6 +54,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=None,
         help="Destination for the mandatory append-only JSONL telemetry history used by offline replay.",
     )
+    parser.add_argument(
+        "--px4-ulog", type=Path, default=None,
+        help="Completed PX4 .ulg file to archive with a run-linked integrity manifest.",
+    )
     return parser.parse_args(arguments)
 
 
@@ -127,6 +131,7 @@ async def run(arguments: argparse.Namespace) -> None:
             failure_reason,
             getattr(adapter, "preflight_telemetry", None),
             recording.run_id,
+            arguments.px4_ulog,
         )
 
 

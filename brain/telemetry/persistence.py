@@ -94,6 +94,8 @@ def load_telemetry_history(
             document = json.loads(line)
         except json.JSONDecodeError as error:
             raise ValueError(f"Telemetry history line {line_number} is not valid JSON.") from error
+        if not isinstance(document, dict):
+            raise ValueError(f"Telemetry history line {line_number} must be an object.")
         if expected_run_id is not None and _required_string(document, "run_id", line_number) != expected_run_id:
             raise ValueError(f"Telemetry history line {line_number} belongs to a different run.")
         event = _load_event(document, line_number)

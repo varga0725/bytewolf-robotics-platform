@@ -91,6 +91,24 @@ class MissionReplayTests(unittest.TestCase):
         self.assertEqual(len(replay.telemetry_events), 1)
         self.assertEqual(replay.telemetry_events[0].remaining_percent, 75.0)
 
+    def test_rejects_empty_or_malformed_run_linked_history(self) -> None:
+        recorded_at = datetime(2026, 7, 18, 10, 0, tzinfo=UTC)
+        artifact = MissionAuditArtifact.from_execution(
+            "joined-run",
+            MissionExecution.empty().transition(MissionPhase.ARMING, recorded_at),
+            recorded_at=recorded_at,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            artifact_directory = Path(directory)
+            artifact_path = MissionArtifactWriter(artifact_directory).write(artifact)
+            history_path = artifact_directory / "telemetry-history" / "joined-run.jsonl"
+            history_path.parent.mkdir()
+            for payload, error in (("", "at least one event"), ("[]\n", "must be an object")):
+                with self.subTest(payload=payload):
+                    history_path.write_text(payload, encoding="utf-8")
+                    with self.assertRaisesRegex(MissionReplayError, error):
+                        replay_run(artifact_path)
+
     def test_rejects_corrupt_or_out_of_order_artifacts(self) -> None:
         document = {
             "events": [

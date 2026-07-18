@@ -96,6 +96,14 @@ ugyanebbe a futáshoz kötött historyba írhat. Az observation contract szerint
 `valid`, `invalid` és `missing` állapotok is megmaradnak; a replay nem alakítja
 át a hiányzó vagy érvénytelen megfigyelést méréssé.
 
+Ha PX4 egy lezárt nyers logot adott, minden flight CLI `--px4-ulog /path/to/log.ulg`
+paramétere a futás artifact könyvtárának `px4-ulogs/` részébe archiválja. A
+run-linked manifest SHA-256-ot, méretet és `captured` státuszt ír. Forrás nélkül
+is keletkezik `unavailable` manifest; ez szándékosan nem állítja, hogy az ULog
+rögzült. A nyers ULogot az audit/history retentionnél hosszabb ideig kell
+megőrizni, és csak hitelesített másolat megléte után szabad operatív tárból
+eltávolítani.
+
 A waypoint-küldetés GPS-telemetriával igazolja a célba érkezést. A Return-to-Home
 küldetés a PX4 saját RTL módját használja. Sikeres futásnál az `in_air` telemetria
 előbb repülést, majd leszállást jelez; timeout vagy RTL-hiba esetén az adapter

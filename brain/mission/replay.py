@@ -62,6 +62,8 @@ def replay_run(artifact_path: Path, telemetry_history_path: Path | None = None) 
         telemetry_events = load_telemetry_history(history_path, expected_run_id=replay.run_id)
     except ValueError as error:
         raise MissionReplayError(f"Replay telemetry history is invalid: {error}") from error
+    if not telemetry_events:
+        raise MissionReplayError("Replay telemetry history must contain at least one event.")
     return replace(replay, telemetry_events=telemetry_events)
 
 

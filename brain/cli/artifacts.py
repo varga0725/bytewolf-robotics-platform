@@ -11,6 +11,7 @@ from brain.mission.artifacts import (
 )
 from brain.mission.execution import MissionExecution
 from brain.mission.artifacts import DEFAULT_MISSION_RUNS_DIRECTORY
+from brain.telemetry.ulog import archive_px4_ulog, write_ulog_unavailable_manifest
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ def write_run_artifact(
     failure_reason: str | None,
     telemetry: MissionTelemetrySnapshot | None = None,
     run_id: str | None = None,
+    px4_ulog: Path | None = None,
 ) -> Path:
     """Persist the audit trail collected for this invocation under a safe unique ID."""
     safe_telemetry = telemetry if isinstance(telemetry, MissionTelemetrySnapshot) else None
@@ -59,4 +61,9 @@ def write_run_artifact(
         telemetry=safe_telemetry,
     )
     writer = MissionArtifactWriter() if directory is None else MissionArtifactWriter(directory)
-    return writer.write(artifact)
+    artifact_path = writer.write(artifact)
+    if px4_ulog is None:
+        write_ulog_unavailable_manifest(writer.directory, artifact.run_id, "No PX4 ULog source was supplied.")
+    else:
+        archive_px4_ulog(px4_ulog, writer.directory, artifact.run_id)
+    return artifact_path
