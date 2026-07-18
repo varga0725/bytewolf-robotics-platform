@@ -129,12 +129,15 @@ _SUPPLEMENTAL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
         ("is_home_position_ok", "boolean"),
         ("is_local_position_ok", "boolean"),
     ),
+    "MAVSDK telemetry.imu": (),
 }
 
 
 def _supplemental_event(
     topic: str, source: str, sample: object, observed_at: datetime
 ) -> SupplementalTelemetryEvent:
+    if source == "MAVSDK telemetry.imu":
+        return _imu_event(topic, source, sample, observed_at)
     values: list[tuple[str, bool | float | int | str]] = []
     for field, kind in _SUPPLEMENTAL_FIELDS[source]:
         raw = getattr(sample, field, sample if field == "value" else None)
@@ -153,6 +156,29 @@ def _supplemental_event(
             if not isinstance(value, str) or not value:
                 raise TelemetryContractError(f"Telemetry field {field!r} must be a non-empty string.")
             values.append((field, value))
+    return SupplementalTelemetryEvent(topic, source, tuple(values), observed_at)
+
+
+def _imu_event(
+    topic: str, source: str, sample: object, observed_at: datetime
+) -> SupplementalTelemetryEvent:
+    """Store the X500 IMU's acceleration, angular velocity and magnetic field in FRD."""
+    fields = (
+        ("acceleration_frd", "forward_m_s2"),
+        ("acceleration_frd", "right_m_s2"),
+        ("acceleration_frd", "down_m_s2"),
+        ("angular_velocity_frd", "forward_rad_s"),
+        ("angular_velocity_frd", "right_rad_s"),
+        ("angular_velocity_frd", "down_rad_s"),
+        ("magnetic_field_frd", "forward_gauss"),
+        ("magnetic_field_frd", "right_gauss"),
+        ("magnetic_field_frd", "down_gauss"),
+        ("", "temperature_degc"),
+    )
+    values: list[tuple[str, bool | float | int | str]] = []
+    for parent, field in fields:
+        container = getattr(sample, parent, sample) if parent else sample
+        values.append((field, _finite_value(getattr(container, field, None), field)))
     return SupplementalTelemetryEvent(topic, source, tuple(values), observed_at)
 
 

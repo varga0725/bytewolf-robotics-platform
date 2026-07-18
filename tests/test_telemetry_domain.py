@@ -86,6 +86,15 @@ class TelemetryDomainTests(unittest.TestCase):
         self.assertEqual(dict(velocity.payload)["north_m_s"], 1.0)
         self.assertEqual(dict(attitude.payload)["yaw_deg"], 90.0)
 
+    def test_routes_a_complete_imu_sample_in_frd_coordinates(self) -> None:
+        vector = type("Vector", (), {"forward_m_s2": 1.0, "right_m_s2": 2.0, "down_m_s2": 3.0})()
+        angular = type("Angular", (), {"forward_rad_s": 0.1, "right_rad_s": 0.2, "down_rad_s": 0.3})()
+        magnetic = type("Magnetic", (), {"forward_gauss": 0.01, "right_gauss": 0.02, "down_gauss": 0.03})()
+        sample = type("Imu", (), {"acceleration_frd": vector, "angular_velocity_frd": angular, "magnetic_field_frd": magnetic, "temperature_degc": 25.0})()
+        event = route_mavsdk_telemetry("MAVSDK telemetry.imu", sample, observed_at=self.observed_at)
+        self.assertEqual(dict(event.payload)["forward_m_s2"], 1.0)
+        self.assertEqual(dict(event.payload)["down_gauss"], 0.03)
+
     def test_rejects_malformed_samples(self) -> None:
         with self.assertRaisesRegex(TelemetryContractError, "latitude_deg"):
             route_mavsdk_telemetry("MAVSDK telemetry.position", object())

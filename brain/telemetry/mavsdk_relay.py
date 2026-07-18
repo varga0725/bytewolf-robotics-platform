@@ -51,6 +51,8 @@ class MavsdkTelemetry(Protocol):
 
     def health(self) -> AsyncIterator[object]: ...
 
+    def imu(self) -> AsyncIterator[object]: ...
+
 
 class TelemetryVehicle(Protocol):
     """Minimal vehicle boundary.  Flight-control APIs are absent by design."""
@@ -164,7 +166,7 @@ class MavsdkTelemetryRelay:
 
 
 _OPTIONAL_STREAMS = (
-    "velocity_ned", "attitude_euler", "gps_info", "flight_mode", "armed", "landed_state", "health",
+    "velocity_ned", "attitude_euler", "gps_info", "flight_mode", "armed", "landed_state", "health", "imu",
 )
 
 
