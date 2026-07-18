@@ -9,9 +9,9 @@ prevent.
 from datetime import UTC, datetime, timedelta
 import unittest
 
+from brain.perception.camera_frame import CameraFrame, FrameEncoding
 from brain.perception.detector import (
     BoundingBox,
-    CameraFrame,
     Detection,
     DetectionContractError,
     DetectorAdapter,
@@ -26,7 +26,10 @@ _PAD = Detection("landing-pad", 0.92, BoundingBox(120, 80, 200, 150))
 
 
 def _frame(frame_id: str = "frame-1", *, data: bytes = b"\xff\xd8\xff\xd9", width: int = 640, height: int = 480) -> CameraFrame:
-    return CameraFrame(data=data, width=width, height=height, captured_at=_NOW, frame_id=frame_id)
+    return CameraFrame(
+        sensor_id="front_rgb", encoding=FrameEncoding.JPEG, width=width, height=height,
+        data=data, captured_at=_NOW, frame_id=frame_id,
+    )
 
 
 def _adapter(detections=None, **kwargs) -> DetectorAdapter:

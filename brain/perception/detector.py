@@ -36,6 +36,8 @@ from typing import Any, Protocol
 
 import jsonschema
 
+from brain.perception.camera_frame import CameraFrame
+
 
 DETECTION_CONTRACT_VERSION = "v0.1"
 DETECTION_SCHEMA_PATH = (
@@ -65,17 +67,6 @@ class Detection:
     label: str
     confidence: float
     bbox: BoundingBox
-
-
-@dataclass(frozen=True)
-class CameraFrame:
-    """One captured frame and the metadata a detector and consumer need."""
-
-    data: bytes
-    width: int
-    height: int
-    captured_at: datetime
-    frame_id: str | None = None
 
 
 class DetectorState(Enum):
@@ -190,9 +181,11 @@ class DetectorAdapter:
         is never mistaken for 'nothing there'.
         """
         if frame is None:
-            return self._empty_result(0, 0, None, "missing")
-        if not frame.data or frame.width <= 0 or frame.height <= 0:
-            return self._empty_result(max(frame.width, 0), max(frame.height, 0), frame.frame_id, "invalid")
+            return self._empty_result(1, 1, None, "missing")
+        if not frame.is_well_formed():
+            # A raw frame whose bytes do not match its dimensions, or an empty
+            # one, is not a picture of anything and must not reach the backend.
+            return self._empty_result(frame.width, frame.height, frame.frame_id, "invalid")
 
         try:
             detected = tuple(self._backend.detect(frame))
