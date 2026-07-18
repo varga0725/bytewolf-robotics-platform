@@ -64,7 +64,11 @@ def create_handler(
             if camera_path is None or not camera_path.is_file():
                 self._send(HTTPStatus.NOT_FOUND, "text/plain; charset=utf-8", b"No camera frame\n")
                 return
-            self._send(HTTPStatus.OK, "image/jpeg", camera_path.read_bytes())
+            body = camera_path.read_bytes()
+            # The live sim relay writes lossless PNG; a recorded fixture may be
+            # JPEG. Serve whichever the bytes actually are, by their signature.
+            content_type = "image/png" if body[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
+            self._send(HTTPStatus.OK, content_type, body)
 
         def _send_detections(self) -> None:
             if detections_path is None or not detections_path.is_file():
