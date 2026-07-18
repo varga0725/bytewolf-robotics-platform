@@ -17,7 +17,7 @@ from brain.cli import (
     fly_waypoint_land,
     fly_waypoint_square_land,
 )
-from brain.cli.artifacts import mandatory_telemetry_history_path
+from brain.cli.artifacts import prepare_flight_run_recording
 from brain.mission.execution import MissionExecution, MissionPhase
 
 
@@ -61,12 +61,13 @@ class CliMissionArtifactTests(unittest.TestCase):
 
     def test_default_telemetry_histories_are_mandatory_and_isolated_per_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            first = mandatory_telemetry_history_path(Path(directory), None)
-            second = mandatory_telemetry_history_path(Path(directory), None)
+            first = prepare_flight_run_recording(Path(directory), None)
+            second = prepare_flight_run_recording(Path(directory), None)
 
-        self.assertNotEqual(first, second)
-        self.assertEqual(first.parent.name, "telemetry-history")
-        self.assertEqual(first.suffix, ".jsonl")
+        self.assertNotEqual(first.run_id, second.run_id)
+        self.assertEqual(first.telemetry_history_path.parent.name, "telemetry-history")
+        self.assertEqual(first.telemetry_history_path.stem, first.run_id)
+        self.assertEqual(first.telemetry_history_path.suffix, ".jsonl")
 
     def test_takeoff_cli_relays_dashboard_telemetry_on_its_existing_system_connection(self) -> None:
         execution = MissionExecution.empty().transition(MissionPhase.ARMING)

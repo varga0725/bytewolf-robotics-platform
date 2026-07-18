@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
-from brain.cli.artifacts import mandatory_telemetry_history_path, recorded_execution, write_run_artifact
+from brain.cli.artifacts import prepare_flight_run_recording, recorded_execution, write_run_artifact
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
 from brain.mission.execution import MissionExecution
 from brain.mission.flight import authorize_takeoff_waypoint_land
@@ -61,6 +61,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 
 
 async def run(arguments: argparse.Namespace) -> None:
+    recording = prepare_flight_run_recording(arguments.artifact_dir, arguments.telemetry_history)
     execution = MissionExecution.empty()
     system = None
     adapter: MavsdkMissionAdapter | None = None
@@ -90,7 +91,7 @@ async def run(arguments: argparse.Namespace) -> None:
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         dashboard_stop_event = asyncio.Event()
         history_store = TelemetryHistoryStore(
-            mandatory_telemetry_history_path(arguments.artifact_dir, arguments.telemetry_history)
+            recording.telemetry_history_path
         )
         dashboard_relay_task = asyncio.create_task(
             MavsdkTelemetryRelay(
@@ -128,6 +129,7 @@ async def run(arguments: argparse.Namespace) -> None:
             outcome,
             failure_reason,
             getattr(adapter, "preflight_telemetry", None),
+            recording.run_id,
         )
 
 
