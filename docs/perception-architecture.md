@@ -70,11 +70,16 @@ Mission reaction  ── WAIT_FOR_DETECTION → GOTO the target → precision ap
                      always through the Safety Kernel, never a direct command
 ```
 
-Stages one and two of this — the frame contract and the detector adapter with
-its detection contract — are built and tested. The relative-position estimator
-and the target observation are the next contracts to design and build; they slot
-into the existing observation-contract discipline (valid / invalid / missing /
-stale), so a target the vehicle cannot trust cannot drive a mission reaction.
+Stages one to three — the frame contract, the detector adapter, and the
+relative-position estimator with its target observation — are built and tested.
+The V1 estimator is GPS-based over a down-facing camera: under a near-nadir view,
+the vehicle's own altitude turns a detection's pixel offset into a local
+north/east ground offset, and its GPS turns that into an absolute fix. It slots
+into the observation-contract discipline (valid / invalid / missing / stale), so
+an unknown altitude, too much tilt, or an untrusted detection fails closed rather
+than inventing a position. Mission reaction — proposing a GOTO to the target that
+the Safety Kernel re-checks — is the next stage, with a down-camera SITL scenario
+to confirm the north/east sign against ground truth.
 
 ## Simulation frame profiles (plan)
 
