@@ -13,6 +13,7 @@ from brain.telemetry.domain import (
     BatteryTelemetryEvent,
     FlightStateTelemetryEvent,
     PositionTelemetryEvent,
+    SupplementalTelemetryEvent,
     TelemetryEvent,
 )
 
@@ -76,6 +77,13 @@ def _event_document(event: TelemetryEvent) -> dict[str, object]:
         }
     if isinstance(event, BatteryTelemetryEvent):
         return {**common, "event_type": "battery", "remaining_percent": event.remaining_percent}
+    if isinstance(event, SupplementalTelemetryEvent):
+        return {
+            **common,
+            "event_type": "supplemental",
+            "payload": dict(event.payload),
+            "source": event.source,
+        }
     return {**common, "event_type": "flight_state", "in_air": event.in_air}
 
 
@@ -107,6 +115,19 @@ def _load_event(document: object, line_number: int) -> TelemetryEvent:
         if type(value) is not bool:
             raise ValueError(f"Telemetry history line {line_number} in_air must be a boolean.")
         return FlightStateTelemetryEvent(topic, value, observed_at)
+    if event_type == "supplemental":
+        source = _required_string(document, "source", line_number)
+        payload = document.get("payload")
+        if not isinstance(payload, dict) or not payload:
+            raise ValueError(f"Telemetry history line {line_number} supplemental payload must be an object.")
+        values: list[tuple[str, bool | float | int | str]] = []
+        for key, value in sorted(payload.items()):
+            if not isinstance(key, str) or type(value) not in (bool, int, float, str):
+                raise ValueError(f"Telemetry history line {line_number} supplemental payload is invalid.")
+            if type(value) in (int, float) and not isfinite(float(value)):
+                raise ValueError(f"Telemetry history line {line_number} supplemental payload must be finite.")
+            values.append((key, value))
+        return SupplementalTelemetryEvent(topic, source, tuple(values), observed_at)
     raise ValueError(f"Telemetry history line {line_number} has an unknown event_type.")
 
 

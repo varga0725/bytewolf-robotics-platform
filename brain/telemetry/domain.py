@@ -44,7 +44,19 @@ class FlightStateTelemetryEvent:
     observed_at: datetime
 
 
-TelemetryEvent = PositionTelemetryEvent | BatteryTelemetryEvent | FlightStateTelemetryEvent
+@dataclass(frozen=True)
+class SupplementalTelemetryEvent:
+    """Validated read-only vehicle state beyond the dashboard's three core streams."""
+
+    topic: str
+    source: str
+    payload: tuple[tuple[str, bool | float | int | str], ...]
+    observed_at: datetime
+
+
+TelemetryEvent = (
+    PositionTelemetryEvent | BatteryTelemetryEvent | FlightStateTelemetryEvent | SupplementalTelemetryEvent
+)
 
 
 def route_mavsdk_telemetry(
@@ -59,6 +71,8 @@ def route_mavsdk_telemetry(
         return _battery_event(topic, sample, timestamp)
     if source == "MAVSDK telemetry.in_air":
         return _flight_state_event(topic, sample, timestamp)
+    if source in _SUPPLEMENTAL_FIELDS:
+        return _supplemental_event(topic, source, sample, timestamp)
     raise TelemetryContractError(f"Telemetry source {source!r} is unknown or undeclared.")
 
 
@@ -66,6 +80,8 @@ def _topic_for_source(source: str) -> str:
     for topic in load_ros2_telemetry_bridge_contract().topics:
         if topic.source == source:
             return topic.name
+    if source in _SUPPLEMENTAL_FIELDS:
+        return f"telemetry/history/{source.removeprefix('MAVSDK telemetry.')}"
     raise TelemetryContractError(f"Telemetry source {source!r} is unknown or undeclared.")
 
 
@@ -101,8 +117,51 @@ def _flight_state_event(topic: str, sample: object, observed_at: datetime) -> Fl
     return FlightStateTelemetryEvent(topic, sample, observed_at)
 
 
+_SUPPLEMENTAL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
+    "MAVSDK telemetry.velocity_ned": (("north_m_s", "finite"), ("east_m_s", "finite"), ("down_m_s", "finite")),
+    "MAVSDK telemetry.attitude_euler": (("roll_deg", "finite"), ("pitch_deg", "finite"), ("yaw_deg", "finite")),
+    "MAVSDK telemetry.gps_info": (("num_satellites", "integer"), ("fix_type", "string")),
+    "MAVSDK telemetry.flight_mode": (("value", "string"),),
+    "MAVSDK telemetry.armed": (("value", "boolean"),),
+    "MAVSDK telemetry.landed_state": (("value", "string"),),
+    "MAVSDK telemetry.health": (
+        ("is_global_position_ok", "boolean"),
+        ("is_home_position_ok", "boolean"),
+        ("is_local_position_ok", "boolean"),
+    ),
+}
+
+
+def _supplemental_event(
+    topic: str, source: str, sample: object, observed_at: datetime
+) -> SupplementalTelemetryEvent:
+    values: list[tuple[str, bool | float | int | str]] = []
+    for field, kind in _SUPPLEMENTAL_FIELDS[source]:
+        raw = getattr(sample, field, sample if field == "value" else None)
+        if kind == "finite":
+            values.append((field, _finite_value(raw, field)))
+        elif kind == "integer":
+            if type(raw) is not int or raw < 0:
+                raise TelemetryContractError(f"Telemetry field {field!r} must be a non-negative integer.")
+            values.append((field, raw))
+        elif kind == "boolean":
+            if type(raw) is not bool:
+                raise TelemetryContractError(f"Telemetry field {field!r} must be a boolean.")
+            values.append((field, raw))
+        else:
+            value = getattr(raw, "value", raw)
+            if not isinstance(value, str) or not value:
+                raise TelemetryContractError(f"Telemetry field {field!r} must be a non-empty string.")
+            values.append((field, value))
+    return SupplementalTelemetryEvent(topic, source, tuple(values), observed_at)
+
+
 def _finite_attribute(sample: object, name: str) -> float:
     value: Any = getattr(sample, name, None)
+    return _finite_value(value, name)
+
+
+def _finite_value(value: Any, name: str) -> float:
     if type(value) not in (int, float):
         raise TelemetryContractError(f"Telemetry field {name!r} must be a finite number.")
     converted = float(value)

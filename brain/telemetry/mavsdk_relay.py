@@ -21,6 +21,7 @@ from brain.telemetry.domain import (
     BatteryTelemetryEvent,
     FlightStateTelemetryEvent,
     PositionTelemetryEvent,
+    SupplementalTelemetryEvent,
     TelemetryContractError,
     TelemetryEvent,
     route_mavsdk_telemetry,
@@ -35,6 +36,20 @@ class MavsdkTelemetry(Protocol):
     def battery(self) -> AsyncIterator[object]: ...
 
     def in_air(self) -> AsyncIterator[bool]: ...
+
+    def velocity_ned(self) -> AsyncIterator[object]: ...
+
+    def attitude_euler(self) -> AsyncIterator[object]: ...
+
+    def gps_info(self) -> AsyncIterator[object]: ...
+
+    def flight_mode(self) -> AsyncIterator[object]: ...
+
+    def armed(self) -> AsyncIterator[bool]: ...
+
+    def landed_state(self) -> AsyncIterator[object]: ...
+
+    def health(self) -> AsyncIterator[object]: ...
 
 
 class TelemetryVehicle(Protocol):
@@ -60,7 +75,9 @@ class DashboardTelemetryState:
             return replace(self, position=event)
         if isinstance(event, BatteryTelemetryEvent):
             return replace(self, battery=event)
-        return replace(self, flight_state=event)
+        if isinstance(event, FlightStateTelemetryEvent):
+            return replace(self, flight_state=event)
+        return self
 
     def as_dashboard_document(self, captured_at: datetime) -> dict[str, object]:
         if not self.complete:
@@ -100,11 +117,7 @@ class MavsdkTelemetryRelay:
 
     async def run_until_streams_complete(self) -> None:
         """Relay finite streams; useful for deterministic replay and smoke tests."""
-        tasks = (
-            asyncio.create_task(self._consume("MAVSDK telemetry.position", self._telemetry.position())),
-            asyncio.create_task(self._consume("MAVSDK telemetry.battery", self._telemetry.battery())),
-            asyncio.create_task(self._consume("MAVSDK telemetry.in_air", self._telemetry.in_air())),
-        )
+        tasks = self._stream_tasks()
         try:
             await asyncio.gather(*tasks)
         finally:
@@ -114,11 +127,7 @@ class MavsdkTelemetryRelay:
 
     async def run(self, stop_event: asyncio.Event) -> None:
         """Relay live streams until the caller requests shutdown."""
-        tasks = (
-            asyncio.create_task(self._consume("MAVSDK telemetry.position", self._telemetry.position())),
-            asyncio.create_task(self._consume("MAVSDK telemetry.battery", self._telemetry.battery())),
-            asyncio.create_task(self._consume("MAVSDK telemetry.in_air", self._telemetry.in_air())),
-        )
+        tasks = self._stream_tasks()
         stopper = asyncio.create_task(stop_event.wait())
         try:
             completed, _ = await asyncio.wait((*tasks, stopper), return_when=asyncio.FIRST_COMPLETED)
@@ -140,6 +149,23 @@ class MavsdkTelemetryRelay:
                 self._on_event(event)
             if self._state.complete:
                 _write_atomic_json(self._destination, self._state.as_dashboard_document(self._clock()))
+
+    def _stream_tasks(self) -> tuple[asyncio.Task[None], ...]:
+        streams: list[tuple[str, AsyncIterator[object]]] = [
+            ("MAVSDK telemetry.position", self._telemetry.position()),
+            ("MAVSDK telemetry.battery", self._telemetry.battery()),
+            ("MAVSDK telemetry.in_air", self._telemetry.in_air()),
+        ]
+        for name in _OPTIONAL_STREAMS:
+            stream_factory = getattr(self._telemetry, name, None)
+            if callable(stream_factory):
+                streams.append((f"MAVSDK telemetry.{name}", stream_factory()))
+        return tuple(asyncio.create_task(self._consume(source, stream)) for source, stream in streams)
+
+
+_OPTIONAL_STREAMS = (
+    "velocity_ned", "attitude_euler", "gps_info", "flight_mode", "armed", "landed_state", "health",
+)
 
 
 

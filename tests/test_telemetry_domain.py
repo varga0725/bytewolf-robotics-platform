@@ -70,7 +70,21 @@ class TelemetryDomainTests(unittest.TestCase):
 
     def test_rejects_unknown_or_undeclared_mavsdk_sources(self) -> None:
         with self.assertRaisesRegex(TelemetryContractError, "unknown"):
-            route_mavsdk_telemetry("MAVSDK telemetry.health", object())
+            route_mavsdk_telemetry("MAVSDK telemetry.not_a_stream", object())
+
+    def test_routes_validated_extended_vehicle_state_for_durable_history(self) -> None:
+        velocity = route_mavsdk_telemetry(
+            "MAVSDK telemetry.velocity_ned",
+            type("Velocity", (), {"north_m_s": 1.0, "east_m_s": 2.0, "down_m_s": -0.5})(),
+            observed_at=self.observed_at,
+        )
+        attitude = route_mavsdk_telemetry(
+            "MAVSDK telemetry.attitude_euler",
+            type("Attitude", (), {"roll_deg": 1.0, "pitch_deg": -2.0, "yaw_deg": 90.0})(),
+            observed_at=self.observed_at,
+        )
+        self.assertEqual(dict(velocity.payload)["north_m_s"], 1.0)
+        self.assertEqual(dict(attitude.payload)["yaw_deg"], 90.0)
 
     def test_rejects_malformed_samples(self) -> None:
         with self.assertRaisesRegex(TelemetryContractError, "latitude_deg"):
