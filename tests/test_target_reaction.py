@@ -7,6 +7,7 @@ the safety limits is refused by the gate, not by a softer check here.
 """
 
 from datetime import UTC, datetime, timedelta
+import math
 import unittest
 
 from brain.perception.target_estimator import TargetObservation
@@ -92,6 +93,17 @@ class FailClosedReactionTests(unittest.TestCase):
 
         self.assertFalse(reaction.accepted)
         self.assertEqual(reaction.rejection.detail, "horizontal_uncertainty")
+
+    def test_missing_non_finite_or_negative_uncertainty_is_refused(self) -> None:
+        cases = ((None, 3.0), (math.nan, 3.0), (-0.1, 3.0), (0.1, math.inf), (0.1, -1.0))
+        for uncertainty, limit in cases:
+            with self.subTest(uncertainty=uncertainty, limit=limit):
+                reaction = react_to_target(
+                    _target(uncertainty=uncertainty), vehicle_north_m=0.0, vehicle_east_m=0.0,
+                    gate=_GATE, now=_NOW, approach_altitude_m=5.0, max_uncertainty_m=limit,
+                )
+                self.assertFalse(reaction.accepted)
+                self.assertEqual(reaction.rejection.detail, "horizontal_uncertainty")
 
     def test_a_target_outside_the_geofence_is_refused_by_the_gate(self) -> None:
         """The gate, not a softer check here, is the authority on the geofence."""

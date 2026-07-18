@@ -123,7 +123,7 @@ class MavsdkTelemetryRelay:
 
     async def run_until_streams_complete(self) -> None:
         """Relay finite streams; useful for deterministic replay and smoke tests."""
-        tasks = self._stream_tasks()
+        tasks = tuple(task for _, task, _ in self._stream_tasks())
         try:
             await asyncio.gather(*tasks)
         finally:
@@ -134,30 +134,41 @@ class MavsdkTelemetryRelay:
     async def run(self, stop_event: asyncio.Event) -> None:
         """Relay live streams until the caller requests shutdown."""
         tasks = self._stream_tasks()
+        required = {task for _, task, mandatory in tasks if mandatory}
+        pending = {task for _, task, _ in tasks}
         stopper = asyncio.create_task(stop_event.wait())
         try:
-            completed, _ = await asyncio.wait((*tasks, stopper), return_when=asyncio.FIRST_COMPLETED)
-            if stopper not in completed:
+            while pending:
+                completed, pending = await asyncio.wait(
+                    (*pending, stopper), return_when=asyncio.FIRST_COMPLETED
+                )
+                if stopper in completed:
+                    return
                 for task in completed:
-                    task.result()
-                raise RuntimeError("A live MAVSDK telemetry stream ended unexpectedly.")
+                    if task in required:
+                        task.result()
+                        raise RuntimeError("A required live MAVSDK telemetry stream ended unexpectedly.")
+                    try:
+                        task.result()
+                    except Exception as error:
+                        print(f"Optional telemetry stream stopped: {type(error).__name__}: {error}")
         finally:
             stopper.cancel()
-            for task in tasks:
+            for _, task, _ in tasks:
                 task.cancel()
-            await asyncio.gather(stopper, *tasks, return_exceptions=True)
+            await asyncio.gather(stopper, *(task for _, task, _ in tasks), return_exceptions=True)
 
     async def _consume(self, source: str, stream: AsyncIterator[object]) -> None:
         async for sample in stream:
             observed_at = self._clock()
             event = route_mavsdk_telemetry(source, sample, observed_at=observed_at)
-            self._record_event(event)
+            await self._record_event(event)
             # Older adapters may expose only the required charge percentage.
             # Diagnostics are recorded when MAVSDK supplies their stable battery id;
             # they must never make the mandatory core stream unavailable.
             if source == "MAVSDK telemetry.battery" and hasattr(sample, "id"):
                 try:
-                    self._record_event(
+                    await self._record_event(
                         route_mavsdk_telemetry(
                             "MAVSDK telemetry.battery_diagnostics", sample, observed_at=observed_at
                         )
@@ -165,24 +176,28 @@ class MavsdkTelemetryRelay:
                 except TelemetryContractError:
                     continue
 
-    def _record_event(self, event: TelemetryEvent) -> None:
+    async def _record_event(self, event: TelemetryEvent) -> None:
         self._state = self._state.with_event(event)
         if self._on_event is not None:
-            self._on_event(event)
+            await asyncio.to_thread(self._on_event, event)
         if self._state.complete:
-            _write_atomic_json(self._destination, self._state.as_dashboard_document(self._clock()))
+            document = self._state.as_dashboard_document(self._clock())
+            await asyncio.to_thread(_write_atomic_json, self._destination, document)
 
-    def _stream_tasks(self) -> tuple[asyncio.Task[None], ...]:
-        streams: list[tuple[str, AsyncIterator[object]]] = [
-            ("MAVSDK telemetry.position", self._telemetry.position()),
-            ("MAVSDK telemetry.battery", self._telemetry.battery()),
-            ("MAVSDK telemetry.in_air", self._telemetry.in_air()),
+    def _stream_tasks(self) -> tuple[tuple[str, asyncio.Task[None], bool], ...]:
+        streams: list[tuple[str, AsyncIterator[object], bool]] = [
+            ("MAVSDK telemetry.position", self._telemetry.position(), True),
+            ("MAVSDK telemetry.battery", self._telemetry.battery(), True),
+            ("MAVSDK telemetry.in_air", self._telemetry.in_air(), True),
         ]
         for name in _OPTIONAL_STREAMS:
             stream_factory = getattr(self._telemetry, name, None)
             if callable(stream_factory):
-                streams.append((f"MAVSDK telemetry.{name}", stream_factory()))
-        return tuple(asyncio.create_task(self._consume(source, stream)) for source, stream in streams)
+                streams.append((f"MAVSDK telemetry.{name}", stream_factory(), False))
+        return tuple(
+            (source, asyncio.create_task(self._consume(source, stream)), mandatory)
+            for source, stream, mandatory in streams
+        )
 
 
 _OPTIONAL_STREAMS = (

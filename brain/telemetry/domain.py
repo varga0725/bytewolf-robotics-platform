@@ -161,10 +161,10 @@ def _supplemental_event(
                 raise TelemetryContractError(f"Telemetry field {field!r} must be a boolean.")
             values.append((field, raw))
         else:
-            value = getattr(raw, "value", raw)
+            value = getattr(raw, "name", raw)
             if not isinstance(value, str) or not value:
                 raise TelemetryContractError(f"Telemetry field {field!r} must be a non-empty string.")
-            values.append((field, value))
+            values.append((field, value.lower()))
     return SupplementalTelemetryEvent(topic, source, tuple(values), observed_at)
 
 

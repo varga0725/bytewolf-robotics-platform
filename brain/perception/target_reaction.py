@@ -79,7 +79,18 @@ def react_to_target(
         return _refused("The approach altitude must be a positive, finite value.")
 
     uncertainty = observation.horizontal_uncertainty_m
-    if uncertainty is not None and uncertainty > max_uncertainty_m:
+    if (
+        uncertainty is None
+        or not isfinite(uncertainty)
+        or uncertainty < 0.0
+        or not isfinite(max_uncertainty_m)
+        or max_uncertainty_m < 0.0
+    ):
+        return _refused(
+            "The target uncertainty or configured uncertainty limit is invalid.",
+            detail="horizontal_uncertainty",
+        )
+    if uncertainty > max_uncertainty_m:
         return _refused(
             f"The target fix is too uncertain to move toward: {uncertainty:.2f} m exceeds the "
             f"{max_uncertainty_m:.2f} m limit.",
@@ -87,6 +98,8 @@ def react_to_target(
         )
 
     offset_north_m, offset_east_m = observation.usable_offset_m(now)
+    if not (isfinite(offset_north_m) and isfinite(offset_east_m)):
+        return _refused("The target offset is not finite.", detail="target_offset")
     waypoint = WaypointCommand(
         north_m=vehicle_north_m + offset_north_m,
         east_m=vehicle_east_m + offset_east_m,

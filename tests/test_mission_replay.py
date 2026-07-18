@@ -144,7 +144,7 @@ class MissionReplayTests(unittest.TestCase):
                         MissionAuditArtifact.from_execution(
                             run_id,
                             execution,
-                            recorded_at=started_at,
+                            recorded_at=started_at.replace(second=started_at.second + len(phases)),
                             safety_decision="approved",
                             outcome=outcome,
                             failure_reason=failure_reason,

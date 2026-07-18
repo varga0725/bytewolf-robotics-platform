@@ -55,9 +55,12 @@ def replay_artifact(path: Path) -> MissionReplay:
 def replay_run(artifact_path: Path, telemetry_history_path: Path | None = None) -> MissionReplay:
     """Join an audit artifact to the same run's append-only telemetry history offline."""
     replay = replay_artifact(artifact_path)
-    history_path = telemetry_history_path or (
-        artifact_path.parent / "telemetry-history" / f"{replay.run_id}.jsonl"
-    )
+    if telemetry_history_path is None:
+        if Path(replay.run_id).name != replay.run_id or replay.run_id in {".", ".."}:
+            raise MissionReplayError("Replay run_id cannot escape the telemetry history directory.")
+        history_path = artifact_path.parent / "telemetry-history" / f"{replay.run_id}.jsonl"
+    else:
+        history_path = telemetry_history_path
     try:
         telemetry_events = load_telemetry_history(history_path, expected_run_id=replay.run_id)
     except ValueError as error:
@@ -81,11 +84,20 @@ def replay_document(document: object) -> MissionReplay:
     if failure_reason is not None and not isinstance(failure_reason, str):
         raise MissionReplayError("Replay artifact failure_reason must be a string or null.")
 
+    run_id = _required_string(document, "run_id")
+    recorded_at = _timestamp(_required_string(document, "recorded_at"), "recorded_at")
+    outcome = _required_string(document, "outcome")
+    if events and recorded_at < events[-1].timestamp:
+        raise MissionReplayError("Replay artifact recorded_at cannot precede its event timeline.")
+    if outcome == "completed" and (events and events[-1].phase is MissionPhase.FAILED):
+        raise MissionReplayError("Replay artifact completed outcome contradicts a failed timeline.")
+    if outcome == "completed" and failure_reason is not None:
+        raise MissionReplayError("Replay artifact completed outcome cannot carry a failure_reason.")
     return MissionReplay(
-        run_id=_required_string(document, "run_id"),
-        recorded_at=_timestamp(_required_string(document, "recorded_at"), "recorded_at"),
+        run_id=run_id,
+        recorded_at=recorded_at,
         safety_decision=_required_string(document, "safety_decision"),
-        outcome=_required_string(document, "outcome"),
+        outcome=outcome,
         failure_reason=failure_reason,
         events=events,
         preflight_battery_percent=telemetry.battery_percent if telemetry else None,

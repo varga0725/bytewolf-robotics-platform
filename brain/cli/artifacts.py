@@ -1,6 +1,7 @@
 """Shared mission-audit persistence for command-line mission runs."""
 
 from pathlib import Path
+import os
 from uuid import uuid4
 from dataclasses import dataclass
 
@@ -29,6 +30,12 @@ def prepare_flight_run_recording(
     run_id = str(uuid4())
     directory = artifact_directory or DEFAULT_MISSION_RUNS_DIRECTORY
     history_path = requested_history_path or directory / "telemetry-history" / f"{run_id}.jsonl"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(history_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as error:
+        raise ValueError(f"Telemetry history destination '{history_path}' already exists.") from error
+    os.close(descriptor)
     return FlightRunRecording(run_id, history_path)
 
 

@@ -8,7 +8,7 @@ Ez az útmutató a P1 telemetriai fejlesztések jelenlegi, bizonyítható állap
 | --- | --- | --- | --- |
 | Dashboard replay | natív macOS | a böngészős, helyi olvasási nézet és az adatfrissesség-jelzés | élő PX4/MAVSDK kapcsolat |
 | Látható PX4 SITL + Gazebo | natív macOS | az X500 mozgása és a meglévő P0 repülési CLI-k | ROS 2 adatfolyam |
-| MAVSDK relay egységteszt | natív macOS | a dashboard három core adatfolyamának atomikus JSON-pillanatképpé válását és a kötelező history-state streamek validálását | valódi MAVSDK/PX4 kapcsolat |
+| MAVSDK relay egységteszt | natív macOS | a dashboard három kötelező core adatfolyamának atomikus JSON-pillanatképpé válását, valamint az adapter által elérhető opcionális history-state streamek validálását | valódi MAVSDK/PX4 kapcsolat |
 | Élő ROS 2 bridge smoke | Ubuntu + ROS 2 Humble | MAVSDK → ROS telemetry → JSON-pillanatkép életciklusát | dashboard-vezérlést (ilyen nincs) |
 
 ## 1. Dashboard replay macOS-en

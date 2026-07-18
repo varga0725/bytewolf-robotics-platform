@@ -107,7 +107,10 @@ class CliMissionArtifactTests(unittest.TestCase):
             snapshot = Path(directory) / "live-telemetry.json"
             history = Path(directory) / "mission-telemetry.jsonl"
             arguments = fly_takeoff_hover_land.parse_arguments(
-                ("--dashboard-snapshot", str(snapshot), "--telemetry-history", str(history))
+                (
+                    "--artifact-dir", directory, "--dashboard-snapshot", str(snapshot),
+                    "--telemetry-history", str(history),
+                )
             )
             mavsdk = ModuleType("mavsdk")
             mavsdk.System = MagicMock()  # type: ignore[attr-defined]
@@ -130,7 +133,11 @@ class CliMissionArtifactTests(unittest.TestCase):
             from datetime import UTC, datetime
 
             on_event(BatteryTelemetryEvent("battery", 75.0, datetime(2026, 7, 18, tzinfo=UTC)))
-            self.assertEqual(load_telemetry_history(history)[0].remaining_percent, 75.0)
+            artifact = json.loads(next(Path(directory).glob("*.json")).read_text(encoding="utf-8"))
+            self.assertEqual(
+                load_telemetry_history(history, expected_run_id=artifact["run_id"])[0].remaining_percent,
+                75.0,
+            )
 
     def test_dashboard_relay_failure_does_not_change_the_mission_outcome(self) -> None:
         execution = MissionExecution.empty().transition(MissionPhase.ARMING)
