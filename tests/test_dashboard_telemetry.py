@@ -14,6 +14,62 @@ from http.server import ThreadingHTTPServer
 
 
 class DashboardTelemetryTests(unittest.TestCase):
+    def test_dashboard_exposes_a_read_only_camera_frame_and_detection_overlay(self) -> None:
+        frame = b"\xff\xd8\xff\xd9"
+        detections = {
+            "captured_at": "2026-07-18T09:00:00Z",
+            "frame": {"width": 640, "height": 480},
+            "detections": [
+                {
+                    "label": "landing-pad",
+                    "confidence": 0.92,
+                    "bbox": {"x": 120, "y": 80, "width": 200, "height": 150},
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            telemetry_path = root / "telemetry.json"
+            camera_path = root / "camera.jpg"
+            detections_path = root / "detections.json"
+            telemetry_path.write_text("{}", encoding="utf-8")
+            camera_path.write_bytes(frame)
+            detections_path.write_text(json.dumps(detections), encoding="utf-8")
+            server = ThreadingHTTPServer(
+                ("127.0.0.1", 0),
+                create_handler(telemetry_path, camera_path=camera_path, detections_path=detections_path),
+            )
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base_url = f"http://127.0.0.1:{server.server_port}"
+            try:
+                with urlopen(f"{base_url}/api/camera") as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.headers["Content-Type"], "image/jpeg")
+                    self.assertEqual(response.read(), frame)
+                with urlopen(f"{base_url}/api/detections") as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(json.loads(response.read()), detections)
+                with urlopen(f"{base_url}/") as response:
+                    body = response.read().decode("utf-8")
+                self.assertIn('id="camera-frame"', body)
+                self.assertIn('id="detection-overlay"', body)
+            finally:
+                self._stop_server(server, thread)
+
+    def test_dashboard_hides_unconfigured_camera_and_detection_endpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "telemetry.json"
+            path.write_text("{}", encoding="utf-8")
+            server, thread, base_url = self._start_server(path)
+            try:
+                for endpoint in ("/api/camera", "/api/detections"):
+                    with self.subTest(endpoint=endpoint), self.assertRaises(HTTPError) as error:
+                        urlopen(f"{base_url}{endpoint}")
+                    self.assertEqual(error.exception.code, 404)
+            finally:
+                self._stop_server(server, thread)
+
     def test_loads_the_documented_bridge_shape(self) -> None:
         payload = {
             "position": {
