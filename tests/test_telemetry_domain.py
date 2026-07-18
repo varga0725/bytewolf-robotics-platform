@@ -95,6 +95,20 @@ class TelemetryDomainTests(unittest.TestCase):
         self.assertEqual(dict(event.payload)["forward_m_s2"], 1.0)
         self.assertEqual(dict(event.payload)["down_gauss"], 0.03)
 
+    def test_keeps_available_battery_diagnostics_but_never_invents_nan_values(self) -> None:
+        sample = type(
+            "Battery",
+            (),
+            {"id": 0, "voltage_v": 15.2, "current_battery_a": 3.4, "capacity_consumed_ah": float("nan"), "time_remaining_s": 120.0, "temperature_degc": float("nan"), "battery_function": "all"},
+        )()
+        event = route_mavsdk_telemetry(
+            "MAVSDK telemetry.battery_diagnostics", sample, observed_at=self.observed_at
+        )
+        payload = dict(event.payload)
+        self.assertEqual(payload["voltage_v"], 15.2)
+        self.assertNotIn("temperature_degc", payload)
+        self.assertNotIn("capacity_consumed_ah", payload)
+
     def test_rejects_malformed_samples(self) -> None:
         with self.assertRaisesRegex(TelemetryContractError, "latitude_deg"):
             route_mavsdk_telemetry("MAVSDK telemetry.position", object())

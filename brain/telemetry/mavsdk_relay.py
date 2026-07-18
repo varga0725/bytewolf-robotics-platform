@@ -145,12 +145,23 @@ class MavsdkTelemetryRelay:
 
     async def _consume(self, source: str, stream: AsyncIterator[object]) -> None:
         async for sample in stream:
-            event = route_mavsdk_telemetry(source, sample, observed_at=self._clock())
-            self._state = self._state.with_event(event)
-            if self._on_event is not None:
-                self._on_event(event)
-            if self._state.complete:
-                _write_atomic_json(self._destination, self._state.as_dashboard_document(self._clock()))
+            observed_at = self._clock()
+            event = route_mavsdk_telemetry(source, sample, observed_at=observed_at)
+            self._record_event(event)
+            # Older adapters may expose only the required charge percentage.
+            # Diagnostics are recorded when MAVSDK supplies their stable battery id;
+            # they must never make the mandatory core stream unavailable.
+            if source == "MAVSDK telemetry.battery" and hasattr(sample, "id"):
+                self._record_event(
+                    route_mavsdk_telemetry("MAVSDK telemetry.battery_diagnostics", sample, observed_at=observed_at)
+                )
+
+    def _record_event(self, event: TelemetryEvent) -> None:
+        self._state = self._state.with_event(event)
+        if self._on_event is not None:
+            self._on_event(event)
+        if self._state.complete:
+            _write_atomic_json(self._destination, self._state.as_dashboard_document(self._clock()))
 
     def _stream_tasks(self) -> tuple[asyncio.Task[None], ...]:
         streams: list[tuple[str, AsyncIterator[object]]] = [

@@ -108,6 +108,54 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
             document = json.loads(destination.read_text(encoding="utf-8"))
             self.assertEqual(document["battery"], {"remaining_percent": 1.0})
 
+    async def test_does_not_invent_battery_diagnostics_for_legacy_charge_only_samples(self) -> None:
+        captured = []
+        with tempfile.TemporaryDirectory() as directory:
+            relay = MavsdkTelemetryRelay(
+                ReadOnlyDrone(), Path(directory) / "telemetry.json", on_event=captured.append
+            )
+
+            await relay.run_until_streams_complete()
+
+        diagnostics = [
+            event
+            for event in captured
+            if getattr(event, "source", None) == "MAVSDK telemetry.battery_diagnostics"
+        ]
+        self.assertEqual(diagnostics, [])
+
+    async def test_records_extended_battery_diagnostics_when_the_adapter_provides_them(self) -> None:
+        class DetailedBattery(Battery):
+            id = 0
+            voltage_v = 15.8
+            current_battery_a = 4.2
+
+        class DetailedTelemetry(Telemetry):
+            def battery(self):
+                return samples(DetailedBattery())
+
+        class DetailedDrone:
+            telemetry = DetailedTelemetry()
+
+        captured = []
+        with tempfile.TemporaryDirectory() as directory:
+            relay = MavsdkTelemetryRelay(
+                DetailedDrone(), Path(directory) / "telemetry.json", on_event=captured.append
+            )
+
+            await relay.run_until_streams_complete()
+
+        diagnostics = [
+            event
+            for event in captured
+            if getattr(event, "source", None) == "MAVSDK telemetry.battery_diagnostics"
+        ]
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            dict(diagnostics[0].payload),
+            {"id": 0, "voltage_v": 15.8, "current_battery_a": 4.2},
+        )
+
     async def test_rejects_a_battery_percentage_outside_the_mavsdk_range(self) -> None:
         class InvalidPercentageTelemetry(Telemetry):
             def battery(self):

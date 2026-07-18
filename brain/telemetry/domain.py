@@ -130,6 +130,7 @@ _SUPPLEMENTAL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
         ("is_local_position_ok", "boolean"),
     ),
     "MAVSDK telemetry.imu": (),
+    "MAVSDK telemetry.battery_diagnostics": (),
 }
 
 
@@ -138,6 +139,8 @@ def _supplemental_event(
 ) -> SupplementalTelemetryEvent:
     if source == "MAVSDK telemetry.imu":
         return _imu_event(topic, source, sample, observed_at)
+    if source == "MAVSDK telemetry.battery_diagnostics":
+        return _battery_diagnostics_event(topic, source, sample, observed_at)
     values: list[tuple[str, bool | float | int | str]] = []
     for field, kind in _SUPPLEMENTAL_FIELDS[source]:
         raw = getattr(sample, field, sample if field == "value" else None)
@@ -179,6 +182,30 @@ def _imu_event(
     for parent, field in fields:
         container = getattr(sample, parent, sample) if parent else sample
         values.append((field, _finite_value(getattr(container, field, None), field)))
+    return SupplementalTelemetryEvent(topic, source, tuple(values), observed_at)
+
+
+def _battery_diagnostics_event(
+    topic: str, source: str, sample: object, observed_at: datetime
+) -> SupplementalTelemetryEvent:
+    """Persist every available MAVSDK battery diagnostic without inventing unknown values."""
+    battery_id = getattr(sample, "id", None)
+    if type(battery_id) is not int or battery_id < 0:
+        raise TelemetryContractError("Telemetry battery id must be a non-negative integer.")
+    values: list[tuple[str, bool | float | int | str]] = [("id", battery_id)]
+    for field in (
+        "temperature_degc",
+        "voltage_v",
+        "current_battery_a",
+        "capacity_consumed_ah",
+        "time_remaining_s",
+    ):
+        value = getattr(sample, field, None)
+        if type(value) in (int, float) and isfinite(float(value)):
+            values.append((field, float(value)))
+    function = getattr(getattr(sample, "battery_function", None), "value", getattr(sample, "battery_function", None))
+    if isinstance(function, str) and function:
+        values.append(("battery_function", function))
     return SupplementalTelemetryEvent(topic, source, tuple(values), observed_at)
 
 
