@@ -8,17 +8,30 @@ emits no MAVLink.
 
 ## Run it
 
-Start the simulator with a camera profile (down- or front-facing):
+Render a 1080p camera overlay once (PX4's stock camera is 1280x960). It rewrites
+only the resolution of PX4's read-only mono_cam into an overlay, and carries the
+airframe models so PX4 can spawn one; nothing under the PX4 checkout changes:
 
 ```zsh
-./simulation/gazebo/launch/run_px4_gazebo_headless.zsh mono-down
+.venv/bin/python -m simulation.gazebo.camera_profiles \
+  --source-models PX4-Autopilot/Tools/simulation/gz/models \
+  --models-root simulation/artifacts/camera-overlay
 ```
 
-Stream the camera to the dashboard's files (one terminal):
+Start the simulator with a camera profile (down- or front-facing) and the overlay:
+
+```zsh
+PX4_GZ_MODELS="$PWD/simulation/artifacts/camera-overlay" \
+  ./simulation/gazebo/launch/run_px4_gazebo_headless.zsh mono-down
+```
+
+Stream the camera to the dashboard's files (one terminal). JPEG is the default --
+at 1080p it is an order of magnitude smaller than lossless PNG, which keeps the
+stream smooth; pass `--format png` for a lossless frame:
 
 ```zsh
 .venv/bin/python -m simulation.perception.camera_stream --sensor down \
-  --camera-file simulation/artifacts/dashboard/camera.png \
+  --camera-file simulation/artifacts/dashboard/camera.jpg \
   --detections-file simulation/artifacts/dashboard/detections.json
 ```
 

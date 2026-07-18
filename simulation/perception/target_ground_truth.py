@@ -30,7 +30,12 @@ import time
 from brain.perception.camera_frame import CameraFrame, FrameEncoding
 from brain.perception.colour_marker_backend import ColourMarkerBackend, ColourTarget
 from brain.perception.detector import DetectorAdapter
-from brain.perception.target_estimator import GroundTargetEstimator, NADIR_MONO_CAM_DOWN
+from brain.perception.target_estimator import CameraIntrinsics, GroundTargetEstimator
+
+# The mono_cam horizontal FOV is fixed regardless of resolution; intrinsics are
+# built from the captured frame's actual size, so the scenario is correct at
+# PX4's stock 1280x960 and at the 1080p overlay alike.
+MONO_CAM_HORIZONTAL_FOV_RAD = 1.74
 
 
 # The estimated and true horizontal offset must agree within this, or the sign or
@@ -172,7 +177,8 @@ def _capture_and_evaluate(hover_altitude_m, environment, clock, sleep) -> Ground
 
     adapter = DetectorAdapter(ColourMarkerBackend(MARKER_RED, label="landing-pad"), source="down + colour")
     result = adapter.analyze(frame)
-    observation = GroundTargetEstimator(NADIR_MONO_CAM_DOWN, source="down ground-truth").estimate(
+    intrinsics = CameraIntrinsics(frame.width, frame.height, MONO_CAM_HORIZONTAL_FOV_RAD)
+    observation = GroundTargetEstimator(intrinsics, source="down ground-truth").estimate(
         result, altitude_agl_m=drone["z"], now=clock(), yaw_deg=drone["yaw_deg"], tilt_deg=drone["tilt_deg"]
     )
     if not observation.state(clock()).usable:

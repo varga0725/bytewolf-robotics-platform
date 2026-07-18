@@ -70,9 +70,14 @@ class CameraIntrinsics:
         return (self.width / 2, self.height / 2)
 
 
-# Measured from PX4's x500_mono_cam_down: the mono_cam sensor (1280x960, 1.74 rad
-# horizontal FOV) mounted pitched 90 degrees down.
-NADIR_MONO_CAM_DOWN = CameraIntrinsics(width=1280, height=960, horizontal_fov_rad=1.74)
+# PX4's x500_mono_cam_down mounts the mono_cam sensor (1.74 rad horizontal FOV)
+# pitched 90 degrees down. The twin renders it at 1080p through the camera
+# overlay (simulation/gazebo/camera_profiles.py); the projection is parameterised
+# by these intrinsics, so the ground-truth-confirmed frame convention holds at
+# any resolution -- only the focal length and principal point scale.
+NADIR_MONO_CAM_DOWN = CameraIntrinsics(width=1920, height=1080, horizontal_fov_rad=1.74)
+# PX4's stock resolution, before the overlay, for a run that does not raise it.
+NADIR_MONO_CAM_DOWN_STOCK = CameraIntrinsics(width=1280, height=960, horizontal_fov_rad=1.74)
 
 
 @dataclass(frozen=True)

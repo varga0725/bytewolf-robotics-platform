@@ -14,7 +14,8 @@ import unittest
 
 from brain.perception.colour_marker_backend import ColourMarkerBackend, ColourTarget
 from brain.perception.detector import DetectorAdapter
-from brain.perception.png_encoder import is_png
+from brain.perception.jpeg_encoder import is_jpeg
+from brain.perception.png_encoder import encode_frame_to_png, is_png
 from simulation.perception.camera_stream import (
     camera_frame_from_gz_image,
     publish_frame,
@@ -58,12 +59,12 @@ class FrameDecodeTests(unittest.TestCase):
 
 
 class PublishTests(unittest.TestCase):
-    def test_writes_a_png_frame_and_a_detections_file(self) -> None:
+    def test_writes_a_jpeg_frame_and_a_detections_file_by_default(self) -> None:
         frame = camera_frame_from_gz_image(
             _gz_image(60, 40, red_box=(20, 15, 12, 12)), sensor_id="down_rgb", captured_at=_NOW
         )
         with TemporaryDirectory() as directory:
-            camera_path = Path(directory) / "camera.png"
+            camera_path = Path(directory) / "camera.jpg"
             detections_path = Path(directory) / "detections.json"
 
             document = publish_frame(
@@ -71,11 +72,23 @@ class PublishTests(unittest.TestCase):
                 detector=_detector(), now=lambda: _NOW,
             )
 
-            self.assertTrue(is_png(camera_path.read_bytes()))
+            self.assertTrue(is_jpeg(camera_path.read_bytes()))
             written = json.loads(detections_path.read_text(encoding="utf-8"))
             self.assertEqual(written["frame"], {"width": 60, "height": 40})
             self.assertEqual([d["label"] for d in document["detections"]], ["marker"])
             self.assertEqual(document["validity"], "valid")
+
+    def test_can_write_lossless_png_when_asked(self) -> None:
+        frame = camera_frame_from_gz_image(_gz_image(8, 6), sensor_id="down_rgb", captured_at=_NOW)
+        with TemporaryDirectory() as directory:
+            camera_path = Path(directory) / "camera.png"
+
+            publish_frame(
+                frame, camera_path=camera_path, detections_path=Path(directory) / "d.json",
+                detector=_detector(), now=lambda: _NOW, encode=encode_frame_to_png,
+            )
+
+            self.assertTrue(is_png(camera_path.read_bytes()))
 
     def test_leaves_no_temporary_file_behind(self) -> None:
         frame = camera_frame_from_gz_image(_gz_image(8, 6), sensor_id="down_rgb", captured_at=_NOW)

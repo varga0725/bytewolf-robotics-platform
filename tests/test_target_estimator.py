@@ -12,6 +12,7 @@ import unittest
 
 from brain.perception.detector import BoundingBox, Detection, DetectionResult
 from brain.perception.target_estimator import (
+    NADIR_MONO_CAM_DOWN_STOCK,
     GlobalFix,
     GroundTargetEstimator,
     TargetEstimationError,
@@ -33,6 +34,9 @@ def _result(centre_u: float, centre_v: float, *, validity: str = "valid", confid
 
 
 def _est(**kwargs) -> GroundTargetEstimator:
+    # The pixel coordinates below are for the 1280x960 stock camera (centre 640,
+    # 480), so the tests pin geometry against those intrinsics explicitly.
+    kwargs.setdefault("intrinsics", NADIR_MONO_CAM_DOWN_STOCK)
     return GroundTargetEstimator(source="gz mono_cam_down + stub", **kwargs)
 
 

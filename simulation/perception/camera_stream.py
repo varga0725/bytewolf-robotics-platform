@@ -25,10 +25,22 @@ from pathlib import Path
 import subprocess
 import time
 
+from collections.abc import Callable as _Callable
+
 from brain.perception.camera_frame import CameraFrame, FrameEncoding
 from brain.perception.colour_marker_backend import ColourMarkerBackend, ColourTarget
 from brain.perception.detector import DetectorAdapter
+from brain.perception.jpeg_encoder import encode_frame_to_jpeg
 from brain.perception.png_encoder import encode_frame_to_png
+
+
+# The live view defaults to JPEG: at 1080p it is an order of magnitude smaller
+# than lossless PNG, which is what keeps the stream smooth. PNG stays available
+# for when an exact, lossless frame is wanted.
+FRAME_ENCODERS: dict[str, _Callable[[CameraFrame], bytes]] = {
+    "jpeg": encode_frame_to_jpeg,
+    "png": encode_frame_to_png,
+}
 
 
 DOWN_CAMERA_TOPIC = "/world/default/model/x500_mono_cam_down_0/link/camera_link/sensor/imager/image"
@@ -61,9 +73,10 @@ def publish_frame(
     detections_path: Path,
     detector: DetectorAdapter,
     now: Callable[[], datetime],
+    encode: Callable[[CameraFrame], bytes] = encode_frame_to_jpeg,
 ) -> dict:
-    """Encode the frame to PNG and write it and its detections for the dashboard."""
-    _atomic_write_bytes(camera_path, encode_frame_to_png(frame))
+    """Encode the frame and write it and its detections for the dashboard."""
+    _atomic_write_bytes(camera_path, encode(frame))
     document = detector.analyze(frame).to_document()
     _atomic_write_bytes(detections_path, (json.dumps(document) + "\n").encode("utf-8"))
     return document
@@ -80,6 +93,7 @@ def run_camera_stream(
     period_s: float = 0.5,
     environment: dict[str, str] | None = None,
     should_continue: Callable[[], bool] | None = None,
+    encode: Callable[[CameraFrame], bytes] = encode_frame_to_jpeg,
 ) -> None:
     """Relay frames from the camera topic to the dashboard until stopped."""
     clock = now or (lambda: datetime.now(UTC))
@@ -96,7 +110,7 @@ def run_camera_stream(
         if frame is not None:
             publish_frame(
                 frame, camera_path=camera_path, detections_path=detections_path,
-                detector=detector, now=clock,
+                detector=detector, now=clock, encode=encode,
             )
         time.sleep(period_s)
 
@@ -129,7 +143,8 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
 def main(arguments: tuple[str, ...] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Stream the simulator camera to the read-only dashboard.")
     parser.add_argument("--sensor", choices=("down", "front"), default="down")
-    parser.add_argument("--camera-file", type=Path, default=Path("simulation/artifacts/dashboard/camera.png"))
+    parser.add_argument("--format", choices=tuple(FRAME_ENCODERS), default="jpeg")
+    parser.add_argument("--camera-file", type=Path, default=None)
     parser.add_argument(
         "--detections-file", type=Path, default=Path("simulation/artifacts/dashboard/detections.json")
     )
@@ -138,12 +153,15 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
 
     topic = DOWN_CAMERA_TOPIC if parsed.sensor == "down" else FRONT_CAMERA_TOPIC
     sensor_id = "down_rgb" if parsed.sensor == "down" else "front_rgb"
+    suffix = "jpg" if parsed.format == "jpeg" else "png"
+    camera_path = parsed.camera_file or Path(f"simulation/artifacts/dashboard/camera.{suffix}")
     detector = DetectorAdapter(ColourMarkerBackend(DEFAULT_MARKER, label="marker"), source=f"gz {sensor_id}")
-    print(f"Streaming {parsed.sensor} camera to {parsed.camera_file} (Ctrl-C to stop)")
+    print(f"Streaming {parsed.sensor} camera ({parsed.format}) to {camera_path} (Ctrl-C to stop)")
     try:
         run_camera_stream(
-            camera_topic=topic, camera_path=parsed.camera_file, detections_path=parsed.detections_file,
+            camera_topic=topic, camera_path=camera_path, detections_path=parsed.detections_file,
             sensor_id=sensor_id, detector=detector, period_s=parsed.period_s,
+            encode=FRAME_ENCODERS[parsed.format],
         )
     except KeyboardInterrupt:
         return 0
