@@ -6,6 +6,8 @@ import math
 import unittest
 from datetime import UTC, datetime
 
+from mavsdk.telemetry import BatteryFunction
+
 from brain.telemetry.domain import (
     BatteryTelemetryEvent,
     FlightStateTelemetryEvent,
@@ -95,17 +97,49 @@ class TelemetryDomainTests(unittest.TestCase):
         self.assertEqual(dict(event.payload)["forward_m_s2"], 1.0)
         self.assertEqual(dict(event.payload)["down_gauss"], 0.03)
 
+    def test_routes_sitl_ground_truth_as_validated_history_evidence(self) -> None:
+        sample = type(
+            "GroundTruth",
+            (),
+            {"latitude_deg": 47.4979, "longitude_deg": 19.0402, "absolute_altitude_m": 125.5},
+        )()
+
+        event = route_mavsdk_telemetry(
+            "MAVSDK telemetry.ground_truth", sample, observed_at=self.observed_at
+        )
+
+        self.assertEqual(event.topic, "telemetry/history/ground_truth")
+        self.assertEqual(
+            dict(event.payload),
+            {"latitude_deg": 47.4979, "longitude_deg": 19.0402, "absolute_altitude_m": 125.5},
+        )
+
+    def test_routes_local_position_velocity_in_ned_coordinates(self) -> None:
+        position = type("PositionNed", (), {"north_m": 2.0, "east_m": -1.0, "down_m": -3.0})()
+        velocity = type(
+            "VelocityNed", (), {"north_m_s": 0.5, "east_m_s": -0.25, "down_m_s": 0.1}
+        )()
+        sample = type("PositionVelocityNed", (), {"position": position, "velocity": velocity})()
+
+        event = route_mavsdk_telemetry(
+            "MAVSDK telemetry.position_velocity_ned", sample, observed_at=self.observed_at
+        )
+
+        self.assertEqual(dict(event.payload)["down_m"], -3.0)
+        self.assertEqual(dict(event.payload)["east_m_s"], -0.25)
+
     def test_keeps_available_battery_diagnostics_but_never_invents_nan_values(self) -> None:
         sample = type(
             "Battery",
             (),
-            {"id": 0, "voltage_v": 15.2, "current_battery_a": 3.4, "capacity_consumed_ah": float("nan"), "time_remaining_s": 120.0, "temperature_degc": float("nan"), "battery_function": "all"},
+            {"id": 0, "voltage_v": 15.2, "current_battery_a": 3.4, "capacity_consumed_ah": float("nan"), "time_remaining_s": 120.0, "temperature_degc": float("nan"), "battery_function": BatteryFunction.ALL},
         )()
         event = route_mavsdk_telemetry(
             "MAVSDK telemetry.battery_diagnostics", sample, observed_at=self.observed_at
         )
         payload = dict(event.payload)
         self.assertEqual(payload["voltage_v"], 15.2)
+        self.assertEqual(payload["battery_function"], "all")
         self.assertNotIn("temperature_degc", payload)
         self.assertNotIn("capacity_consumed_ah", payload)
 

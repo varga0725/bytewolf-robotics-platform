@@ -156,6 +156,66 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
             {"id": 0, "voltage_v": 15.8, "current_battery_a": 4.2},
         )
 
+    async def test_records_sitl_ground_truth_only_when_the_mavsdk_adapter_exposes_it(self) -> None:
+        ground_truth = type(
+            "GroundTruth",
+            (),
+            {"latitude_deg": 47.4979, "longitude_deg": 19.0402, "absolute_altitude_m": 125.5},
+        )()
+
+        class GroundTruthTelemetry(Telemetry):
+            def ground_truth(self):
+                return samples(ground_truth)
+
+        class GroundTruthDrone:
+            telemetry = GroundTruthTelemetry()
+
+        captured = []
+        with tempfile.TemporaryDirectory() as directory:
+            relay = MavsdkTelemetryRelay(
+                GroundTruthDrone(), Path(directory) / "telemetry.json", on_event=captured.append
+            )
+
+            await relay.run_until_streams_complete()
+
+        evidence = [
+            event
+            for event in captured
+            if getattr(event, "source", None) == "MAVSDK telemetry.ground_truth"
+        ]
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(dict(evidence[0].payload)["absolute_altitude_m"], 125.5)
+
+    async def test_records_local_position_velocity_when_the_adapter_exposes_it(self) -> None:
+        position = type("PositionNed", (), {"north_m": 2.0, "east_m": -1.0, "down_m": -3.0})()
+        velocity = type(
+            "VelocityNed", (), {"north_m_s": 0.5, "east_m_s": -0.25, "down_m_s": 0.1}
+        )()
+        sample = type("PositionVelocityNed", (), {"position": position, "velocity": velocity})()
+
+        class LocalStateTelemetry(Telemetry):
+            def position_velocity_ned(self):
+                return samples(sample)
+
+        class LocalStateDrone:
+            telemetry = LocalStateTelemetry()
+
+        captured = []
+        with tempfile.TemporaryDirectory() as directory:
+            relay = MavsdkTelemetryRelay(
+                LocalStateDrone(), Path(directory) / "telemetry.json", on_event=captured.append
+            )
+
+            await relay.run_until_streams_complete()
+
+        evidence = [
+            event
+            for event in captured
+            if getattr(event, "source", None) == "MAVSDK telemetry.position_velocity_ned"
+        ]
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(dict(evidence[0].payload)["north_m_s"], 0.5)
+
     async def test_rejects_a_battery_percentage_outside_the_mavsdk_range(self) -> None:
         class InvalidPercentageTelemetry(Telemetry):
             def battery(self):

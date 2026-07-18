@@ -131,6 +131,8 @@ _SUPPLEMENTAL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "MAVSDK telemetry.imu": (),
     "MAVSDK telemetry.battery_diagnostics": (),
+    "MAVSDK telemetry.ground_truth": (),
+    "MAVSDK telemetry.position_velocity_ned": (),
 }
 
 
@@ -141,6 +143,10 @@ def _supplemental_event(
         return _imu_event(topic, source, sample, observed_at)
     if source == "MAVSDK telemetry.battery_diagnostics":
         return _battery_diagnostics_event(topic, source, sample, observed_at)
+    if source == "MAVSDK telemetry.ground_truth":
+        return _ground_truth_event(topic, source, sample, observed_at)
+    if source == "MAVSDK telemetry.position_velocity_ned":
+        return _position_velocity_ned_event(topic, source, sample, observed_at)
     values: list[tuple[str, bool | float | int | str]] = []
     for field, kind in _SUPPLEMENTAL_FIELDS[source]:
         raw = getattr(sample, field, sample if field == "value" else None)
@@ -203,10 +209,55 @@ def _battery_diagnostics_event(
         value = getattr(sample, field, None)
         if type(value) in (int, float) and isfinite(float(value)):
             values.append((field, float(value)))
-    function = getattr(getattr(sample, "battery_function", None), "value", getattr(sample, "battery_function", None))
+    function = getattr(sample, "battery_function", None)
+    function = getattr(function, "name", function)
     if isinstance(function, str) and function:
-        values.append(("battery_function", function))
+        values.append(("battery_function", function.lower()))
     return SupplementalTelemetryEvent(topic, source, tuple(values), observed_at)
+
+
+def _ground_truth_event(
+    topic: str, source: str, sample: object, observed_at: datetime
+) -> SupplementalTelemetryEvent:
+    """Preserve validated simulator truth without presenting it as onboard GPS."""
+    latitude = _finite_attribute(sample, "latitude_deg")
+    longitude = _finite_attribute(sample, "longitude_deg")
+    if not -90.0 <= latitude <= 90.0:
+        raise TelemetryContractError("Telemetry field 'latitude_deg' must be between -90.0 and 90.0.")
+    if not -180.0 <= longitude <= 180.0:
+        raise TelemetryContractError("Telemetry field 'longitude_deg' must be between -180.0 and 180.0.")
+    return SupplementalTelemetryEvent(
+        topic,
+        source,
+        (
+            ("latitude_deg", latitude),
+            ("longitude_deg", longitude),
+            ("absolute_altitude_m", _finite_attribute(sample, "absolute_altitude_m")),
+        ),
+        observed_at,
+    )
+
+
+def _position_velocity_ned_event(
+    topic: str, source: str, sample: object, observed_at: datetime
+) -> SupplementalTelemetryEvent:
+    """Preserve local estimator position and velocity in its MAVSDK NED frame."""
+    position = getattr(sample, "position", None)
+    velocity = getattr(sample, "velocity", None)
+    fields = (
+        (position, "north_m"),
+        (position, "east_m"),
+        (position, "down_m"),
+        (velocity, "north_m_s"),
+        (velocity, "east_m_s"),
+        (velocity, "down_m_s"),
+    )
+    return SupplementalTelemetryEvent(
+        topic,
+        source,
+        tuple((name, _finite_value(getattr(container, name, None), name)) for container, name in fields),
+        observed_at,
+    )
 
 
 def _finite_attribute(sample: object, name: str) -> float:
