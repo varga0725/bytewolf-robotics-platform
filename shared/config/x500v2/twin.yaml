@@ -119,12 +119,47 @@ sensors:
   barometer:
     update_hz: 50
     noise_pa: null
-  camera_front:
-    enabled: false
-    width: 1280
-    height: 720
-    fps: 30
-    latency_ms: 60
+  # Every camera the twin can render, not just one. width/height/fov/fps are the
+  # simulated values; latency is hardware-gated and stays null with provenance.
+  # The mono cameras render at 1080p through the camera overlay
+  # (simulation/gazebo/camera_profiles.py); PX4's stock model is 1280x960.
+  cameras:
+    front_rgb:
+      role: object detection and navigation
+      profile: gz_x500_mono_cam
+      enabled: false
+      width: 1920
+      height: 1080
+      horizontal_fov_rad: 1.74
+      fps: 30
+      latency_ms: null
+    down_rgb:
+      # The V1 first provable capability: target detection, relative position, and
+      # precision landing all run off this camera.
+      role: target detection, relative position, precision landing
+      profile: gz_x500_mono_cam_down
+      enabled: true
+      width: 1920
+      height: 1080
+      horizontal_fov_rad: 1.74
+      fps: 30
+      latency_ms: null
+    depth:
+      # OakD-Lite: a 1080p RGB imager plus a lower-resolution stereo depth pair.
+      role: obstacle sensing and depth perception (future)
+      profile: gz_x500_depth
+      enabled: false
+      rgb:
+        width: 1920
+        height: 1080
+        horizontal_fov_rad: 1.204
+      depth:
+        width: 640
+        height: 480
+        horizontal_fov_rad: 1.274
+        min_range_m: 0.2
+      fps: 30
+      latency_ms: null
 
 # Source or measurement plan for every critical parameter, keyed by its dotted
 # path above. Enforced by tests/test_twin_provenance.py: a critical parameter
@@ -204,6 +239,15 @@ provenance:
   sensors.barometer.noise_pa:
     status: unknown
     plan: Static bench recording at a known altitude, from the flight controller actually bought.
+  sensors.cameras.front_rgb.latency_ms:
+    status: unknown
+    plan: Measure capture-to-availability delay on the chosen camera and companion computer.
+  sensors.cameras.down_rgb.latency_ms:
+    status: unknown
+    plan: Measure capture-to-availability delay on the chosen camera and companion computer.
+  sensors.cameras.depth.latency_ms:
+    status: unknown
+    plan: Measure capture-to-availability delay on the chosen depth camera and companion computer.
   aerodynamics.linear_drag_coefficient_kg_s:
     status: derived
     plan: >-
