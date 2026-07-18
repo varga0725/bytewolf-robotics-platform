@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import json
 from math import isfinite
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from brain.telemetry.domain import (
@@ -14,7 +15,9 @@ from brain.telemetry.domain import (
     FlightStateTelemetryEvent,
     PositionTelemetryEvent,
     SupplementalTelemetryEvent,
+    TelemetryContractError,
     TelemetryEvent,
+    route_mavsdk_telemetry,
 )
 
 
@@ -120,15 +123,63 @@ def _load_event(document: object, line_number: int) -> TelemetryEvent:
         payload = document.get("payload")
         if not isinstance(payload, dict) or not payload:
             raise ValueError(f"Telemetry history line {line_number} supplemental payload must be an object.")
-        values: list[tuple[str, bool | float | int | str]] = []
         for key, value in sorted(payload.items()):
             if not isinstance(key, str) or type(value) not in (bool, int, float, str):
                 raise ValueError(f"Telemetry history line {line_number} supplemental payload is invalid.")
             if type(value) in (int, float) and not isfinite(float(value)):
                 raise ValueError(f"Telemetry history line {line_number} supplemental payload must be finite.")
-            values.append((key, value))
-        return SupplementalTelemetryEvent(topic, source, tuple(values), observed_at)
+        try:
+            event = route_mavsdk_telemetry(
+                source,
+                _supplemental_sample(source, payload),
+                observed_at=observed_at,
+            )
+        except TelemetryContractError as error:
+            raise ValueError(f"Telemetry history line {line_number} {error}.") from error
+        if not isinstance(event, SupplementalTelemetryEvent):
+            raise ValueError(f"Telemetry history line {line_number} supplemental source did not produce supplemental telemetry.")
+        if event.topic != topic or dict(event.payload) != payload:
+            raise ValueError(
+                f"Telemetry history line {line_number} supplemental payload does not match the declared source schema."
+            )
+        return event
     raise ValueError(f"Telemetry history line {line_number} has an unknown event_type.")
+
+
+def _supplemental_sample(source: str, payload: dict[str, bool | float | int | str]) -> object:
+    if source == "MAVSDK telemetry.position_velocity_ned":
+        return SimpleNamespace(
+            position=SimpleNamespace(
+                north_m=payload.get("north_m"),
+                east_m=payload.get("east_m"),
+                down_m=payload.get("down_m"),
+            ),
+            velocity=SimpleNamespace(
+                north_m_s=payload.get("north_m_s"),
+                east_m_s=payload.get("east_m_s"),
+                down_m_s=payload.get("down_m_s"),
+            ),
+        )
+    if source == "MAVSDK telemetry.imu":
+        return SimpleNamespace(
+            acceleration_frd=SimpleNamespace(
+                forward_m_s2=payload.get("forward_m_s2"),
+                right_m_s2=payload.get("right_m_s2"),
+                down_m_s2=payload.get("down_m_s2"),
+            ),
+            angular_velocity_frd=SimpleNamespace(
+                forward_rad_s=payload.get("forward_rad_s"),
+                right_rad_s=payload.get("right_rad_s"),
+                down_rad_s=payload.get("down_rad_s"),
+            ),
+            magnetic_field_frd=SimpleNamespace(
+                forward_gauss=payload.get("forward_gauss"),
+                right_gauss=payload.get("right_gauss"),
+                down_gauss=payload.get("down_gauss"),
+            ),
+            temperature_degc=payload.get("temperature_degc"),
+        )
+    return SimpleNamespace(**payload)
 
 
 def _number(document: dict[str, Any], field: str, line_number: int) -> float:

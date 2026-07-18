@@ -35,7 +35,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
         help="Read-only telemetry JSON snapshot, updated during this mission.",
     )
-    parser.add_argument("--telemetry-history", type=Path, default=None)
+    parser.add_argument(
+        "--telemetry-history",
+        type=Path,
+        default=None,
+        help="Destination for the mandatory append-only JSONL telemetry history used by offline replay.",
+    )
     return parser.parse_args(arguments)
 
 

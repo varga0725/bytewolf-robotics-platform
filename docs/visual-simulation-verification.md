@@ -8,7 +8,7 @@ Ez az útmutató a P1 telemetriai fejlesztések jelenlegi, bizonyítható állap
 | --- | --- | --- | --- |
 | Dashboard replay | natív macOS | a böngészős, helyi olvasási nézet és az adatfrissesség-jelzés | élő PX4/MAVSDK kapcsolat |
 | Látható PX4 SITL + Gazebo | natív macOS | az X500 mozgása és a meglévő P0 repülési CLI-k | ROS 2 adatfolyam |
-| MAVSDK relay egységteszt | natív macOS | a három engedélyezett adatfolyam atomikus JSON-pillanatképpé válását | valódi MAVSDK/PX4 kapcsolat |
+| MAVSDK relay egységteszt | natív macOS | a dashboard három core adatfolyamának atomikus JSON-pillanatképpé válását és a kötelező history-state streamek validálását | valódi MAVSDK/PX4 kapcsolat |
 | Élő ROS 2 bridge smoke | Ubuntu + ROS 2 Humble | MAVSDK → ROS telemetry → JSON-pillanatkép életciklusát | dashboard-vezérlést (ilyen nincs) |
 
 ## 1. Dashboard replay macOS-en
@@ -60,10 +60,14 @@ A dashboard replay és a grafikus SITL egyidejűleg is futhat, de jelenleg **nem
 
 Az élő MAVSDK → ROS → JSON relay futtatható belépési pontja
 `brain.cli.ros2_telemetry_bridge`, de ROS 2 Humble-t igényel, ezért ezen a
-macOS-en nem indítható. A relay kizárólag a szerződéses MAVSDK position,
-battery és in-air streameket olvassa, a dashboard számára atomikusan ír JSON
-pillanatképet, és nem hív PX4 flight-control API-t. A macOS dashboardot továbbra
-is a replay fájllal ellenőrizd; egy repülési CLI artifactja nem élő relay formátum.
+macOS-en nem indítható. A relay a dashboard számára továbbra is a három core
+MAVSDK állapotból (position, battery, in-air) ír atomikus JSON pillanatképet,
+de a repülési CLI-k kötelező history-rögzítése ennél több, validált state
+streamet is elmenthet (például velocity, attitude, IMU, battery diagnostics,
+ground truth és local position/velocity), ha az adapter ezeket ténylegesen
+szolgáltatja. A relay továbbra sem hív PX4 flight-control API-t. A macOS
+dashboardot továbbra is a replay fájllal ellenőrizd; egy repülési CLI artifactja
+nem élő relay formátum.
 
 Az eddigi határtesztek futtatása:
 

@@ -156,6 +156,36 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
             {"id": 0, "voltage_v": 15.8, "current_battery_a": 4.2},
         )
 
+    async def test_ignores_malformed_optional_battery_diagnostics_but_keeps_core_battery(self) -> None:
+        class BrokenDiagnosticsBattery(Battery):
+            id = "adapter-bug"
+
+        class BrokenDiagnosticsTelemetry(Telemetry):
+            def battery(self):
+                return samples(BrokenDiagnosticsBattery())
+
+        class BrokenDiagnosticsDrone:
+            telemetry = BrokenDiagnosticsTelemetry()
+
+        captured = []
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "telemetry.json"
+            relay = MavsdkTelemetryRelay(
+                BrokenDiagnosticsDrone(), destination, on_event=captured.append
+            )
+
+            await relay.run_until_streams_complete()
+
+            document = json.loads(destination.read_text(encoding="utf-8"))
+
+        self.assertEqual(document["battery"], {"remaining_percent": 78.0})
+        diagnostics = [
+            event
+            for event in captured
+            if getattr(event, "source", None) == "MAVSDK telemetry.battery_diagnostics"
+        ]
+        self.assertEqual(diagnostics, [])
+
     async def test_records_sitl_ground_truth_only_when_the_mavsdk_adapter_exposes_it(self) -> None:
         ground_truth = type(
             "GroundTruth",

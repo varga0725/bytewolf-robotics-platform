@@ -156,9 +156,14 @@ class MavsdkTelemetryRelay:
             # Diagnostics are recorded when MAVSDK supplies their stable battery id;
             # they must never make the mandatory core stream unavailable.
             if source == "MAVSDK telemetry.battery" and hasattr(sample, "id"):
-                self._record_event(
-                    route_mavsdk_telemetry("MAVSDK telemetry.battery_diagnostics", sample, observed_at=observed_at)
-                )
+                try:
+                    self._record_event(
+                        route_mavsdk_telemetry(
+                            "MAVSDK telemetry.battery_diagnostics", sample, observed_at=observed_at
+                        )
+                    )
+                except TelemetryContractError:
+                    continue
 
     def _record_event(self, event: TelemetryEvent) -> None:
         self._state = self._state.with_event(event)

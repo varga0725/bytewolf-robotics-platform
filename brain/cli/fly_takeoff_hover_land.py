@@ -64,7 +64,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--telemetry-history",
         type=Path,
         default=None,
-        help="Optional append-only JSONL telemetry history for offline replay.",
+        help="Destination for the mandatory append-only JSONL telemetry history used by offline replay.",
     )
     return parser.parse_args(arguments)
 

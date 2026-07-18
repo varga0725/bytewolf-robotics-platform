@@ -5,7 +5,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from brain.telemetry.domain import BatteryTelemetryEvent, FlightStateTelemetryEvent, PositionTelemetryEvent
+from brain.telemetry.domain import (
+    BatteryTelemetryEvent,
+    FlightStateTelemetryEvent,
+    PositionTelemetryEvent,
+    route_mavsdk_telemetry,
+)
 from brain.telemetry.persistence import TelemetryHistoryStore, load_telemetry_history
 
 
@@ -50,6 +55,58 @@ class TelemetryHistoryStoreTests(unittest.TestCase):
                     destination.write_text(payload, encoding="utf-8")
                     with self.assertRaisesRegex(ValueError, error):
                         load_telemetry_history(destination)
+
+    def test_reloads_validated_supplemental_history_against_their_declared_schema(self) -> None:
+        observed_at = datetime(2026, 7, 18, 10, 0, tzinfo=UTC)
+        events = (
+            route_mavsdk_telemetry(
+                "MAVSDK telemetry.ground_truth",
+                type(
+                    "GroundTruth",
+                    (),
+                    {"latitude_deg": 47.4979, "longitude_deg": 19.0402, "absolute_altitude_m": 125.5},
+                )(),
+                observed_at=observed_at,
+            ),
+            route_mavsdk_telemetry(
+                "MAVSDK telemetry.position_velocity_ned",
+                type(
+                    "PositionVelocityNed",
+                    (),
+                    {
+                        "position": type(
+                            "PositionNed", (), {"north_m": 2.0, "east_m": -1.0, "down_m": -3.0}
+                        )(),
+                        "velocity": type(
+                            "VelocityNed",
+                            (),
+                            {"north_m_s": 0.5, "east_m_s": -0.25, "down_m_s": 0.1},
+                        )(),
+                    },
+                )(),
+                observed_at=observed_at,
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "telemetry.jsonl"
+            store = TelemetryHistoryStore(destination)
+            for event in events:
+                store.append(event)
+            replayed = load_telemetry_history(destination)
+
+        self.assertEqual(replayed, events)
+
+    def test_rejects_supplemental_history_that_no_longer_matches_its_declared_stream_schema(self) -> None:
+        payload = (
+            '{"event_type":"supplemental","observed_at":"2026-07-18T10:00:00Z","payload":{"north_m":2.0,"east_m":-1.0,"down_m":-3.0},'
+            '"source":"MAVSDK telemetry.position_velocity_ned","topic":"telemetry/history/position_velocity_ned","version":"v0.1"}\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "telemetry.jsonl"
+            destination.write_text(payload, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "does not match|north_m_s"):
+                load_telemetry_history(destination)
 
 
 if __name__ == "__main__":
