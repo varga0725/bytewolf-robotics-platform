@@ -70,16 +70,33 @@ Mission reaction  ── WAIT_FOR_DETECTION → GOTO the target → precision ap
                      always through the Safety Kernel, never a direct command
 ```
 
-Stages one to three — the frame contract, the detector adapter, and the
-relative-position estimator with its target observation — are built and tested.
-The V1 estimator is GPS-based over a down-facing camera: under a near-nadir view,
-the vehicle's own altitude turns a detection's pixel offset into a local
-north/east ground offset, and its GPS turns that into an absolute fix. It slots
-into the observation-contract discipline (valid / invalid / missing / stale), so
-an unknown altitude, too much tilt, or an untrusted detection fails closed rather
-than inventing a position. Mission reaction — proposing a GOTO to the target that
-the Safety Kernel re-checks — is the next stage, with a down-camera SITL scenario
-to confirm the north/east sign against ground truth.
+All four stages are built and tested. The V1 estimator is GPS-based over a
+down-facing camera: under a near-nadir view, the vehicle's own altitude turns a
+detection's pixel offset into a local north/east ground offset, and its GPS turns
+that into an absolute fix. It slots into the observation-contract discipline
+(valid / invalid / missing / stale), so an unknown altitude, too much tilt, or an
+untrusted detection fails closed rather than inventing a position. Mission
+reaction (`brain/perception/target_reaction.py`) proposes a GOTO that the
+SafetyGate re-checks; a down-camera SITL scenario confirms the north/east sign
+against Gazebo ground truth, which caught an earlier mapping that was rotated 90°.
+
+## Closing the loop: the autonomous approach
+
+`brain/perception/target_approach.py` composes the four stages into one pure
+decision — a camera frame and the vehicle's position become either a
+gate-approved `WaypointCommand` or a named refusal — and
+`simulation/perception/autonomous_approach.py` flies it end to end on SITL: the
+drone takes off, the down camera finds a marker, the loop proposes a move, the
+SafetyGate approves it, and PX4 flies there and lands, with arrival scored
+against Gazebo ground truth. The move is discovered live and re-checked by the
+gate at that moment, so the demo can never fly to a target the safety layer would
+refuse. `brain/mission/flight.py`'s `TakeoffTargetApproachLandMission` fixes only
+the search envelope — the takeoff, the settle, the hover, the arrival tolerance —
+never the waypoint, and the adapter's `execute_target_approach_mission` flies
+exactly what perception approves, or nothing, landing either way under the single
+airborne-land fallback. The perception→reaction→flight chain is unit-tested with
+synthetic marker frames and a fake MAVSDK; the live "reached" run is gated on a
+stable gz-transport environment.
 
 ## Simulation frame profiles (plan)
 
