@@ -15,14 +15,10 @@ Dashboard/mobile chat
 
 ## Safety boundary
 
-`apps/pi_agent/runner.mjs` starts each turn with only four typed tools:
+`apps/pi_agent/runner.mjs` starts each turn with only three typed tools:
 
 - `get_drone_state` — reads the dashboard telemetry artifact.
 - `get_vision_summary` — reads current detection artifacts.
-- `remember_user_fact` — saves one non-sensitive fact only when the user
-  explicitly asks the agent to remember it in that same turn. The runner also
-  rejects token/password/card-like values, email addresses and street-address
-  labels before persistence.
 - `draft_flight_request` — requests a reviewed mission plan. It has no PX4,
   MAVSDK, MAVLink, shell, or actuator access.
 
@@ -52,12 +48,15 @@ set -a; source .env; set +a
 file. `apps/pi_agent/models.json` contains no secret; it declares the NVIDIA
 NIM OpenAI-compatible provider and resolves the key from the environment.
 
-## Current memory model
+## Conversation and memory
 
 Pi persists the conversation for the browser's local UUID, so follow-up
 phrases such as “akkor nézd meg inkább az udvart” retain their conversational
-context. The structured memory store deliberately accepts only explicitly
-requested, non-sensitive facts such as a preferred name or a place label.
+context. Durable memory is being moved from a model-callable tool to a
+separate post-turn hook. The hook receives only the user's message and the
+safe final assistant reply, asks a separate NIM extraction call for a typed
+memory delta, and lets deterministic admission code decide what may be saved.
+See `docs/pi-memory-hooks-v0_2.md` for the contract and rollout plan.
 
 It does not yet contain face identity, autonomous world mapping, external
 accounts, address-book access, or a production identity/authentication model.

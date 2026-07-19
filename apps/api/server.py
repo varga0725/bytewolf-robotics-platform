@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway, DashboardReply
 from apps.dashboard.telemetry import TelemetryFormatError, load_telemetry_snapshot
+from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.gateway.pi_agent import PiAgentClient
 from apps.gateway.telegram_mission_gateway import _execute_with_cli, _review_with_cli
 
@@ -27,6 +28,11 @@ class PlanRequest(BaseModel):
     plan_id: str
 
 
+class MemoryFactRequest(BaseModel):
+    category: str = Field(min_length=1, max_length=32)
+    fact: str = Field(min_length=1, max_length=240)
+
+
 def create_app(
     telemetry_path: Path,
     *,
@@ -35,6 +41,7 @@ def create_app(
     down_camera_path: Path | None = None,
     down_detections_path: Path | None = None,
     agent_artifact_dir: Path = Path("simulation/artifacts/agent-missions"),
+    memory_dir: Path = Path("var/pi-agent/memory"),
     gateway: DashboardCommandGateway | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ByteWolf Command Gateway", version="0.1")
@@ -83,6 +90,30 @@ def create_app(
     @app.post("/api/v1/plans/cancel")
     def cancel(request: PlanRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
         return _handle_gateway(lambda: command_gateway.cancel(_session(x_bytewolf_session), request.plan_id))
+
+    @app.get("/api/v1/memory")
+    def memory(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
+        return list_memory(memory_dir, _session(x_bytewolf_session))
+
+    @app.put("/api/v1/memory/{fact_id}")
+    def correct_memory(
+        fact_id: str, request: MemoryFactRequest, x_bytewolf_session: str = Header(max_length=128)
+    ) -> dict[str, object]:
+        try:
+            return update_memory_fact(
+                memory_dir, _session(x_bytewolf_session), fact_id, category=request.category, fact=request.fact
+            )
+        except MemoryStoreError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.delete("/api/v1/memory/{fact_id}")
+    def erase_memory(fact_id: str, x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
+        try:
+            return delete_memory_fact(memory_dir, _session(x_bytewolf_session), fact_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     web_root = Path(__file__).resolve().parents[1] / "dashboard" / "web"
     app.mount("/", StaticFiles(directory=web_root, html=True), name="dashboard")

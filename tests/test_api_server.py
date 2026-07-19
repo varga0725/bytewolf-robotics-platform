@@ -36,6 +36,8 @@ class ApiServerTests(unittest.TestCase):
         self.assertIn("d.in_air===true", dashboard.text)
         self.assertIn("relative_altitude_m==null", dashboard.text)
         self.assertIn('id="camera-select"', dashboard.text)
+        self.assertIn('id="memory-list"', dashboard.text)
+        self.assertIn("/api/v1/memory", dashboard.text)
         self.assertIn("A státuszkapcsolat megszakadt; újrapróbálom.", dashboard.text)
         self.assertNotIn("A küldetés státusza nem olvasható:", dashboard.text)
         response = self.client.get("/api/v1/telemetry")
@@ -175,6 +177,43 @@ class ApiServerTests(unittest.TestCase):
     def test_rejects_bad_session_identifier(self) -> None:
         response = self.client.post("/api/v1/chat", headers={"X-ByteWolf-Session": "no"}, json={"text": "hello"})
         self.assertEqual(response.status_code, 400)
+
+    def test_session_memory_can_be_inspected_corrected_and_erased(self) -> None:
+        memory_dir = Path(self.directory.name) / "memory"
+        memory_dir.mkdir()
+        memory_dir.joinpath(f"{SESSION}.json").write_text(json.dumps({"facts": [{
+            "id": "fact-1", "category": "preference", "fact": "Baylands", "recorded_at": "2026-07-19T12:00:00Z",
+        }]}), encoding="utf-8")
+        client = TestClient(create_app(self.telemetry, memory_dir=memory_dir))
+        headers = {"X-ByteWolf-Session": SESSION}
+
+        listed = client.get("/api/v1/memory", headers=headers)
+        corrected = client.put("/api/v1/memory/fact-1", headers=headers, json={
+            "category": "preference", "fact": "Baylands legyen az alapértelmezett világ.",
+        })
+        erased = client.delete("/api/v1/memory/fact-1", headers=headers)
+
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()["facts"][0]["fact"], "Baylands")
+        self.assertEqual(corrected.status_code, 200)
+        self.assertEqual(corrected.json()["facts"][0]["fact"], "Baylands legyen az alapértelmezett világ.")
+        self.assertEqual(erased.status_code, 200)
+        self.assertEqual(erased.json()["facts"], [])
+
+    def test_memory_api_refuses_sensitive_or_invalid_updates(self) -> None:
+        memory_dir = Path(self.directory.name) / "memory"
+        memory_dir.mkdir()
+        memory_dir.joinpath(f"{SESSION}.json").write_text(json.dumps({"facts": [{
+            "id": "fact-1", "category": "name", "fact": "Ferenc", "recorded_at": "2026-07-19T12:00:00Z",
+        }]}), encoding="utf-8")
+        client = TestClient(create_app(self.telemetry, memory_dir=memory_dir))
+
+        response = client.put("/api/v1/memory/fact-1", headers={"X-ByteWolf-Session": SESSION}, json={
+            "category": "preference", "fact": "API kulcsom abc",
+        })
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["detail"], "Memory fact is invalid or sensitive.")
 
 
 if __name__ == "__main__":

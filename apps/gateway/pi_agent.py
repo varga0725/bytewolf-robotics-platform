@@ -99,5 +99,5 @@ def _run_pi(request: dict[str, object]) -> Mapping[str, object]:
 
 def _pi_environment(source: Mapping[str, str]) -> dict[str, str]:
     """Pass only model configuration and essential runtime discovery to Pi."""
-    keys = ("PATH", "HOME", "NVIDIA_API_KEY", "NIM_MISSION_MODEL", "NIM_BASE_URL")
+    keys = ("PATH", "HOME", "NVIDIA_API_KEY", "NIM_MISSION_MODEL", "NIM_MEMORY_MODEL", "NIM_BASE_URL")
     return {key: source[key] for key in keys if key in source}
