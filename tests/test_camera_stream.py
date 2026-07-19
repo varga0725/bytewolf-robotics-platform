@@ -17,6 +17,10 @@ from brain.perception.detector import DetectorAdapter
 from brain.perception.jpeg_encoder import is_jpeg
 from brain.perception.png_encoder import encode_frame_to_png, is_png
 from simulation.perception.camera_stream import (
+    FULL_DOWN_CAMERA_TOPIC,
+    FULL_FRONT_CAMERA_TOPIC,
+    _stream_gz_images,
+    camera_topic,
     camera_frame_from_gz_image,
     publish_frame,
 )
@@ -42,6 +46,10 @@ def _detector() -> DetectorAdapter:
 
 
 class FrameDecodeTests(unittest.TestCase):
+    def test_selects_each_unique_full_sensor_camera_topic(self) -> None:
+        self.assertEqual(camera_topic("front", full_sensors=True), FULL_FRONT_CAMERA_TOPIC)
+        self.assertEqual(camera_topic("down", full_sensors=True), FULL_DOWN_CAMERA_TOPIC)
+
     def test_decodes_a_well_formed_gz_image(self) -> None:
         frame = camera_frame_from_gz_image(_gz_image(8, 6), sensor_id="down_rgb", captured_at=_NOW)
 
@@ -56,6 +64,32 @@ class FrameDecodeTests(unittest.TestCase):
 
     def test_rejects_a_message_missing_a_field(self) -> None:
         self.assertIsNone(camera_frame_from_gz_image({"width": 8}, sensor_id="down_rgb", captured_at=_NOW))
+
+    def test_keeps_one_gazebo_subscription_open_for_multiple_frames(self) -> None:
+        class Pipe:
+            def __iter__(self):
+                return iter((json.dumps(_gz_image(2, 1)) + "\n", "not json\n", json.dumps(_gz_image(1, 1)) + "\n"))
+
+        class Process:
+            stdout = Pipe()
+
+            def __init__(self) -> None:
+                self.terminated = False
+
+            def poll(self):
+                return None
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def wait(self, timeout: float) -> None:
+                return None
+
+        process = Process()
+        messages = list(_stream_gz_images("/camera", {}, popen=lambda *_args, **_kwargs: process))
+
+        self.assertEqual([message["width"] for message in messages], [2, 1])
+        self.assertTrue(process.terminated)
 
 
 class PublishTests(unittest.TestCase):

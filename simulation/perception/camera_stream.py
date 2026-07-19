@@ -17,15 +17,13 @@ from __future__ import annotations
 
 import argparse
 import base64
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
 import subprocess
 import time
-
-from collections.abc import Callable as _Callable
 
 from brain.perception.camera_frame import CameraFrame, FrameEncoding
 from brain.perception.colour_marker_backend import ColourMarkerBackend, ColourTarget
@@ -37,14 +35,17 @@ from brain.perception.png_encoder import encode_frame_to_png
 # The live view defaults to JPEG: at 1080p it is an order of magnitude smaller
 # than lossless PNG, which is what keeps the stream smooth. PNG stays available
 # for when an exact, lossless frame is wanted.
-FRAME_ENCODERS: dict[str, _Callable[[CameraFrame], bytes]] = {
+FRAME_ENCODERS: dict[str, Callable[[CameraFrame], bytes]] = {
     "jpeg": encode_frame_to_jpeg,
     "png": encode_frame_to_png,
 }
 
 
-DOWN_CAMERA_TOPIC = "/world/default/model/x500_mono_cam_down_0/link/camera_link/sensor/imager/image"
-FRONT_CAMERA_TOPIC = "/world/default/model/x500_mono_cam_0/link/camera_link/sensor/imager/image"
+# Baylands is the platform's default world.
+DOWN_CAMERA_TOPIC = "/world/baylands/model/x500_mono_cam_down_0/link/camera_link/sensor/imager/image"
+FRONT_CAMERA_TOPIC = "/world/baylands/model/x500_mono_cam_0/link/camera_link/sensor/imager/image"
+FULL_DOWN_CAMERA_TOPIC = "/world/baylands/model/x500_mono_cam_down_0/link/down_camera_link/sensor/down_imager/image"
+FULL_FRONT_CAMERA_TOPIC = "/world/baylands/model/x500_mono_cam_down_0/link/front_camera_link/sensor/front_imager/image"
 # A bright-red marker, the same the ground-truth scenario places; flying over one
 # shows a live detection box on the dashboard.
 DEFAULT_MARKER = ColourTarget(red=220, green=20, blue=20, tolerance=70)
@@ -64,6 +65,15 @@ def camera_frame_from_gz_image(message: dict, *, sensor_id: str, captured_at: da
         sensor_id=sensor_id, encoding=FrameEncoding.RGB8, width=width, height=height,
         data=data, captured_at=captured_at, frame_id=None,
     )
+
+
+def camera_topic(sensor: str, *, full_sensors: bool = False) -> str:
+    """Return the exact Gazebo topic for a selected physical camera."""
+    if sensor not in {"down", "front"}:
+        raise ValueError(f"Unknown camera sensor: {sensor}")
+    if full_sensors:
+        return FULL_DOWN_CAMERA_TOPIC if sensor == "down" else FULL_FRONT_CAMERA_TOPIC
+    return DOWN_CAMERA_TOPIC if sensor == "down" else FRONT_CAMERA_TOPIC
 
 
 def publish_frame(
@@ -102,35 +112,68 @@ def run_camera_stream(
     camera_path.parent.mkdir(parents=True, exist_ok=True)
     detections_path.parent.mkdir(parents=True, exist_ok=True)
 
+    next_publish_at = 0.0
     while keep_going():
-        message = _capture_image(camera_topic, env)
-        frame = None if message is None else camera_frame_from_gz_image(
-            message, sensor_id=sensor_id, captured_at=clock()
-        )
-        if frame is not None:
+        received = False
+        for message in _stream_gz_images(camera_topic, env):
+            received = True
+            if not keep_going():
+                return
+            if time.monotonic() < next_publish_at:
+                continue
+            frame = camera_frame_from_gz_image(message, sensor_id=sensor_id, captured_at=clock())
+            if frame is None:
+                continue
             publish_frame(
                 frame, camera_path=camera_path, detections_path=detections_path,
                 detector=detector, now=clock, encode=encode,
             )
-        time.sleep(period_s)
+            next_publish_at = time.monotonic() + period_s
+        # Gazebo may restart while the dashboard stays open. Retry the read-only
+        # subscription without busy-looping until its topic returns.
+        if keep_going() and not received:
+            time.sleep(min(period_s, 1.0))
 
 
-def _capture_image(topic: str, environment: dict[str, str]) -> dict | None:
+def _stream_gz_images(
+    topic: str,
+    environment: dict[str, str],
+    *,
+    popen: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
+) -> Iterator[dict]:
+    """Yield camera messages from one persistent, read-only Gazebo subscription."""
     try:
-        completed = subprocess.run(
-            ("gz", "topic", "-e", "-t", topic, "--json-output", "-n", "1"),
-            capture_output=True, text=True, timeout=10.0, check=False, env=environment,
+        process = popen(
+            ("gz", "topic", "-e", "-t", topic, "--json-output"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+            env=environment,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    for line in completed.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
+    except OSError:
+        return
+    try:
+        if process.stdout is None:
+            return
+        for raw_line in process.stdout:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(message, dict):
+                yield message
+    finally:
+        if process.poll() is None:
+            process.terminate()
         try:
-            return json.loads(line)
-        except json.JSONDecodeError:
-            continue
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
     return None
 
 
@@ -143,6 +186,7 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
 def main(arguments: tuple[str, ...] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Stream the simulator camera to the read-only dashboard.")
     parser.add_argument("--sensor", choices=("down", "front"), default="down")
+    parser.add_argument("--full-sensors", action="store_true", help="Use the dual-camera + LiDAR X500 profile.")
     parser.add_argument("--format", choices=tuple(FRAME_ENCODERS), default="jpeg")
     parser.add_argument("--camera-file", type=Path, default=None)
     parser.add_argument(
@@ -151,7 +195,7 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
     parser.add_argument("--period-s", type=float, default=0.5)
     parsed = parser.parse_args(arguments)
 
-    topic = DOWN_CAMERA_TOPIC if parsed.sensor == "down" else FRONT_CAMERA_TOPIC
+    topic = camera_topic(parsed.sensor, full_sensors=parsed.full_sensors)
     sensor_id = "down_rgb" if parsed.sensor == "down" else "front_rgb"
     suffix = "jpg" if parsed.format == "jpeg" else "png"
     camera_path = parsed.camera_file or Path(f"simulation/artifacts/dashboard/camera.{suffix}")

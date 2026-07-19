@@ -54,6 +54,18 @@ class TakeoffWaypointLandMission:
 
 
 @dataclass(frozen=True)
+class TakeoffWaypointsLandMission:
+    """A bounded, pre-authorized local route with no skip or retry path."""
+
+    takeoff: TakeoffCommand
+    waypoints: tuple[WaypointCommand, ...]
+    hover_duration_s: float
+    takeoff_settle_seconds: float = 4.0
+    waypoint_tolerance_m: float = 1.0
+    waypoint_timeout_s: float = 30.0
+
+
+@dataclass(frozen=True)
 class TakeoffWaypointSquareLandMission:
     """A bounded four-leg local square, with a confirmed arrival at every corner.
 

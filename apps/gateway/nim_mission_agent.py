@@ -161,9 +161,11 @@ def _request_payload(model: str, request: MissionAgentRequest) -> dict[str, obje
             "Never output MAVLink, PX4, ROS, actuator, motor, shell, or tool commands.",
             "Call propose_mission_spec exactly once. Do not emit prose or a second proposal.",
             "Use exactly one of these executable step shapes:",
-            "1) TAKEOFF, HOLD, LAND; 2) TAKEOFF, GOTO_LOCAL, HOLD, LAND; 3) TAKEOFF, HOLD, RTL.",
+            "1) TAKEOFF, HOLD, LAND; 2) TAKEOFF, one to four GOTO_LOCAL steps, HOLD, LAND; 3) TAKEOFF, HOLD, RTL.",
             "Use exactly one positive HOLD. If the user omits a hold duration, use 3 seconds.",
-            "Do not invent a waypoint. If a local north/east coordinate is absent or ambiguous, return no mission.",
+            "For a request such as Hungarian 'járőrözz egy 10 méteres négyzeten', infer a closed square patrol yourself: four launch-relative GOTO_LOCAL corners (10,0), (10,10), (0,10), (0,0), at the requested altitude. Do not ask the user to spell out those corners. For other ambiguous destinations, do not invent a waypoint.",
+            "For GOTO_LOCAL, down_m must be strictly negative and keep the TAKEOFF altitude: use down_m = -altitude_m, never 0.",
+            "Interpret Hungarian 'előre' / English 'forward' as positive north; 'jobbra' / 'right' as positive east.",
             f"Limits: altitude <= {profile.max_altitude_m:g}m; radius <= {profile.max_radius_m:g}m.",
             "Only propose intent and steps in the tool argument. The gateway, not you, supplies mission ID, vehicle ID, constraints, and abort policy.",
         )
@@ -205,11 +207,11 @@ def _proposal_schema() -> dict[str, object]:
         "additionalProperties": False,
         "required": ["intent", "steps"],
         "properties": {
-            "intent": {"type": "string", "enum": ["test_flight", "inspect_area"]},
+            "intent": {"type": "string", "enum": ["test_flight", "inspect_area", "patrol"]},
             "steps": {
                 "type": "array",
                 "minItems": 3,
-                "maxItems": 4,
+                "maxItems": 7,
                 "items": {
                     "oneOf": [
                         {"type": "object", "additionalProperties": False, "required": ["type", "altitude_m"], "properties": {"type": {"const": "TAKEOFF"}, "altitude_m": {"type": "number", "exclusiveMinimum": 0}}},

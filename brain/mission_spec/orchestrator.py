@@ -10,6 +10,7 @@ from brain.mission.flight import (
     TakeoffHoverLandMission,
     TakeoffReturnToHomeMission,
     TakeoffWaypointLandMission,
+    TakeoffWaypointsLandMission,
 )
 from brain.mission_spec.validation import CompiledMission
 
@@ -26,6 +27,8 @@ class ApprovedMissionAdapter(Protocol):
     def execute_waypoint_mission(
         self, mission: TakeoffWaypointLandMission
     ) -> Awaitable[MissionExecution]: ...
+
+    def execute_waypoints_mission(self, mission: TakeoffWaypointsLandMission) -> Awaitable[MissionExecution]: ...
 
     def execute_return_to_home_mission(
         self, mission: TakeoffReturnToHomeMission
@@ -48,12 +51,16 @@ async def execute_compiled_mission(
             return await adapter.execute(
                 TakeoffHoverLandMission(takeoff=takeoff, hover_duration_s=hold_duration_s)
             )
-        return await adapter.execute_waypoint_mission(
+        if len(intermediate) == 1:
+            return await adapter.execute_waypoint_mission(
             TakeoffWaypointLandMission(
                 takeoff=takeoff,
                 waypoint=intermediate[0],
                 hover_duration_s=hold_duration_s,
             )
+            )
+        return await adapter.execute_waypoints_mission(
+            TakeoffWaypointsLandMission(takeoff=takeoff, waypoints=_route_legs(intermediate), hover_duration_s=hold_duration_s)
         )
 
     return await adapter.execute_return_to_home_mission(
@@ -94,9 +101,9 @@ def _supported_shape(
         raise MissionSpecExecutionError("unsupported compiled MissionSpec: HOLD duration must be positive.")
 
     intermediate = commands[1:-1]
-    if len(intermediate) > 1 or any(not isinstance(command, WaypointCommand) for command in intermediate):
+    if len(intermediate) > 4 or any(not isinstance(command, WaypointCommand) for command in intermediate):
         raise MissionSpecExecutionError(
-            "unsupported compiled MissionSpec: only one local waypoint is supported."
+            "unsupported compiled MissionSpec: at most four local waypoints are supported."
         )
     waypoints = tuple(command for command in intermediate if isinstance(command, WaypointCommand))
     if isinstance(terminal, ReturnToHomeCommand) and waypoints:
@@ -104,3 +111,12 @@ def _supported_shape(
             "unsupported compiled MissionSpec: RTL after a waypoint has no approved adapter path."
         )
     return commands[0], waypoints, terminal, hold_duration_s
+
+
+def _route_legs(points: tuple[WaypointCommand, ...]) -> tuple[WaypointCommand, ...]:
+    north = east = 0.0
+    legs: list[WaypointCommand] = []
+    for point in points:
+        legs.append(WaypointCommand(point.north_m - north, point.east_m - east, point.target_altitude_m))
+        north, east = point.north_m, point.east_m
+    return tuple(legs)

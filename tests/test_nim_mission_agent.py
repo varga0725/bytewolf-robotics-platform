@@ -63,6 +63,9 @@ class NIMMissionAgentTests(unittest.TestCase):
         self.assertEqual(result.model, "model")
         self.assertEqual(posted[0]["model"], "model")
         self.assertIn("tools", posted[0])
+        system = posted[0]["messages"][0]["content"]
+        self.assertIn("down_m = -altitude_m", system)
+        self.assertIn("előre", system)
 
     def test_invalid_model_json_is_refused(self) -> None:
         agent = NIMMissionAgent("key", "model", post_json=lambda *_: {"choices": [{"message": {"content": "nope"}}]})

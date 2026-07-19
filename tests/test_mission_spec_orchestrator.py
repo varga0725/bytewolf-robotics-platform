@@ -35,6 +35,10 @@ class RecordingAdapter:
         self.calls.append(("waypoint_land", mission))
         return MissionExecution.empty()
 
+    async def execute_waypoints_mission(self, mission: object) -> MissionExecution:
+        self.calls.append(("waypoints_land", mission))
+        return MissionExecution.empty()
+
     async def execute_return_to_home_mission(self, mission: object) -> MissionExecution:
         self.calls.append(("return_to_home", mission))
         return MissionExecution.empty()
@@ -63,6 +67,12 @@ class MissionSpecOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(adapter.calls[0][0], "waypoint_land")
+
+    async def test_routes_multiple_launch_relative_waypoints_as_safe_legs(self) -> None:
+        adapter = RecordingAdapter()
+        await execute_compiled_mission(adapter, compiled(TakeoffCommand(2.0), WaypointCommand(5, 0, 2), WaypointCommand(5, 5, 2), LandCommand()))
+        self.assertEqual(adapter.calls[0][0], "waypoints_land")
+        self.assertEqual(adapter.calls[0][1].waypoints, (WaypointCommand(5, 0, 2), WaypointCommand(0, 5, 2)))
 
     async def test_routes_a_compiled_takeoff_hold_rtl_to_the_return_path(self) -> None:
         adapter = RecordingAdapter()

@@ -12,12 +12,13 @@ import unittest
 from simulation.gazebo.camera_profiles import (
     CameraProfileError,
     create_camera_overlay,
+    render_named_camera_model,
     render_high_res_mono_cam,
 )
 
 
 _SOURCE = (
-    "<sdf><model name='mono_cam'><link name='l'><sensor name='imager' type='camera'>"
+    "<sdf><model name='mono_cam'><link name=\"camera_link\"><sensor name='imager' type='camera'>"
     "<camera><horizontal_fov>1.74</horizontal_fov><image><width>1280</width><height>960</height></image>"
     "</camera><update_rate>30</update_rate></sensor></link></model></sdf>"
 )
@@ -42,6 +43,12 @@ class RenderTests(unittest.TestCase):
         with self.assertRaisesRegex(CameraProfileError, "positive"):
             render_high_res_mono_cam(_SOURCE, 0, 1080)
 
+    def test_names_a_camera_component_for_a_merged_airframe(self) -> None:
+        rendered = render_named_camera_model(_SOURCE, model_name="bytewolf_front_cam", link_name="front_camera_link")
+
+        self.assertIn("<model name='bytewolf_front_cam'>", rendered)
+        self.assertIn('<link name="front_camera_link">', rendered)
+
 
 class CreateOverlayTests(unittest.TestCase):
     def test_writes_an_overlay_and_leaves_the_source_untouched(self) -> None:
@@ -61,6 +68,27 @@ class CreateOverlayTests(unittest.TestCase):
             self.assertTrue((models_root / "mono_cam" / "model.config").is_file())
             # PX4's source model is not modified.
             self.assertEqual(source_sdf.read_text(encoding="utf-8"), _SOURCE)
+
+    def test_full_sensor_overlay_combines_down_camera_and_lidar(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_models = root / "px4-models"
+            (source_models / "mono_cam").mkdir(parents=True)
+            (source_models / "mono_cam" / "model.sdf").write_text(_SOURCE, encoding="utf-8")
+            overlay = root / "overlay"
+
+            create_camera_overlay(source_models, overlay, include_lidar_2d=True)
+
+            model = (overlay / "x500_mono_cam_down" / "model.sdf").read_text(encoding="utf-8")
+            self.assertIn('<link name="front_camera_link">', model)
+            self.assertIn('<link name="down_camera_link">', model)
+            self.assertIn('<pose relative_to="base_link">.18 0 .04 0 0 0</pose>', model)
+            self.assertIn('<pose relative_to="base_link">0 0 -.08 0 1.5707 0</pose>', model)
+            self.assertIn('<uri>model://lidar_2d_v2</uri><pose>.12 0 .26 0 0 0</pose>', model)
+            self.assertIn('<pose relative_to="base_link">.12 0 .26 0 0 0</pose>', model)
+            self.assertIn("sensor name='front_imager'", model)
+            self.assertIn("sensor name='down_imager'", model)
+            self.assertIn("model://lidar_2d_v2", model)
 
 
 if __name__ == "__main__":

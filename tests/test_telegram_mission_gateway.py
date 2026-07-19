@@ -2,7 +2,7 @@
 
 import unittest
 
-from apps.gateway.telegram_mission_gateway import ConversationReply, TelegramMissionGateway
+from apps.gateway.telegram_mission_gateway import _converse_with_nim, ConversationReply, TelegramMissionGateway
 
 
 class TelegramMissionGatewayTests(unittest.TestCase):
@@ -62,6 +62,12 @@ class TelegramMissionGatewayTests(unittest.TestCase):
 
         self.assertEqual(self.reviewed, [])
         self.assertEqual(self.sent, [])
+
+    def test_clear_vertical_request_bypasses_ambiguous_conversation_routing(self) -> None:
+        reply = _converse_with_nim("emelkedj fel 2 méterre")
+
+        self.assertTrue(reply.requests_drone_action)
+        self.assertIn("biztonságos tervet", reply.text)
 
 
 def _update(

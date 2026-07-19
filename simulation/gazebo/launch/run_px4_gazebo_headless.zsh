@@ -7,7 +7,7 @@ PROJECT_ROOT=${SCRIPT_DIR:h:h:h}
 PX4_ROOT=${PX4_ROOT:-${PROJECT_ROOT}/PX4-Autopilot}
 PX4_ROOT=${PX4_ROOT:A}
 PROFILE=${1:-base}
-WORLD=${PX4_GZ_WORLD:-default}
+WORLD=${PX4_GZ_WORLD:-baylands}
 
 case "$PROFILE" in
   base) TARGET=gz_x500 ;;

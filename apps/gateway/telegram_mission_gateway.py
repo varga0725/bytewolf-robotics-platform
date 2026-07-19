@@ -28,6 +28,7 @@ from apps.gateway.nim_mission_agent import DEFAULT_NIM_BASE_URL, NIMMissionAgent
 _TELEGRAM_API = "https://api.telegram.org"
 _MAX_MESSAGE_CHARS = 2_000
 _PLAN_NAME = re.compile(r"^[0-9a-f-]{36}\.mission-spec\.json$")
+_DIRECT_VERTICAL_FLIGHT = re.compile(r"\b(emelkedj|szállj\s+fel|szallj\s+fel|lebegj|szállj\s+le|szallj\s+le)\b", re.IGNORECASE)
 _DEFAULT_PLAN_DIRECTORY = Path("simulation/artifacts/agent-missions")
 _execution_lock = Lock()
 _active_execution: subprocess.Popen[bytes] | None = None
@@ -232,13 +233,20 @@ class TelegramClient:
 
 
 def _review_with_cli(prompt: str) -> str:
-    completed = subprocess.run(
-        [sys.executable, "-m", "brain.cli.fly_nim_mission", "--command", prompt],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=45,
-    )
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-m", "brain.cli.fly_nim_mission", "--command", prompt],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=45,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise TelegramGatewayError("A küldetéstervezés időtúllépés miatt nem készült el; a drón nem kapott parancsot.") from error
+    except subprocess.CalledProcessError as error:
+        # The subprocess stderr may contain implementation details.  Keep those
+        # in local logs while returning a stable, credential-safe boundary error.
+        raise TelegramGatewayError("A küldetéstervezés elutasítva vagy nem elérhető; a drón nem kapott parancsot.") from error
     match = re.search(r"^Reviewed plan: (.+)$", completed.stdout, flags=re.MULTILINE)
     if match is None:
         raise TelegramGatewayError("Mission review did not produce a plan.")
@@ -256,6 +264,13 @@ def _converse_with_nim(text: str) -> ConversationReply:
     access PX4. The Telegram state machine still requires the user's later
     natural-language confirmation.
     """
+    # The route decision is not a flight authorization.  Still, do not let a
+    # conversational model turn a clear vertical SITL request into an invented
+    # destination question; the downstream NIM Mission Agent and safety gates
+    # remain responsible for producing and approving the actual plan.
+    if _DIRECT_VERTICAL_FLIGHT.search(text):
+        return ConversationReply("Rendben, készítek egy biztonságos tervet a szimulációs felszálláshoz.", True)
+
     agent = NIMMissionAgent.from_environment()
     payload = {
         "model": agent._model,

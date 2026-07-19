@@ -35,6 +35,22 @@ class SimulationConfigurationTests(unittest.TestCase):
             "gz_x500_lidar_2d",
         ):
             self.assertIn(target, launcher)
+        self.assertIn("WORLD=${PX4_GZ_WORLD:-baylands}", launcher)
+
+    def test_visual_baylands_launch_sets_a_safe_spawn_pose_and_isolates_px4_state(self) -> None:
+        """Baylands has no flat collision surface at the world origin."""
+        launcher = (ROOT / "simulation/gazebo/launch/run_px4_gazebo.zsh").read_text()
+
+        self.assertIn('PX4_GZ_MODEL_POSE=${PX4_GZ_MODEL_POSE:-205,155,2,0,0,0}', launcher)
+        self.assertIn('PX4_RUN_DIR=${PX4_RUN_DIR:-$(mktemp -d', launcher)
+        self.assertIn('"$PX4_BINARY" -d -w "$PX4_RUN_DIR"', launcher)
+
+    def test_headless_and_validation_default_to_baylands(self) -> None:
+        for script in (
+            "simulation/gazebo/launch/run_px4_gazebo_headless.zsh",
+            "simulation/gazebo/launch/validate_px4_gazebo.zsh",
+        ):
+            self.assertIn("WORLD=${PX4_GZ_WORLD:-baylands}", (ROOT / script).read_text())
 
     def test_validation_script_checks_required_native_dependencies(self) -> None:
         validator = (ROOT / "simulation/gazebo/launch/validate_px4_gazebo.zsh").read_text()

@@ -140,6 +140,22 @@ class UnhealthyTelemetry(FakeTelemetry):
     async def health(self):
         yield Health(global_position_ok=False, home_position_ok=True)
 
+    async def home(self):
+        yield Position(latitude=float("nan"))
+
+
+class SilentHealthTelemetry(FakeTelemetry):
+    async def health(self):
+        await asyncio.sleep(60)
+        if False:
+            yield Health(global_position_ok=True, home_position_ok=True)
+
+
+class SilentHealthDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = SilentHealthTelemetry()
+
 
 class UnhealthyDrone(FakeDrone):
     def __init__(self) -> None:
@@ -343,10 +359,33 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
         adapter = MavsdkMissionAdapter(drone)
         mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
 
-        with self.assertRaisesRegex(MissionPreflightError, "health"):
+        with self.assertRaisesRegex(MissionPreflightError, "navigation health"):
             await adapter.execute(mission)
 
         self.assertEqual(drone.events, [])
+
+    async def test_rejects_unhealthy_navigation_even_when_position_values_are_finite(self) -> None:
+        drone = FakeDrone()
+
+        async def unhealthy_health():
+            yield Health(global_position_ok=False, home_position_ok=True)
+
+        drone.telemetry.health = unhealthy_health
+        adapter = MavsdkMissionAdapter(drone)
+
+        with self.assertRaisesRegex(MissionPreflightError, "navigation health"):
+            await adapter.verify_preflight()
+
+        self.assertEqual(drone.events, [])
+
+    async def test_uses_current_home_and_position_when_health_stream_is_silent(self) -> None:
+        drone = SilentHealthDrone()
+        adapter = MavsdkMissionAdapter(drone, preflight_wait_s=0.01, sleep=asyncio.sleep)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.0)
+
+        await adapter.execute(mission)
+
+        self.assertIn("arm", drone.events)
 
     async def test_rejects_battery_below_the_safety_profile_before_any_action(self) -> None:
         drone = FakeDrone()

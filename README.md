@@ -128,6 +128,15 @@ CLI. It never sends MAVLink/PX4 commands itself. Configure an explicit chat-ID
 allowlist before starting it; see
 [`docs/telegram-mission-gateway-v0_1.md`](docs/telegram-mission-gateway-v0_1.md).
 
+## Dashboard Control Room
+
+The dashboard is now served by the local FastAPI Command Gateway, shared with
+the future mobile client. It combines live telemetry, camera evidence, a
+Pi SDK/NVIDIA NIM conversational agent with durable local sessions, and
+explicit mission approval; see [`apps/api/README.md`](apps/api/README.md) and
+[`docs/pi-agent-v0_1.md`](docs/pi-agent-v0_1.md) for the local run command and
+the safety boundary.
+
 These tests use fake MAVSDK/PX4 collaborators; they do not launch or validate
 PX4 SITL and Gazebo. Run the mission commands below separately against a
 running simulator for manual integration verification.

@@ -1,0 +1,16 @@
+{
+  "started_at": "2026-07-19T08:51:56.639185Z",
+  "verification_level": "app-sitl",
+  "sensor": "gz_x500_mono_cam_down",
+  "marker_world_xy_m": [
+    2.0,
+    3.0
+  ],
+  "target_detected": false,
+  "move_approved": false,
+  "refusal_reason": null,
+  "final_offset_to_marker_m": null,
+  "tolerance_m": 2.0,
+  "verdict": "no_move",
+  "detail": "No move was proposed, so the vehicle stayed put. No trustworthy target was seen."
+}

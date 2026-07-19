@@ -38,9 +38,9 @@ stream smooth; pass `--format png` for a lossless frame:
 Serve the dashboard with those files (another terminal):
 
 ```zsh
-.venv/bin/python -m apps.dashboard.server \
+.venv/bin/python -m apps.api.server \
   --telemetry-file simulation/artifacts/dashboard/live-telemetry.json \
-  --camera-file simulation/artifacts/dashboard/camera.png \
+  --camera-file simulation/artifacts/dashboard/camera.jpg \
   --detections-file simulation/artifacts/dashboard/detections.json
 ```
 

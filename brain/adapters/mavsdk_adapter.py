@@ -16,6 +16,7 @@ from brain.mission.flight import (
     TakeoffReturnToHomeMission,
     TakeoffTargetApproachLandMission,
     TakeoffWaypointLandMission,
+    TakeoffWaypointsLandMission,
     TakeoffWaypointSquareLandMission,
 )
 from brain.mission.runtime_policy import RuntimePolicy, load_runtime_policy
@@ -277,6 +278,28 @@ class MavsdkMissionAdapter:
             raise
         return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
 
+    async def execute_waypoints_mission(self, mission: TakeoffWaypointsLandMission) -> MissionExecution:
+        """Visit every approved local route point; one failure lands immediately."""
+        await self._require_preflight()
+        execution = self._begin_execution()
+        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+        airborne = False
+        try:
+            await self._drone.action.arm(); execution = self._record(execution, MissionPhase.TAKING_OFF)
+            await self._drone.action.takeoff(); airborne = True
+            await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
+            execution = self._record(execution, MissionPhase.NAVIGATING)
+            timeout_s = min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s)
+            for waypoint in mission.waypoints:
+                target = await self.goto_relative_waypoint(waypoint)
+                await self.wait_until_waypoint_reached(target, mission.waypoint_tolerance_m, timeout_s)
+            execution = self._record(execution, MissionPhase.HOVERING)
+            await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
+        except Exception:
+            await self._fallback_land_after_airborne_failure(execution, airborne, self._runtime_policy.landing_confirmation_timeout_s)
+            raise
+        return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
+
     async def execute_waypoint_square_mission(
         self, mission: TakeoffWaypointSquareLandMission
     ) -> MissionExecution:
@@ -368,24 +391,23 @@ class MavsdkMissionAdapter:
         """Verify PX4 telemetry before issuing any configuration or flight command."""
         deadline = asyncio.get_running_loop().time() + self._preflight_wait_s
         health_stream = self._drone.telemetry.health()
-        first_sample = True
+        # A missing refresh is not alone a reason to reject a vehicle: PX4 can
+        # stop publishing Health after it is ready.  A received unhealthy
+        # sample is different: issuing arm after it would merely turn a clear
+        # preflight failure into a COMMAND_DENIED action failure.
+        health = None
         while True:
-            remaining_s = deadline - asyncio.get_running_loop().time()
-            if remaining_s < 0 and not first_sample:
-                raise MissionPreflightError(
-                    "Preflight rejected: health indicates global position or home position is not ready."
-                )
+            remaining = max(deadline - asyncio.get_running_loop().time(), 0.0)
             try:
-                health = await asyncio.wait_for(anext(health_stream), timeout=max(remaining_s, 0.01))
-            except TimeoutError as error:
-                raise MissionPreflightError(
-                    "Preflight rejected: health indicates global position or home position is not ready."
-                ) from error
-            except StopAsyncIteration as error:
-                raise MissionPreflightError("Preflight rejected: health telemetry is unavailable.") from error
+                health = await asyncio.wait_for(anext(health_stream), timeout=min(5.0, max(remaining, 0.01)))
+            except (TimeoutError, StopAsyncIteration):
+                break
             if self._has_required_navigation_health(health):
                 break
-            first_sample = False
+            if remaining <= 0:
+                raise MissionPreflightError(
+                    "Preflight rejected: navigation health reports that global position or home is unavailable."
+                )
 
         home = await self._first_telemetry_sample(self._drone.telemetry.home(), "home")
         self._require_global_position(home, "home")
