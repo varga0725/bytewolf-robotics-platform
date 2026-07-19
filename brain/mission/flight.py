@@ -71,6 +71,25 @@ class TakeoffWaypointSquareLandMission:
 
 
 @dataclass(frozen=True)
+class TakeoffTargetApproachLandMission:
+    """Take off, search for a ground target, and move to it only if one is approved.
+
+    Unlike a waypoint mission, the move is not fixed at authorize time. This
+    mission fixes only the bounded envelope of the search -- the takeoff, the
+    capture-settle before looking, the hover, and the arrival tolerance and
+    timeout. The waypoint itself is discovered from the camera at hover and
+    re-checked by the SafetyGate then, so whether any move happens at all is a
+    live perception decision, not something pre-authorized here.
+    """
+
+    takeoff: TakeoffCommand
+    hover_duration_s: float
+    capture_settle_seconds: float = 4.0
+    waypoint_tolerance_m: float = 1.5
+    waypoint_timeout_s: float = 40.0
+
+
+@dataclass(frozen=True)
 class TakeoffReturnToHomeMission:
     """Take off, briefly hover, then ask PX4 to return to launch and land."""
 
@@ -204,6 +223,40 @@ def authorize_takeoff_waypoint_square_land(
         takeoff=takeoff,
         waypoints=(legs[0], legs[1], legs[2], legs[3]),
         hover_duration_s=hover_duration_s,
+        waypoint_tolerance_m=waypoint_tolerance_m,
+        waypoint_timeout_s=waypoint_timeout_s,
+    )
+
+
+def authorize_takeoff_target_approach_land(
+    gate: SafetyGate,
+    takeoff_altitude_m: float,
+    hover_duration_s: float,
+    capture_settle_seconds: float = 4.0,
+    waypoint_tolerance_m: float = 1.5,
+    waypoint_timeout_s: float = 40.0,
+) -> TakeoffTargetApproachLandMission:
+    """Authorize the search envelope for an autonomous target approach.
+
+    Only the takeoff and the timing are validated here; the approach waypoint is
+    discovered live and re-checked by the SafetyGate at that moment, so it is not
+    pre-authorized. This keeps the "perception proposes, safety decides" seam
+    intact -- there is no move in this mission until the camera finds one.
+    """
+    if not isfinite(hover_duration_s) or hover_duration_s <= 0.0:
+        raise MissionValidationError("Hover duration must be a positive, finite number of seconds.")
+    if not isfinite(capture_settle_seconds) or capture_settle_seconds < 0.0:
+        raise MissionValidationError("Capture-settle duration must be a finite non-negative number of seconds.")
+    if not isfinite(waypoint_tolerance_m) or waypoint_tolerance_m <= 0.0:
+        raise MissionValidationError("Waypoint tolerance must be a positive, finite number of metres.")
+    if not isfinite(waypoint_timeout_s) or waypoint_timeout_s <= 0.0:
+        raise MissionValidationError("Waypoint timeout must be a positive, finite number of seconds.")
+    takeoff = TakeoffCommand(target_altitude_m=takeoff_altitude_m)
+    gate.evaluate(takeoff)
+    return TakeoffTargetApproachLandMission(
+        takeoff=takeoff,
+        hover_duration_s=hover_duration_s,
+        capture_settle_seconds=capture_settle_seconds,
         waypoint_tolerance_m=waypoint_tolerance_m,
         waypoint_timeout_s=waypoint_timeout_s,
     )

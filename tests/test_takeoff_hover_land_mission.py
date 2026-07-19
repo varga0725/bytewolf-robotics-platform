@@ -4,6 +4,7 @@ from brain.mission.flight import (
     MissionValidationError,
     authorize_takeoff_hover_land,
     authorize_takeoff_return_to_home,
+    authorize_takeoff_target_approach_land,
     authorize_takeoff_waypoint_land,
 )
 from brain.safety.gate import FlightLimits, SafetyGate, SafetyViolation
@@ -41,6 +42,29 @@ class TakeoffHoverLandMissionTests(unittest.TestCase):
 
         self.assertEqual(mission.waypoint.north_m, 5.0)
         self.assertEqual(mission.waypoint.target_altitude_m, 2.0)
+
+    def test_authorizes_the_search_envelope_without_pre_authorizing_a_move(self) -> None:
+        mission = authorize_takeoff_target_approach_land(
+            self.gate, takeoff_altitude_m=6.0, hover_duration_s=3.0
+        )
+
+        self.assertEqual(mission.takeoff.target_altitude_m, 6.0)
+        self.assertEqual(mission.hover_duration_s, 3.0)
+        # There is no waypoint on the mission: the move is discovered and
+        # re-checked by the gate live, not fixed here.
+        self.assertFalse(hasattr(mission, "waypoint"))
+
+    def test_rejects_an_unsafe_search_takeoff(self) -> None:
+        with self.assertRaises(SafetyViolation):
+            authorize_takeoff_target_approach_land(self.gate, takeoff_altitude_m=21.0, hover_duration_s=3.0)
+
+    def test_rejects_invalid_search_timing(self) -> None:
+        for duration in (0.0, -1.0, float("nan"), float("inf")):
+            with self.subTest(duration=duration):
+                with self.assertRaises(MissionValidationError):
+                    authorize_takeoff_target_approach_land(
+                        self.gate, takeoff_altitude_m=6.0, hover_duration_s=duration
+                    )
 
     def test_authorizes_a_bounded_return_to_home_mission(self) -> None:
         mission = authorize_takeoff_return_to_home(

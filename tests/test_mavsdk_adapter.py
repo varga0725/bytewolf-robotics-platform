@@ -10,6 +10,7 @@ from brain.mission.execution import MissionPhase
 from brain.mission.flight import (
     TakeoffHoverLandMission,
     TakeoffReturnToHomeMission,
+    TakeoffTargetApproachLandMission,
     TakeoffWaypointLandMission,
 )
 
@@ -437,6 +438,71 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(TimeoutError):
             await adapter.execute(mission)
+
+        self.assertEqual(drone.events.count("land"), 1)
+
+    async def test_target_approach_moves_to_the_proposed_target_then_lands(self) -> None:
+        drone = FakeDrone()
+
+        async def fake_sleep(seconds: float) -> None:
+            drone.events.append(("wait", seconds))
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        # A wide arrival tolerance decouples this from the fake telemetry's fixed
+        # convergence point; the point here is that a proposed move is flown and
+        # confirmed, not the exact geometry (that is checked against ground truth).
+        mission = TakeoffTargetApproachLandMission(
+            takeoff=TakeoffCommand(6.0), hover_duration_s=3.0, capture_settle_seconds=4.0,
+            waypoint_tolerance_m=1_000_000.0,
+        )
+
+        async def propose_move():
+            return WaypointCommand(north_m=2.0, east_m=1.0, target_altitude_m=5.0)
+
+        execution = await adapter.execute_target_approach_mission(mission, propose_move)
+
+        self.assertEqual(drone.events.count("arm"), 1)
+        self.assertEqual(drone.events.count("takeoff"), 1)
+        self.assertEqual(sum(1 for event in drone.events if event[0] == "goto_location"), 1)
+        self.assertEqual(drone.events.count("land"), 1)
+        self.assertIn(MissionPhase.NAVIGATING, tuple(event.phase for event in execution.events))
+        self.assertEqual(execution.events[-1].phase, MissionPhase.COMPLETED)
+
+    async def test_target_approach_makes_no_move_when_perception_proposes_none(self) -> None:
+        drone = FakeDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffTargetApproachLandMission(takeoff=TakeoffCommand(6.0), hover_duration_s=1.0)
+
+        async def propose_no_move():
+            return None
+
+        execution = await adapter.execute_target_approach_mission(mission, propose_no_move)
+
+        # No target was proposed, so no navigation command is ever emitted, but the
+        # vehicle still lands and completes rather than being left airborne.
+        self.assertFalse(any(event[0] == "goto_location" for event in drone.events if isinstance(event, tuple)))
+        self.assertEqual(drone.events.count("land"), 1)
+        self.assertNotIn(MissionPhase.NAVIGATING, tuple(event.phase for event in execution.events))
+        self.assertEqual(execution.events[-1].phase, MissionPhase.COMPLETED)
+
+    async def test_target_approach_lands_once_when_the_proposed_move_fails(self) -> None:
+        drone = FailingWaypointDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffTargetApproachLandMission(takeoff=TakeoffCommand(6.0), hover_duration_s=1.0)
+
+        async def propose_move():
+            return WaypointCommand(north_m=2.0, east_m=1.0, target_altitude_m=5.0)
+
+        with self.assertRaisesRegex(RuntimeError, "navigation command rejected"):
+            await adapter.execute_target_approach_mission(mission, propose_move)
 
         self.assertEqual(drone.events.count("land"), 1)
 

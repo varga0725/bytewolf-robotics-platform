@@ -14,6 +14,7 @@ from brain.mission.flight import (
     TakeoffHoverLandMission,
     TakeoffInterruptLandMission,
     TakeoffReturnToHomeMission,
+    TakeoffTargetApproachLandMission,
     TakeoffWaypointLandMission,
     TakeoffWaypointSquareLandMission,
 )
@@ -224,6 +225,49 @@ class MavsdkMissionAdapter:
                 mission.waypoint_tolerance_m,
                 min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s),
             )
+            execution = self._record(execution, MissionPhase.HOVERING)
+            await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
+        except Exception:
+            await self._fallback_land_after_airborne_failure(
+                execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
+            )
+            raise
+        return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
+
+    async def execute_target_approach_mission(
+        self,
+        mission: TakeoffTargetApproachLandMission,
+        propose_move: Callable[[], Awaitable[WaypointCommand | None]],
+    ) -> MissionExecution:
+        """Take off, ask perception for a move, and visit it only if one is proposed.
+
+        ``propose_move`` is the perception decision, called once the vehicle is
+        airborne and settled. It returns a waypoint the SafetyGate has already
+        approved, or ``None`` to make no move -- a target that was not seen, was
+        too uncertain, or that the gate refused. This adapter never proposes a
+        move of its own: it flies exactly what perception hands it, or nothing,
+        and lands either way. The single airborne-land fallback still covers any
+        failure after takeoff, as in every other mission here.
+        """
+        await self._require_preflight()
+        execution = self._begin_execution()
+        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+        airborne = False
+        try:
+            await self._drone.action.arm()
+            execution = self._record(execution, MissionPhase.TAKING_OFF)
+            await self._drone.action.takeoff()
+            airborne = True
+            await self._sleep_with_runtime_watchdog(mission.capture_settle_seconds)
+            waypoint = await propose_move()
+            if waypoint is not None:
+                execution = self._record(execution, MissionPhase.NAVIGATING)
+                target = await self.goto_relative_waypoint(waypoint)
+                await self.wait_until_waypoint_reached(
+                    target,
+                    mission.waypoint_tolerance_m,
+                    min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s),
+                )
             execution = self._record(execution, MissionPhase.HOVERING)
             await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
         except Exception:

@@ -17,25 +17,20 @@ marker, or that reads no pose, fails closed rather than claiming a match.
 from __future__ import annotations
 
 import argparse
-import base64
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import json
-from math import atan2, degrees, hypot, sqrt
+from math import hypot
 from pathlib import Path
 import subprocess
 import time
 
-from brain.perception.camera_frame import CameraFrame, FrameEncoding
 from brain.perception.colour_marker_backend import ColourMarkerBackend, ColourTarget
 from brain.perception.detector import DetectorAdapter
 from brain.perception.target_estimator import CameraIntrinsics, GroundTargetEstimator
-
-# The mono_cam horizontal FOV is fixed regardless of resolution; intrinsics are
-# built from the captured frame's actual size, so the scenario is correct at
-# PX4's stock 1280x960 and at the 1080p overlay alike.
-MONO_CAM_HORIZONTAL_FOV_RAD = 1.74
+from simulation.perception import gz_scene
+from simulation.perception.gz_scene import MONO_CAM_HORIZONTAL_FOV_RAD
 
 
 # The estimated and true horizontal offset must agree within this, or the sign or
@@ -45,8 +40,7 @@ MATCH_TOLERANCE_M = 1.5
 
 MARKER_RED = ColourTarget(red=220, green=20, blue=20, tolerance=70)
 _MODEL_NAME = "x500_mono_cam_down_0"
-_IMAGE_TOPIC = f"/world/default/model/{_MODEL_NAME}/link/camera_link/sensor/imager/image"
-_POSE_TOPIC = "/world/default/pose/info"
+_IMAGE_TOPIC = gz_scene.image_topic(_MODEL_NAME)
 _LAUNCHER = Path("simulation/gazebo/launch/run_px4_gazebo_headless.zsh")
 # World +X is east, +Y is north; the marker sits off both axes so the sign of
 # each is tested, not just the magnitude.
@@ -134,7 +128,7 @@ def run_ground_truth_scenario(
     mission: subprocess.Popen | None = None
     try:
         sleep(startup_wait_s)
-        _spawn_marker(environment)
+        gz_scene.spawn_marker(environment, xy=MARKER_WORLD_XY)
         mission = subprocess.Popen(
             (
                 _python(), "-m", "brain.cli.fly_takeoff_hover_land",
@@ -159,19 +153,21 @@ def run_ground_truth_scenario(
 def _capture_and_evaluate(hover_altitude_m, environment, clock, sleep) -> GroundTruthReport:
     # Wait for the vehicle to climb near the hover altitude before capturing.
     for _ in range(40):
-        drone = _drone_pose(environment)
+        drone = gz_scene.drone_pose(environment, _MODEL_NAME)
         if drone is not None and drone["z"] >= hover_altitude_m - 1.5:
             break
         sleep(1.0)
     else:
         return _blocked_report("The vehicle never reached the hover altitude to capture from.")
 
-    drone = _drone_pose(environment)
-    marker = _model_xy(environment, "target_marker")
+    drone = gz_scene.drone_pose(environment, _MODEL_NAME)
+    marker = gz_scene.model_xy(environment, "target_marker")
     if drone is None or marker is None:
         return _blocked_report("Could not read the vehicle or marker pose from Gazebo.")
 
-    frame = _capture_frame(clock(), environment)
+    frame = gz_scene.capture_frame(
+        clock(), environment, topic=_IMAGE_TOPIC, sensor_id="down_rgb", frame_id="down-ground-truth"
+    )
     if frame is None:
         return _blocked_report("Could not capture a down-camera frame.")
 
@@ -193,94 +189,6 @@ def _capture_and_evaluate(hover_altitude_m, environment, clock, sleep) -> Ground
     return evaluate_ground_truth(
         observation.offset_north_m, observation.offset_east_m, gt_north, gt_east, altitude_m=drone["z"]
     )
-
-
-def _spawn_marker(environment: dict[str, str]) -> None:
-    x, y = MARKER_WORLD_XY
-    sdf = (
-        f'<sdf version="1.9"><model name="target_marker"><static>true</static>'
-        f'<pose>{x} {y} 0.02 0 0 0</pose><link name="l">'
-        '<visual name="v"><geometry><box><size>1 1 0.04</size></box></geometry>'
-        '<material><ambient>0.86 0.08 0.08 1</ambient><diffuse>0.86 0.08 0.08 1</diffuse>'
-        '<emissive>0.5 0 0 1</emissive></material></visual>'
-        '<collision name="c"><geometry><box><size>1 1 0.04</size></box></geometry></collision>'
-        "</link></model></sdf>"
-    )
-    subprocess.run(
-        (
-            "gz", "service", "-s", "/world/default/create",
-            "--reqtype", "gz.msgs.EntityFactory", "--reptype", "gz.msgs.Boolean",
-            "--timeout", "5000",
-            "--req", f'name: "target_marker", allow_renaming: false, sdf: {json.dumps(sdf)}',
-        ),
-        capture_output=True, text=True, timeout=15.0, check=False, env=environment,
-    )
-
-
-def _capture_frame(captured_at: datetime, environment: dict[str, str]) -> CameraFrame | None:
-    message = _one_message(_IMAGE_TOPIC, environment, timeout=15.0)
-    if message is None:
-        return None
-    try:
-        width = int(message["width"])
-        height = int(message["height"])
-        data = base64.b64decode(message["data"])
-    except (KeyError, ValueError, TypeError):
-        return None
-    if len(data) != width * height * 3:
-        return None
-    return CameraFrame(
-        sensor_id="down_rgb", encoding=FrameEncoding.RGB8, width=width, height=height,
-        data=data, captured_at=captured_at, frame_id="down-ground-truth",
-    )
-
-
-def _drone_pose(environment: dict[str, str]) -> dict | None:
-    message = _one_message(_POSE_TOPIC, environment, timeout=10.0)
-    for pose in (message or {}).get("pose", []):
-        if pose.get("name") == _MODEL_NAME:
-            position = pose.get("position", {})
-            orientation = pose.get("orientation", {})
-            qx, qy, qz, qw = (orientation.get(k, 0.0) for k in ("x", "y", "z", "w"))
-            yaw = degrees(atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)))
-            tilt = degrees(2 * atan2(sqrt(qx * qx + qy * qy), sqrt(qz * qz + qw * qw)))
-            tilt = min(tilt, 180 - tilt)
-            return {
-                "x": float(position.get("x", 0.0)),
-                "y": float(position.get("y", 0.0)),
-                "z": float(position.get("z", 0.0)),
-                "yaw_deg": yaw,
-                "tilt_deg": abs(tilt),
-            }
-    return None
-
-
-def _model_xy(environment: dict[str, str], name: str) -> tuple[float, float] | None:
-    message = _one_message(_POSE_TOPIC, environment, timeout=10.0)
-    for pose in (message or {}).get("pose", []):
-        if pose.get("name") == name:
-            position = pose.get("position", {})
-            return float(position.get("x", 0.0)), float(position.get("y", 0.0))
-    return None
-
-
-def _one_message(topic: str, environment: dict[str, str], *, timeout: float) -> dict | None:
-    try:
-        completed = subprocess.run(
-            ("gz", "topic", "-e", "-t", topic, "--json-output", "-n", "1"),
-            capture_output=True, text=True, timeout=timeout, check=False, env=environment,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    for line in completed.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            return json.loads(line)
-        except json.JSONDecodeError:
-            continue
-    return None
 
 
 def _write_report(report: GroundTruthReport, output_directory: Path, now: Callable[[], datetime]) -> Path:
