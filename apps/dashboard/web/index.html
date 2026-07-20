@@ -4,30 +4,418 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ByteWolf Control Room</title>
   <style>
-    :root{font-family:Inter,system-ui,sans-serif;color:#e9f0f4;background:#07131b}*{box-sizing:border-box}body{margin:0}.shell{max-width:1440px;margin:auto;padding:24px}.top{display:flex;align-items:center;justify-content:space-between}.brand{font-weight:800;font-size:24px}.brand span{color:#60d7bf}.badge{padding:7px 10px;border-radius:20px;background:#142b32;color:#8ee5d2;font-size:13px}.layout{display:grid;grid-template-columns:1.4fr .9fr;gap:18px;margin-top:18px}.panel{background:#0d2029;border:1px solid #1e3b45;border-radius:16px;padding:18px}.telemetry{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{background:#102831;padding:12px;border-radius:10px}.metric b{display:block;font-size:20px;margin-top:7px}.label{font-size:12px;color:#9ab1bb;text-transform:uppercase;letter-spacing:.06em}.camera{margin-top:18px;min-height:330px}.camera-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.camera-select,.memory-edit select,.memory-edit input{background:#09171d;border:1px solid #315461;border-radius:8px;color:#e9f0f4;padding:7px}.camera-frame{position:relative;background:#03080b;border-radius:12px;overflow:hidden;min-height:280px}.camera img{display:block;width:100%;max-height:520px;object-fit:contain}.camera img[hidden]{display:none}.camera svg{inset:0;position:absolute;width:100%;height:100%;pointer-events:none}.camera rect{fill:transparent;stroke:#60d7bf;stroke-width:3}.camera text{fill:#061214;font-size:16px;font-weight:800;paint-order:stroke;stroke:#60d7bf;stroke-width:4;stroke-linejoin:round}.camera-status{color:#9ab1bb;font-size:14px}.chat{display:flex;flex-direction:column;min-height:650px}.messages{flex:1;overflow:auto}.message{padding:12px;border-radius:12px;margin:10px 0;white-space:pre-wrap}.assistant{background:#173842}.user{background:#23536a;margin-left:12%}.composer{display:flex;gap:8px;margin-top:14px}.composer input{flex:1;background:#09171d;border:1px solid #315461;border-radius:10px;padding:13px;color:white}.button{border:0;border-radius:10px;padding:11px 14px;background:#54d4b5;color:#032019;font-weight:800;cursor:pointer}.button.small{padding:6px 9px;font-size:12px}.button.cancel{background:#263e48;color:#dce9ed}.button.danger{background:#4a2630;color:#ffe4e7}.approval{border:1px solid #d9a84d;background:#332819;padding:14px;border-radius:12px;margin-top:12px}.memory{margin-top:18px;border-top:1px solid #1e3b45;padding-top:14px}.memory-head{display:flex;align-items:center;justify-content:space-between}.memory-note{color:#9ab1bb;font-size:13px;margin:7px 0}.memory-list{display:grid;gap:7px}.memory-item{background:#102831;border-radius:9px;padding:9px}.memory-item-head{display:flex;align-items:center;gap:7px}.memory-category{font-size:11px;color:#8ee5d2;text-transform:uppercase;letter-spacing:.06em}.memory-fact{flex:1}.memory-actions{margin-left:auto;display:flex;gap:5px}.memory-edit{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.memory-edit input{flex:1;min-width:160px}.hidden{display:none}@media(max-width:900px){.layout{grid-template-columns:1fr}.telemetry{grid-template-columns:repeat(2,1fr)}}
+    :root{font-family:Inter,system-ui,sans-serif;color:#e9f0f4;background:#07131b}
+    *{box-sizing:border-box}body{margin:0}
+    .shell{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
+    .sidebar{background:#0a1a22;border-right:1px solid #1e3b45;padding:20px 14px;display:flex;flex-direction:column;gap:16px}
+    .brand{font-weight:800;font-size:21px;padding:0 8px}.brand span{color:#60d7bf}
+    .nav{display:grid;gap:4px}
+    .nav button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:0;border-radius:10px;padding:11px 12px;background:transparent;color:#b9ccd4;font-size:14px;font-weight:600;cursor:pointer}
+    .nav button:hover{background:#102831;color:#e9f0f4}
+    .nav button[aria-current="page"]{background:#173842;color:#8ee5d2}
+    .nav-icon{width:18px;text-align:center}
+    .sidebar-foot{margin-top:auto;display:grid;gap:8px}
+    .badge{padding:7px 10px;border-radius:20px;background:#142b32;color:#8ee5d2;font-size:12px;text-align:center}
+    .content{padding:24px;max-width:1280px}
+    .page{display:none}.page[data-active="true"]{display:block}
+    .page-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:16px}
+    .page-title{font-size:22px;font-weight:800}
+    .panel{background:#0d2029;border:1px solid #1e3b45;border-radius:16px;padding:18px}
+    .panel+.panel{margin-top:16px}
+    .split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .split>.panel+.panel{margin-top:0}
+    .telemetry{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+    .metric{background:#102831;padding:12px;border-radius:10px}.metric b{display:block;font-size:20px;margin-top:7px}
+    .label{font-size:12px;color:#9ab1bb;text-transform:uppercase;letter-spacing:.06em}
+    .camera-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .camera-select,.memory-edit select,.memory-edit input{background:#09171d;border:1px solid #315461;border-radius:8px;color:#e9f0f4;padding:7px}
+    .camera-frame{position:relative;background:#03080b;border-radius:12px;overflow:hidden;min-height:280px}
+    .camera img{display:block;width:100%;max-height:620px;object-fit:contain}.camera img[hidden]{display:none}
+    .camera svg{inset:0;position:absolute;width:100%;height:100%;pointer-events:none}
+    .camera rect{fill:transparent;stroke:#60d7bf;stroke-width:3}
+    .camera text{fill:#061214;font-size:16px;font-weight:800;paint-order:stroke;stroke:#60d7bf;stroke-width:4;stroke-linejoin:round}
+    .camera-status{color:#9ab1bb;font-size:14px}
+    .chat{display:flex;flex-direction:column;height:calc(100vh - 150px)}
+    .messages{flex:1;overflow:auto}
+    .message{padding:12px;border-radius:12px;margin:10px 0;white-space:pre-wrap}
+    .assistant{background:#173842}.user{background:#23536a;margin-left:12%}
+    .composer{display:flex;gap:8px;margin-top:14px}
+    .composer input{flex:1;background:#09171d;border:1px solid #315461;border-radius:10px;padding:13px;color:white}
+    .button{border:0;border-radius:10px;padding:11px 14px;background:#54d4b5;color:#032019;font-weight:800;cursor:pointer}
+    .button.small{padding:6px 9px;font-size:12px}
+    .button.cancel{background:#263e48;color:#dce9ed}
+    .button.danger{background:#4a2630;color:#ffe4e7}
+    .approval{border:1px solid #d9a84d;background:#332819;padding:14px;border-radius:12px;margin-top:12px}
+    .memory-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .memory-note{color:#9ab1bb;font-size:13px;margin:7px 0}
+    .memory-list{display:grid;gap:7px}
+    .memory-item{background:#102831;border-radius:9px;padding:9px}
+    .memory-item-head{display:flex;align-items:center;gap:7px}
+    .memory-category{font-size:11px;color:#8ee5d2;text-transform:uppercase;letter-spacing:.06em}
+    .memory-fact{flex:1}
+    .memory-actions{margin-left:auto;display:flex;gap:5px}
+    .memory-edit{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+    .memory-edit input{flex:1;min-width:160px}
+    .boundary{border:1px solid #315461;background:#102831;border-radius:12px;padding:12px;color:#b9ccd4;font-size:13px;margin-bottom:14px}
+    .graph,.map{width:100%;background:#03080b;border-radius:12px}
+    .graph{height:340px}.map{height:420px}
+    .graph line{stroke:#2c5563;stroke-width:1.5}
+    .graph circle{stroke:#0d2029;stroke-width:2}
+    .graph text{font-size:11px;fill:#cfe1e8}
+    .map rect.cell{fill:#54d4b5;opacity:.75}
+    .map rect.cell.disputed{fill:#d9a84d}
+    .map line.axis{stroke:#1e3b45;stroke-width:1}
+    .map text{font-size:11px;fill:#9ab1bb}
+    .legend{display:flex;gap:14px;flex-wrap:wrap;color:#9ab1bb;font-size:12px;margin-top:10px}
+    .swatch{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+    .hidden{display:none}
+    @media(max-width:900px){.shell{grid-template-columns:1fr}.sidebar{flex-direction:row;flex-wrap:wrap}.nav{grid-auto-flow:column}.split{grid-template-columns:1fr}.telemetry{grid-template-columns:repeat(2,1fr)}}
   </style>
 </head>
-<body><main class="shell">
-  <header class="top"><div class="brand">Byte<span>Wolf</span> Control Room</div><div id="health" class="badge">Telemetria betöltése…</div></header>
-  <div class="layout"><section><div class="panel"><div class="label">Élő állapot</div><div class="telemetry"><div class="metric"><span class="label">Repülés</span><b id="flight">—</b></div><div class="metric"><span class="label">Magasság</span><b id="altitude">—</b></div><div class="metric"><span class="label">Akkumulátor</span><b id="battery">—</b></div><div class="metric"><span class="label">Pozíció</span><b id="position">—</b></div></div></div><section class="panel camera"><div class="camera-head"><div class="label">Drón szemszög</div><label class="label" for="camera-select">Kamera <select id="camera-select" class="camera-select"><option value="front">Első</option><option value="down">Alsó</option></select></label></div><div class="camera-frame"><img id="camera" alt="Élő drónkamera" hidden><svg id="detection-overlay" aria-label="Észlelési jelölések"></svg></div><p id="camera-note" class="camera-status">Kamera streamre várok…</p></section></section>
-  <section class="panel chat"><div class="label">Beszélgetés ByteWolf-fal</div><div id="messages" class="messages"><div class="message assistant">Szia! Figyelem a szimulációt. Mit nézzek meg, vagy milyen küldetést tervezzek?</div></div><div id="approval" class="approval hidden"><b>Jóváhagyás szükséges</b><p>A terv biztonsági ellenőrzésen átment. Indítsam a szimulációban?</p><button id="approve" class="button">Indítás</button> <button id="cancel" class="button cancel">Mégse</button></div><form id="composer" class="composer"><input id="prompt" placeholder="Beszélj ByteWolf-fal…" autocomplete="off"><button class="button">Küldés</button></form><section class="memory" aria-labelledby="memory-title"><div class="memory-head"><div id="memory-title" class="label">Amit rólad megjegyeztem</div><button id="refresh-memory" class="button cancel small" type="button">Frissítés</button></div><p id="memory-note" class="memory-note">Csak jóváhagyott, nem érzékeny emlékek. Javíthatod vagy törölheted őket.</p><div id="memory-list" class="memory-list"></div></section></section></div>
-</main><script>
-const session=localStorage.bytewolfSession||(localStorage.bytewolfSession=crypto.randomUUID());let pending=null;let cameraUrl=null;let cameraSensor='front';let cameraEtag=null;let cameraRefreshing=false;let statusTimer=null;const headers={'Content-Type':'application/json','X-ByteWolf-Session':session};const $=id=>document.getElementById(id);const add=(text,kind)=>{const e=document.createElement('div');e.className='message '+kind;e.textContent=text;$('messages').append(e);$('messages').scrollTop=$('messages').scrollHeight};
-async function api(path,body,method='POST'){const r=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw Error(d.detail||'A kérés sikertelen');return d}async function send(text){add(text,'user');try{const d=await api('/api/v1/chat',{text});add(d.text,'assistant');pending=d.approval_required?d.plan_id:null;$('approval').classList.toggle('hidden',!pending);refreshMemory()}catch(e){add('Hiba: '+e.message,'assistant')}}
-$('composer').addEventListener('submit',e=>{e.preventDefault();const text=$('prompt').value.trim();if(text){$('prompt').value='';send(text)}});async function monitorPlan(planId){if(statusTimer)clearInterval(statusTimer);let terminal=false;let connectionWarningShown=false;const check=async()=>{try{const r=await fetch(`/api/v1/plans/${planId}/status`,{cache:'no-store'});const d=await r.json();if(!r.ok){if(r.status>=400&&r.status<500){terminal=true;clearInterval(statusTimer);statusTimer=null;add('A küldetés státusza nem érvényes: '+(d.detail||'ismeretlen terv'),'assistant');return}throw Error(d.detail||'Státusz nem elérhető')}connectionWarningShown=false;if(d.status==='completed'||d.status==='failed'){terminal=true;clearInterval(statusTimer);statusTimer=null;add(d.message,'assistant')}}catch{if(!connectionWarningShown){connectionWarningShown=true;add('A státuszkapcsolat megszakadt; újrapróbálom.','assistant')}}};await check();if(!terminal)statusTimer=setInterval(check,1000)}$('approve').onclick=async()=>{try{const d=await api('/api/v1/plans/approve',{plan_id:pending});add(d.text,'assistant');monitorPlan(d.plan_id)}catch(e){add('Hiba: '+e.message,'assistant')}pending=null;$('approval').classList.add('hidden')};$('cancel').onclick=async()=>{try{const d=await api('/api/v1/plans/cancel',{plan_id:pending});add(d.text,'assistant')}catch(e){add('Hiba: '+e.message,'assistant')}pending=null;$('approval').classList.add('hidden')};
- $('composer').addEventListener('submit',e=>{e.preventDefault();const text=$('prompt').value.trim();if(text){$('prompt').value='';send(text)}});async function monitorPlan(planId){if(statusTimer)clearInterval(statusTimer);let terminal=false;let connectionWarningShown=false;const check=async()=>{try{const r=await fetch(`/api/v1/plans/${planId}/status`,{cache:'no-store'});const d=await r.json();if(!r.ok){if(r.status>=400&&r.status<500){terminal=true;clearInterval(statusTimer);statusTimer=null;add('A küldetés státusza nem érvényes: '+(d.detail||'ismeretlen terv'),'assistant');return}throw Error(d.detail||'Státusz nem elérhető')}connectionWarningShown=false;if(d.status==='completed'||d.status==='failed'){terminal=true;clearInterval(statusTimer);statusTimer=null;add(d.message,'assistant')}}catch{if(!connectionWarningShown){connectionWarningShown=true;add('A státuszkapcsolat megszakadt; újrapróbálom.','assistant')}}};await check();if(!terminal)statusTimer=setInterval(check,1000)}$('approve').onclick=async()=>{try{const d=await api('/api/v1/plans/approve',{plan_id:pending});add(d.text,'assistant');monitorPlan(d.plan_id)}catch(e){add('Hiba: '+e.message,'assistant')}pending=null;$('approval').classList.add('hidden')};$('cancel').onclick=async()=>{try{const d=await api('/api/v1/plans/cancel',{plan_id:pending});add(d.text,'assistant')}catch(e){add('Hiba: '+e.message,'assistant')}pending=null;$('approval').classList.add('hidden')};
+<body><div class="shell">
+  <nav class="sidebar" aria-label="Fő navigáció">
+    <div class="brand">Byte<span>Wolf</span></div>
+    <div class="nav" id="nav" role="tablist">
+      <button type="button" data-target="page-state" aria-current="page"><span class="nav-icon">📡</span>Állapot</button>
+      <button type="button" data-target="page-camera"><span class="nav-icon">🎥</span>Kamera</button>
+      <button type="button" data-target="page-chat"><span class="nav-icon">💬</span>Chat</button>
+      <button type="button" data-target="page-mission"><span class="nav-icon">🎯</span>Küldetés</button>
+      <button type="button" data-target="page-memory"><span class="nav-icon">🧠</span>Memória</button>
+      <button type="button" data-target="page-world"><span class="nav-icon">🗺️</span>Világ</button>
+    </div>
+    <div class="sidebar-foot">
+      <div id="health" class="badge">Telemetria betöltése…</div>
+      <div class="memory-note">A dashboard csak olvas. Küldetés kizárólag külön jóváhagyással indul.</div>
+    </div>
+  </nav>
+
+  <main class="content">
+    <section class="page" id="page-state" data-active="true">
+      <div class="page-head"><h1 class="page-title">Élő állapot</h1></div>
+      <div class="panel">
+        <div class="label">Telemetria</div>
+        <div class="telemetry">
+          <div class="metric"><span class="label">Repülés</span><b id="flight">—</b></div>
+          <div class="metric"><span class="label">Magasság</span><b id="altitude">—</b></div>
+          <div class="metric"><span class="label">Akkumulátor</span><b id="battery">—</b></div>
+          <div class="metric"><span class="label">Pozíció</span><b id="position">—</b></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="label">Küldetés-események</div>
+        <div id="events" class="memory-list"><div class="memory-note">Még nincs rögzített esemény ebben a munkamenetben.</div></div>
+      </div>
+    </section>
+
+    <section class="page" id="page-camera">
+      <div class="page-head"><h1 class="page-title">Drón szemszög</h1></div>
+      <div class="panel">
+        <div class="camera-head">
+          <div class="label">Élő kamera</div>
+          <label class="label" for="camera-select">Kamera
+            <select id="camera-select" class="camera-select"><option value="front">Első</option><option value="down">Alsó</option></select>
+          </label>
+        </div>
+        <div class="camera-frame camera"><img id="camera" alt="Élő drónkamera" hidden><svg id="detection-overlay" aria-label="Észlelési jelölések"></svg></div>
+        <p id="camera-note" class="camera-status">Kamera streamre várok…</p>
+      </div>
+    </section>
+
+    <section class="page" id="page-chat">
+      <div class="page-head"><h1 class="page-title">Beszélgetés ByteWolf-fal</h1><span id="memory-status" class="memory-note">Memóriafrissítés: még nem futott.</span></div>
+      <div class="panel chat">
+        <div id="messages" class="messages"><div class="message assistant">Szia! Figyelem a szimulációt. Mit nézzek meg, vagy milyen küldetést tervezzek?</div></div>
+        <div id="approval" class="approval hidden">
+          <b>Jóváhagyás szükséges</b>
+          <p>A terv biztonsági ellenőrzésen átment. Indítsam a szimulációban?</p>
+          <button id="approve" class="button">Indítás</button> <button id="cancel" class="button cancel">Mégse</button>
+        </div>
+        <form id="composer" class="composer"><input id="prompt" placeholder="Beszélj ByteWolf-fal…" autocomplete="off"><button class="button">Küldés</button></form>
+      </div>
+    </section>
+
+    <section class="page" id="page-mission">
+      <div class="page-head"><h1 class="page-title">Küldetés</h1><span id="mission-hint" class="memory-note">Kattints a térképre egy célpontra.</span></div>
+      <div class="split">
+        <div class="panel">
+          <div class="label">Célpont kijelölése (észak felfelé, méterben a kiindulóponttól)</div>
+          <p class="memory-note">A szürke gyűrű a repülési sugárkorlát. A zöld cellák mért akadályok — de a térkép csak foglaltságot ismer, szabad területet nem állít, tehát a kijelölt út nem „ellenőrzötten üres".</p>
+          <svg id="mission-map" class="map" aria-label="Küldetés térkép"></svg>
+          <p id="mission-target" class="memory-note">Nincs kijelölt pont.</p>
+        </div>
+        <div class="panel">
+          <div class="label">A küldetés célja</div>
+          <form id="mission-form" class="memory-list">
+            <div class="memory-edit" role="radiogroup" aria-label="Küldetés típusa">
+              <label class="memory-note"><input type="radio" name="mission-kind" value="point" checked> Célpont</label>
+              <label class="memory-note"><input type="radio" name="mission-kind" value="survey"> Felderítés</label>
+            </div>
+            <input id="mission-goal" class="camera-select" maxlength="240" placeholder="Pl. Nézd meg a kert végét, és szólj, ha odaértél." aria-label="A küldetés célja">
+            <div id="survey-fields" class="memory-edit hidden">
+              <label class="memory-note" for="survey-radius">Sugár (m)
+                <input id="survey-radius" class="camera-select" type="number" min="2" max="50" step="1" value="30">
+              </label>
+              <label class="memory-note" for="survey-spacing">Sávtávolság (m)
+                <input id="survey-spacing" class="camera-select" type="number" min="1" max="15" step="1" value="10">
+              </label>
+            </div>
+            <label class="memory-note" for="mission-altitude">Magasság (m)
+              <input id="mission-altitude" class="camera-select" type="number" min="1" max="20" step="0.5" value="4">
+            </label>
+            <button id="mission-review" class="button" type="submit">Terv készítése</button>
+          </form>
+          <p id="mission-status" class="memory-note">A terv a SafetyGate ellenőrzése után jelenik meg. Indítani csak külön jóváhagyással lehet.</p>
+          <div id="mission-approval" class="approval hidden">
+            <b>Jóváhagyás szükséges</b>
+            <p id="mission-summary"></p>
+            <button id="mission-start" class="button" type="button">Indítás</button>
+            <button id="mission-cancel" class="button cancel" type="button">Mégse</button>
+          </div>
+          <div class="label" style="margin-top:14px">Küldetés-napló</div>
+          <div id="mission-log" class="memory-list"><div class="memory-note">Még nincs indított küldetés.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="page-memory">
+      <div class="page-head"><h1 class="page-title">Memória</h1><button id="refresh-memory" class="button cancel small" type="button">Frissítés</button></div>
+      <p class="boundary" id="memory-boundary">A személyes memória és a világ-bizonyíték két külön tároló. Nincs köztük él: egy észlelésből soha nem lesz személyhez kötött tény.</p>
+      <div class="panel">
+        <div class="memory-head"><div class="label">Amit rólad megjegyeztem</div></div>
+        <p id="memory-note" class="memory-note">Csak jóváhagyott, nem érzékeny emlékek. Javíthatod vagy törölheted őket.</p>
+        <div id="memory-list" class="memory-list"></div>
+      </div>
+      <div class="panel">
+        <div class="label">Rólad kialakított kép</div>
+        <p class="memory-note">Minden él tőled indul: ezek olyan tények, amiket te mondtál — nem szenzorból következtetve.</p>
+        <svg id="personal-graph" class="graph" aria-label="Személyes memória gráf"></svg>
+      </div>
+    </section>
+
+    <section class="page" id="page-world">
+      <div class="page-head"><h1 class="page-title">Világ</h1><button id="refresh-world" class="button cancel small" type="button">Frissítés</button></div>
+      <div class="split">
+        <div class="panel">
+          <div class="label">Akadálytérkép (észak felfelé)</div>
+          <p class="memory-note">Csak foglaltság. Egy cella azt jelenti, hogy ott <b>mértek</b> valamit; szabad területet ez a réteg soha nem állít.</p>
+          <svg id="world-map" class="map" aria-label="Akadálytérkép"></svg>
+          <div class="legend">
+            <span><i class="swatch" style="background:#54d4b5"></i>mért akadály</span>
+            <span><i class="swatch" style="background:#d9a84d"></i>ellentmondásos</span>
+            <span><i class="swatch" style="background:#8ee5d2"></i>rács-origó (home)</span>
+          </div>
+          <p id="map-note" class="memory-note">Térképre várok…</p>
+        </div>
+        <div class="panel">
+          <div class="label">Bizonyíték-gráf</div>
+          <p class="memory-note">Az egyetlen kimondott kapcsolat az, amit a bizonyíték rögzít: ez a forrás ezt figyelte meg.</p>
+          <svg id="world-graph" class="graph" aria-label="Világ bizonyíték gráf"></svg>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="memory-head"><div class="label">Amit a világról tudok</div></div>
+        <p class="memory-note">Bizonyíték-alapú észlelések: forrás, időpont, megbízhatóság és lejárat nélkül egy állítás sem jelenik meg itt.</p>
+        <div id="world-list" class="memory-list"></div>
+      </div>
+    </section>
+  </main>
+</div><script>
+const session=localStorage.bytewolfSession||(localStorage.bytewolfSession=crypto.randomUUID());
+let pending=null;let cameraUrl=null;let cameraSensor='front';let cameraEtag=null;let cameraRefreshing=false;let statusTimer=null;
+const headers={'Content-Type':'application/json','X-ByteWolf-Session':session};
+const $=id=>document.getElementById(id);
+const svgElement=(name,attributes={})=>{const element=document.createElementNS('http://www.w3.org/2000/svg',name);for(const [key,value] of Object.entries(attributes))element.setAttribute(key,String(value));return element};
+const note=(text,className='memory-note')=>{const element=document.createElement('div');element.className=className;element.textContent=text;return element};
+
+function showPage(id){for(const page of document.querySelectorAll('.page'))page.dataset.active=String(page.id===id);
+  for(const button of document.querySelectorAll('.nav button')){if(button.dataset.target===id)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current')}
+  location.hash=id.replace('page-','');
+  if(id==='page-world'){refreshWorld()}if(id==='page-memory'){refreshMemory()}if(id==='page-mission'){refreshMissionMap()}}
+$('nav').addEventListener('click',event=>{const button=event.target.closest('button');if(button)showPage(button.dataset.target)});
+
+async function api(path,body,method='POST'){const r=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw Error(d.detail||'A kérés sikertelen');return d}
+const add=(text,kind)=>{const e=document.createElement('div');e.className='message '+kind;e.textContent=text;$('messages').append(e);$('messages').scrollTop=$('messages').scrollHeight};
+function logEvent(text){const list=$('events');if(list.querySelector('.memory-note'))list.replaceChildren();const row=document.createElement('div');row.className='memory-item';row.textContent=`${new Date().toLocaleTimeString('hu-HU')} · ${text}`;list.prepend(row)}
+
+const memoryStatusText={updated:'Memóriafrissítés: új tényt jegyeztem meg.',skipped:'Memóriafrissítés: nem volt megjegyezendő tény.',unavailable:'Memóriafrissítés: most nem érhető el; a beszélgetés ettől független.'};
+function showMemoryStatus(value){$('memory-status').textContent=memoryStatusText[value]||memoryStatusText.unavailable}
+async function send(text){add(text,'user');try{const d=await api('/api/v1/chat',{text});add(d.text,'assistant');pending=d.approval_required?d.plan_id:null;$('approval').classList.toggle('hidden',!pending);showMemoryStatus(d.memory_update);refreshMemory()}catch(e){add('Hiba: '+e.message,'assistant')}}
+$('composer').addEventListener('submit',e=>{e.preventDefault();const text=$('prompt').value.trim();if(text){$('prompt').value='';send(text)}});
+async function monitorPlan(planId){if(statusTimer)clearInterval(statusTimer);let terminal=false;let connectionWarningShown=false;
+  const check=async()=>{try{const r=await fetch(`/api/v1/plans/${planId}/status`,{cache:'no-store'});const d=await r.json();
+      if(!r.ok){if(r.status>=400&&r.status<500){terminal=true;clearInterval(statusTimer);statusTimer=null;add('A küldetés státusza nem érvényes: '+(d.detail||'ismeretlen terv'),'assistant');return}throw Error(d.detail||'Státusz nem elérhető')}
+      connectionWarningShown=false;
+      if(d.status==='completed'||d.status==='failed'){terminal=true;clearInterval(statusTimer);statusTimer=null;add(d.message,'assistant');logEvent(d.message)}}
+    catch{if(!connectionWarningShown){connectionWarningShown=true;add('A státuszkapcsolat megszakadt; újrapróbálom.','assistant')}}};
+  await check();if(!terminal)statusTimer=setInterval(check,1000)}
+$('approve').onclick=async()=>{try{const d=await api('/api/v1/plans/approve',{plan_id:pending});add(d.text,'assistant');logEvent('Küldetés jóváhagyva: '+d.plan_id);monitorPlan(d.plan_id)}catch(e){add('Hiba: '+e.message,'assistant')}pending=null;$('approval').classList.add('hidden')};
+$('cancel').onclick=async()=>{try{const d=await api('/api/v1/plans/cancel',{plan_id:pending});add(d.text,'assistant');logEvent('Küldetés visszavonva')}catch(e){add('Hiba: '+e.message,'assistant')}pending=null;$('approval').classList.add('hidden')};
+
 const memoryCategories=['name','preference','place_label','relationship'];
 function memoryButton(label,className,handler){const button=document.createElement('button');button.type='button';button.className=`button small ${className}`;button.textContent=label;button.onclick=handler;return button}
-function renderMemory(facts){const list=$('memory-list');list.replaceChildren();if(!facts.length){const empty=document.createElement('div');empty.className='memory-note';empty.textContent='Még nincs tartós, jóváhagyott emlék.';list.append(empty);return}for(const item of facts){const row=document.createElement('div');row.className='memory-item';const head=document.createElement('div');head.className='memory-item-head';const category=document.createElement('span');category.className='memory-category';category.textContent=item.category;const fact=document.createElement('span');fact.className='memory-fact';fact.textContent=item.fact;const actions=document.createElement('span');actions.className='memory-actions';actions.append(memoryButton('Javítás','cancel',()=>editMemory(item,row)),memoryButton('Törlés','danger',()=>eraseMemory(item.id)));head.append(category,fact,actions);row.append(head);list.append(row)}}
-async function refreshMemory(){try{const data=await api('/api/v1/memory',undefined,'GET');renderMemory(data.facts||[]);$('memory-note').textContent='Csak jóváhagyott, nem érzékeny emlékek. Javíthatod vagy törölheted őket.'}catch{$('memory-note').textContent='A memória most nem olvasható.'}}
-function editMemory(item,row){row.replaceChildren();const form=document.createElement('form');form.className='memory-edit';const select=document.createElement('select');for(const category of memoryCategories){const option=document.createElement('option');option.value=category;option.textContent=category;option.selected=category===item.category;select.append(option)}const input=document.createElement('input');input.value=item.fact;input.maxLength=240;input.setAttribute('aria-label','Emlék szövege');form.append(select,input,memoryButton('Mentés','',async()=>{try{await api(`/api/v1/memory/${encodeURIComponent(item.id)}`,{category:select.value,fact:input.value},'PUT');refreshMemory()}catch(error){$('memory-note').textContent='Nem menthető: '+error.message}}),memoryButton('Mégse','cancel',refreshMemory));form.addEventListener('submit',event=>{event.preventDefault()});row.append(form);input.focus()}
+function renderMemory(facts){const list=$('memory-list');list.replaceChildren();
+  if(!facts.length){list.append(note('Még nincs tartós, jóváhagyott emlék.'));return}
+  for(const item of facts){const row=document.createElement('div');row.className='memory-item';const head=document.createElement('div');head.className='memory-item-head';
+    const category=document.createElement('span');category.className='memory-category';category.textContent=item.category;
+    const fact=document.createElement('span');fact.className='memory-fact';fact.textContent=item.fact;
+    const actions=document.createElement('span');actions.className='memory-actions';
+    actions.append(memoryButton('Javítás','cancel',()=>editMemory(item,row)),memoryButton('Törlés','danger',()=>eraseMemory(item.id)));
+    head.append(category,fact,actions);row.append(head);list.append(row)}}
+async function refreshMemory(){try{const data=await api('/api/v1/memory',undefined,'GET');renderMemory(data.facts||[]);$('memory-note').textContent='Csak jóváhagyott, nem érzékeny emlékek. Javíthatod vagy törölheted őket.';refreshKnowledge()}catch{$('memory-note').textContent='A memória most nem olvasható.'}}
+function editMemory(item,row){row.replaceChildren();const form=document.createElement('form');form.className='memory-edit';
+  const select=document.createElement('select');for(const category of memoryCategories){const option=document.createElement('option');option.value=category;option.textContent=category;option.selected=category===item.category;select.append(option)}
+  const input=document.createElement('input');input.value=item.fact;input.maxLength=240;input.setAttribute('aria-label','Emlék szövege');
+  form.append(select,input,memoryButton('Mentés','',async()=>{try{await api(`/api/v1/memory/${encodeURIComponent(item.id)}`,{category:select.value,fact:input.value},'PUT');refreshMemory()}catch(error){$('memory-note').textContent='Nem menthető: '+error.message}}),memoryButton('Mégse','cancel',refreshMemory));
+  form.addEventListener('submit',event=>{event.preventDefault()});row.append(form);input.focus()}
 async function eraseMemory(id){try{await api(`/api/v1/memory/${encodeURIComponent(id)}`,undefined,'DELETE');refreshMemory()}catch(error){$('memory-note').textContent='Nem törölhető: '+error.message}}
 $('refresh-memory').onclick=refreshMemory;
-async function refresh(){try{const r=await fetch('/api/v1/telemetry',{cache:'no-store'});const d=await r.json();if(!r.ok)throw Error();$('health').textContent=d.captured_at?'Élő telemetria':'Telemetria hiányzik';$('flight').textContent=d.in_air===true?'LEVEGŐBEN':d.in_air===false?'FÖLDÖN':'ISMERETLEN';$('altitude').textContent=d.position?.relative_altitude_m==null?'—':d.position.relative_altitude_m.toFixed(1)+' m';$('battery').textContent=d.battery_percent==null?'—':d.battery_percent.toFixed(0)+'%';$('position').textContent=d.position?d.position.latitude_deg.toFixed(4)+', '+d.position.longitude_deg.toFixed(4):'—'}catch{$('health').textContent='Telemetria nem elérhető'}}
-const svgElement=(name,attributes={})=>{const element=document.createElementNS('http://www.w3.org/2000/svg',name);for(const [key,value] of Object.entries(attributes))element.setAttribute(key,String(value));return element};
+
+const nodeColour={person:'#54d4b5',source:'#54d4b5',disputed:'#d9a84d',name:'#8ee5d2',preference:'#7fb3ff',place_label:'#c39cff',relationship:'#ff9fb0',landmark:'#8ee5d2',obstacle:'#ff9fb0',target_sighting:'#7fb3ff',map_region:'#c39cff',mission_outcome:'#d9d0a8'};
+function drawGraph(svg,graph,rootKinds){svg.replaceChildren();const nodes=graph.nodes||[];const edges=graph.edges||[];
+  if(!nodes.length){svg.append(svgElement('text',{x:16,y:26}));svg.lastChild.textContent='Nincs megjeleníthető tudás.';return}
+  const width=900,height=340;svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
+  const roots=nodes.filter(node=>rootKinds.includes(node.kind));const leaves=nodes.filter(node=>!rootKinds.includes(node.kind));
+  const place=new Map();
+  roots.forEach((node,index)=>place.set(node.id,{x:150,y:(height/(roots.length+1))*(index+1)}));
+  leaves.forEach((node,index)=>place.set(node.id,{x:620,y:(height/(leaves.length+1))*(index+1)}));
+  for(const edge of edges){const from=place.get(edge.source),to=place.get(edge.target);if(!from||!to)continue;
+    svg.append(svgElement('line',{x1:from.x,y1:from.y,x2:to.x,y2:to.y}));
+    const label=svgElement('text',{x:(from.x+to.x)/2,y:(from.y+to.y)/2-5,'text-anchor':'middle'});label.textContent=edge.label;svg.append(label)}
+  for(const node of nodes){const point=place.get(node.id);if(!point)continue;
+    const circle=svgElement('circle',{cx:point.x,cy:point.y,r:rootKinds.includes(node.kind)?13:9,fill:nodeColour[node.kind]||'#9ab1bb'});
+    const title=svgElement('title');title.textContent=node.detail||node.kind;circle.append(title);svg.append(circle);
+    const text=svgElement('text',{x:point.x+16,y:point.y+4});text.textContent=(node.label||'').slice(0,46);svg.append(text)}}
+async function refreshKnowledge(){try{const view=await api('/api/v1/knowledge',undefined,'GET');
+    drawGraph($('personal-graph'),view.personal,['person']);drawGraph($('world-graph'),view.world,['source']);
+    if(view.boundary)$('memory-boundary').textContent=view.boundary}
+  catch{$('personal-graph').replaceChildren();$('world-graph').replaceChildren()}}
+
+function worldRow(item,disputed){const row=document.createElement('div');row.className='memory-item';
+  const head=document.createElement('div');head.className='memory-item-head';
+  const category=document.createElement('span');category.className='memory-category';category.textContent=disputed?`${item.category} · ellentmondásos`:item.category;
+  const statement=document.createElement('span');statement.className='memory-fact';statement.textContent=item.statement;
+  head.append(category,statement);
+  const confidence=Math.round(Number(item.evidence?.confidence||0)*100);
+  row.append(head,note(`forrás: ${item.evidence?.source||'ismeretlen'} · megfigyelve: ${item.evidence?.observed_at||'—'} · bizonyosság: ${confidence}% · lejár: ${item.evidence?.expires_at||'—'}`));
+  return row}
+function drawMap(cells){const svg=$('world-map');svg.replaceChildren();
+  if(!cells.length){$('map-note').textContent='Nincs érvényes akadálycella; a lidar-scanek vagy lejártak, vagy még nem futott felderítés.';svg.removeAttribute('viewBox');return}
+  const cellSize=Number(cells[0].cell_size_m)||2;
+  const north=cells.map(cell=>cell.north_m),east=cells.map(cell=>cell.east_m);
+  const span=Math.max(8,...north.map(Math.abs),...east.map(Math.abs))+cellSize*2;
+  const size=400,scale=size/(2*span);const centre=size/2;
+  svg.setAttribute('viewBox',`0 0 ${size} ${size}`);
+  svg.append(svgElement('line',{class:'axis',x1:centre,y1:0,x2:centre,y2:size}),svgElement('line',{class:'axis',x1:0,y1:centre,x2:size,y2:centre}));
+  const northLabel=svgElement('text',{x:centre+6,y:14});northLabel.textContent='É';svg.append(northLabel);
+  const scaleLabel=svgElement('text',{x:6,y:size-8});scaleLabel.textContent=`${Math.round(span)} m sugár · ${cellSize} m cella`;svg.append(scaleLabel);
+  svg.append(svgElement('circle',{cx:centre,cy:centre,r:4,fill:'#8ee5d2'}));
+  for(const cell of cells){const side=Math.max(3,cellSize*scale);
+    svg.append(svgElement('rect',{class:cell.disputed?'cell disputed':'cell',x:centre+cell.east_m*scale-side/2,y:centre-cell.north_m*scale-side/2,width:side,height:side,rx:2}))}
+  const disputed=cells.filter(cell=>cell.disputed).length;
+  $('map-note').textContent=`${cells.length} cella · ${disputed} ellentmondásos · csak foglaltság, szabad terület nincs benne.`}
+async function refreshWorld(){const list=$('world-list');
+  try{const data=await api('/api/v1/world-memory',undefined,'GET');const claims=data.claims||[];const disputed=data.disputed||[];
+    list.replaceChildren();
+    if(!claims.length&&!disputed.length)list.append(note('Nincs érvényes, le nem járt észlelés.'));
+    for(const item of claims)list.append(worldRow(item,false));
+    for(const item of disputed)list.append(worldRow(item,true))}
+  catch{list.replaceChildren(note('A világmemória most nem olvasható.'))}
+  try{const map=await api('/api/v1/world-map',undefined,'GET');drawMap(map.cells||[])}
+  catch{$('map-note').textContent='A térkép most nem olvasható.'}
+  refreshKnowledge()}
+$('refresh-world').onclick=refreshWorld;
+
+let missionPoint=null;let missionPlan=null;let missionRadiusM=50;let missionScale=1;
+function missionLog(text){const list=$('mission-log');if(list.querySelector('.memory-note'))list.replaceChildren();const row=document.createElement('div');row.className='memory-item';row.textContent=`${new Date().toLocaleTimeString('hu-HU')} · ${text}`;list.prepend(row)}
+function drawMissionMap(cells){const svg=$('mission-map');svg.replaceChildren();const size=400,centre=size/2;
+  const reach=cells.length?Math.max(...cells.map(c=>Math.hypot(c.north_m,c.east_m))):0;
+  const span=Math.max(missionRadiusM*1.15,reach+4);missionScale=(size/2)/span;
+  svg.setAttribute('viewBox',`0 0 ${size} ${size}`);
+  svg.append(svgElement('line',{class:'axis',x1:centre,y1:0,x2:centre,y2:size}),svgElement('line',{class:'axis',x1:0,y1:centre,x2:size,y2:centre}));
+  svg.append(svgElement('circle',{cx:centre,cy:centre,r:missionRadiusM*missionScale,fill:'none',stroke:'#315461','stroke-dasharray':'5 5'}));
+  for(const cell of cells){const side=Math.max(3,(Number(cell.cell_size_m)||2)*missionScale);
+    svg.append(svgElement('rect',{class:cell.disputed?'cell disputed':'cell',x:centre+cell.east_m*missionScale-side/2,y:centre-cell.north_m*missionScale-side/2,width:side,height:side,rx:2}))}
+  svg.append(svgElement('circle',{cx:centre,cy:centre,r:4,fill:'#8ee5d2'}));
+  const north=svgElement('text',{x:centre+6,y:14});north.textContent='É';svg.append(north);
+  const scaleNote=svgElement('text',{x:6,y:size-8});scaleNote.textContent=`sugárkorlát: ${missionRadiusM} m`;svg.append(scaleNote);
+  if(missionPoint&&missionKind()==='survey'){const radius=Number(($('survey-radius')||{}).value||0);
+    if(radius>0)svg.append(svgElement('circle',{cx:centre+missionPoint.east_m*missionScale,cy:centre-missionPoint.north_m*missionScale,r:radius*missionScale,fill:'rgba(217,168,77,.12)',stroke:'#d9a84d'}))}
+  if(missionPoint){svg.append(svgElement('circle',{cx:centre+missionPoint.east_m*missionScale,cy:centre-missionPoint.north_m*missionScale,r:6,fill:'#d9a84d'}));
+    svg.append(svgElement('line',{x1:centre,y1:centre,x2:centre+missionPoint.east_m*missionScale,y2:centre-missionPoint.north_m*missionScale,stroke:'#d9a84d','stroke-dasharray':'4 4'}))}}
+$('mission-map').addEventListener('click',event=>{const svg=$('mission-map');const box=svg.getBoundingClientRect();
+  if(!box.width||!box.height)return;const size=400;const scaleX=size/box.width,scaleY=size/box.height;
+  const x=(event.clientX-box.left)*scaleX,y=(event.clientY-box.top)*scaleY;const centre=size/2;
+  missionPoint={north_m:(centre-y)/missionScale,east_m:(x-centre)/missionScale};
+  const distance=Math.hypot(missionPoint.north_m,missionPoint.east_m);
+  $('mission-target').textContent=`Kijelölt pont: É ${missionPoint.north_m.toFixed(1)} m, K ${missionPoint.east_m.toFixed(1)} m (${distance.toFixed(1)} m-re a kiindulóponttól).`;
+  refreshMissionMap()});
+async function refreshMissionMap(){try{const map=await api('/api/v1/world-map',undefined,'GET');drawMissionMap(map.cells||[])}catch{drawMissionMap([])}}
+function missionKind(){const chosen=document.querySelector('input[name="mission-kind"]:checked');return chosen?chosen.value:'point'}
+for(const radio of document.querySelectorAll('input[name="mission-kind"]'))radio.addEventListener('change',()=>{
+  $('survey-fields').classList.toggle('hidden',missionKind()!=='survey');
+  $('mission-hint').textContent=missionKind()==='survey'?'Kattints a felderítendő terület közepére.':'Kattints a térképre egy célpontra.';
+  refreshMissionMap()});
+$('mission-form').addEventListener('submit',async event=>{event.preventDefault();
+  if(!missionPoint){$('mission-status').textContent='Előbb jelölj ki egy pontot a térképen.';return}
+  const goal=$('mission-goal').value.trim();
+  if(!goal){$('mission-status').textContent='Írd le, mi a küldetés célja.';return}
+  $('mission-status').textContent='Biztonsági ellenőrzés fut…';
+  const survey=missionKind()==='survey';
+  const endpoint=survey?'/api/v1/missions/survey':'/api/v1/missions/point';
+  const body=survey
+    ?{centre_north_m:missionPoint.north_m,centre_east_m:missionPoint.east_m,radius_m:Number($('survey-radius').value),spacing_m:Number($('survey-spacing').value),altitude_m:Number($('mission-altitude').value),goal}
+    :{north_m:missionPoint.north_m,east_m:missionPoint.east_m,altitude_m:Number($('mission-altitude').value),goal};
+  try{const plan=await api(endpoint,body);
+    missionPlan=plan.plan_id;
+    $('mission-summary').textContent=`${plan.summary} Cél: ${plan.goal} · lépések: ${(plan.steps||[]).join(' → ')}`;
+    $('mission-approval').classList.remove('hidden');
+    $('mission-status').textContent='A SafetyGate jóváhagyta a tervet. Indítani csak te tudsz.';
+    missionLog('Terv jóváhagyásra vár: '+plan.summary)}
+  catch(error){missionPlan=null;$('mission-approval').classList.add('hidden');$('mission-status').textContent='A safety réteg elutasította: '+error.message;missionLog('Elutasítva: '+error.message)}});
+$('mission-start').onclick=async()=>{if(!missionPlan)return;
+  try{const started=await api('/api/v1/plans/approve',{plan_id:missionPlan});missionLog('Indítva: '+started.text);
+    $('mission-status').textContent='A küldetés fut; jelzek, ha megérkezett.';
+    monitorMission(started.plan_id)}
+  catch(error){$('mission-status').textContent='Nem indítható: '+error.message}
+  missionPlan=null;$('mission-approval').classList.add('hidden')};
+$('mission-cancel').onclick=async()=>{if(missionPlan){try{await api('/api/v1/plans/cancel',{plan_id:missionPlan})}catch{}}
+  missionPlan=null;$('mission-approval').classList.add('hidden');$('mission-status').textContent='Nem indítottam küldetést.';missionLog('Visszavonva')};
+async function monitorMission(planId){const timer=setInterval(async()=>{
+  try{const r=await fetch(`/api/v1/plans/${planId}/status`,{cache:'no-store'});const d=await r.json();
+    if(!r.ok){if(r.status>=400&&r.status<500){clearInterval(timer);missionLog('Státusz nem érvényes: '+(d.detail||'ismeretlen terv'))}return}
+    if(d.status==='completed'){clearInterval(timer);$('mission-status').textContent='Megérkezett és visszatért.';missionLog('✅ '+d.message);refreshMissionMap()}
+    else if(d.status==='failed'){clearInterval(timer);$('mission-status').textContent='A küldetés hibával zárult.';missionLog('⚠️ '+d.message)}}
+  catch{}},1000)}
+async function refresh(){try{const r=await fetch('/api/v1/telemetry',{cache:'no-store'});const d=await r.json();if(!r.ok)throw Error();
+    $('health').textContent=d.captured_at?'Élő telemetria':'Telemetria hiányzik';
+    $('flight').textContent=d.in_air===true?'LEVEGŐBEN':d.in_air===false?'FÖLDÖN':'ISMERETLEN';
+    $('altitude').textContent=d.position?.relative_altitude_m==null?'—':d.position.relative_altitude_m.toFixed(1)+' m';
+    $('battery').textContent=d.battery_percent==null?'—':d.battery_percent.toFixed(0)+'%';
+    $('position').textContent=d.position?d.position.latitude_deg.toFixed(4)+', '+d.position.longitude_deg.toFixed(4):'—'}
+  catch{$('health').textContent='Telemetria nem elérhető'}}
 function clearDetections(){const overlay=$('detection-overlay');overlay.replaceChildren();overlay.removeAttribute('viewBox')}
-function renderDetections(document){const overlay=$('detection-overlay');const frame=document.frame||{};const width=Number(frame.width),height=Number(frame.height);if(!(width>0&&height>0)){clearDetections();return}overlay.setAttribute('viewBox',`0 0 ${width} ${height}`);overlay.replaceChildren();for(const detection of document.detections||[]){const box=detection.bbox||{};if(![box.x,box.y,box.width,box.height].every(Number.isFinite)||box.width<=0||box.height<=0)continue;overlay.append(svgElement('rect',{x:box.x,y:box.y,width:box.width,height:box.height}));const label=`${detection.label||'ismeretlen'} ${Math.round(Number(detection.confidence||0)*100)}%`;const text=svgElement('text',{x:box.x,y:Math.max(18,box.y-6)});text.textContent=label;overlay.append(text)}}
+function renderDetections(document_){const overlay=$('detection-overlay');const frame=document_.frame||{};const width=Number(frame.width),height=Number(frame.height);
+  if(!(width>0&&height>0)){clearDetections();return}
+  overlay.setAttribute('viewBox',`0 0 ${width} ${height}`);overlay.replaceChildren();
+  for(const detection of document_.detections||[]){const box=detection.bbox||{};
+    if(![box.x,box.y,box.width,box.height].every(Number.isFinite)||box.width<=0||box.height<=0)continue;
+    overlay.append(svgElement('rect',{x:box.x,y:box.y,width:box.width,height:box.height}));
+    const label=`${detection.label||'ismeretlen'} ${Math.round(Number(detection.confidence||0)*100)}%`;
+    const text=svgElement('text',{x:box.x,y:Math.max(18,box.y-6)});text.textContent=label;overlay.append(text)}}
 async function refreshDetections(){try{const r=await fetch(`/api/v1/cameras/${cameraSensor}/detections`,{cache:'no-store'});if(!r.ok)throw Error();const d=await r.json();renderDetections(d);return d}catch{clearDetections();return null}}
-async function refreshCamera(){if(cameraRefreshing)return;cameraRefreshing=true;try{const r=await fetch(`/api/v1/cameras/${cameraSensor}`,{cache:'no-cache',headers:cameraEtag?{'If-None-Match':cameraEtag}:{}});const detections=await refreshDetections();if(r.status===304){return}if(!r.ok)throw Error();const b=await r.blob();cameraEtag=r.headers.get('etag');if(cameraUrl)URL.revokeObjectURL(cameraUrl);cameraUrl=URL.createObjectURL(b);$('camera').src=cameraUrl;$('camera').hidden=false;const count=detections?.validity==='valid'?(detections.detections||[]).length:0;$('camera-note').textContent=detections?.validity==='valid'?`Élő ${cameraSensor==='front'?'első':'alsó'} kamera · ${count} észlelés`:'Élő kamera · észlelés nem elérhető'}catch{$('camera').hidden=true;clearDetections();$('camera-note').textContent='Kamera streamre várok…'}finally{cameraRefreshing=false}}
-$('camera-select').addEventListener('change',event=>{cameraSensor=event.target.value;cameraEtag=null;clearDetections();refreshCamera()});refresh();refreshCamera();refreshMemory();setInterval(refresh,1000);setInterval(refreshCamera,250);
+async function refreshCamera(){if(cameraRefreshing)return;cameraRefreshing=true;
+  try{const r=await fetch(`/api/v1/cameras/${cameraSensor}`,{cache:'no-cache',headers:cameraEtag?{'If-None-Match':cameraEtag}:{}});
+    const detections=await refreshDetections();
+    if(r.status===304){return}if(!r.ok)throw Error();
+    const b=await r.blob();cameraEtag=r.headers.get('etag');if(cameraUrl)URL.revokeObjectURL(cameraUrl);cameraUrl=URL.createObjectURL(b);
+    $('camera').src=cameraUrl;$('camera').hidden=false;
+    const count=detections?.validity==='valid'?(detections.detections||[]).length:0;
+    $('camera-note').textContent=detections?.validity==='valid'?`Élő ${cameraSensor==='front'?'első':'alsó'} kamera · ${count} észlelés`:'Élő kamera · észlelés nem elérhető'}
+  catch{$('camera').hidden=true;clearDetections();$('camera-note').textContent='Kamera streamre várok…'}
+  finally{cameraRefreshing=false}}
+$('camera-select').addEventListener('change',event=>{cameraSensor=event.target.value;cameraEtag=null;clearDetections();refreshCamera()});
+
+if(location.hash)showPage('page-'+location.hash.replace('#',''));
+refresh();refreshCamera();refreshMemory();refreshWorld();refreshMissionMap();
+setInterval(refresh,1000);setInterval(refreshCamera,250);setInterval(refreshWorld,5000);
 </script></body></html>

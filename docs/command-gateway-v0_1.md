@@ -63,3 +63,33 @@ The gateway imports neither MAVSDK nor any flight adapter, enforced by a test.
 Its output is a `CompiledMission` — the same object the orchestrator already
 routes — or a structured refusal. Execution stays where it was: the orchestrator
 and the CLIs, behind the SafetyGate.
+
+
+## Picked-point missions (dashboard map)
+
+A point clicked on the map is the one mission request that needs no language
+model: the user already said exactly where. `apps/api/point_mission.py` turns it
+into the same MissionSpec v0.1 every other path produces —
+`TAKEOFF → GOTO_LOCAL → HOLD → RTL` — validates it through the same compiler and
+SafetyGate, and writes it with the same approval proof the executor demands
+(`brain/mission_spec/reviewed_plan.py`, which is now the single source of that
+proof for every producer).
+
+What it deliberately does **not** do:
+
+- it does not fly. `POST /api/v1/missions/point` only reviews, then hands the
+  plan to the session's single pending slot, which only an explicit approval
+  empties. Another session cannot approve it, and approving twice fails;
+- it does not write the free-text goal into the spec. The schema has no field
+  for it and must not grow one: a purpose the executor cannot act on has no
+  business in the document the executor reads. The goal is recorded beside the
+  plan (`*.goal.json`) and shown back to the user;
+- it does not leave an unapproved plan on disk. A refusal names the constraint
+  that refused it and writes nothing, because a rejected plan file is a plan
+  somebody can later mistake for an approved one;
+- the map underneath it shows measured occupancy only, so a clear-looking route
+  is *unsurveyed*, never *verified empty*. The page says so.
+
+Arrival is reported by polling the existing `/api/v1/plans/{id}/status`, which
+reads the executor's own artifact; the finished run also becomes a
+`mission_outcome` claim, so the next conversational turn knows how it went.

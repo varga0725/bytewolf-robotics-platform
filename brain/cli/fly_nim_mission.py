@@ -15,8 +15,14 @@ from apps.gateway.nim_mission_agent import MissionAgentRequest, NIMMissionAgent
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.cli.artifacts import recorded_execution, write_run_artifact
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
+from brain.memory.recorder import DEFAULT_WORLD_MEMORY_PATH, WorldMemoryRecorder
 from brain.mission.execution import MissionExecution
 from brain.mission_spec.orchestrator import execute_compiled_mission, require_executable_mission
+from brain.mission_spec.reviewed_plan import (
+    default_plan_path as _default_plan_path,
+    require_matching_review_approval as _require_matching_review_approval,
+    write_reviewed_plan as _write_reviewed_plan,
+)
 from brain.mission_spec.validation import (
     CompiledMission,
     MissionSafetyProfile,
@@ -55,6 +61,17 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--dashboard-snapshot",
         type=Path,
         default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
+    )
+    parser.add_argument(
+        "--world-memory-file",
+        type=Path,
+        default=DEFAULT_WORLD_MEMORY_PATH,
+        help="Where this run's outcome is remembered as perishable world evidence.",
+    )
+    parser.add_argument(
+        "--no-world-memory",
+        action="store_true",
+        help="Run without remembering the outcome; the mission audit artifact is unaffected.",
     )
     return parser.parse_args(arguments)
 
@@ -158,7 +175,15 @@ async def run(arguments: argparse.Namespace) -> None:
                 outcome,
                 failure_reason,
                 getattr(adapter, "preflight_telemetry", None),
+                world_recorder=_world_recorder(arguments),
             )
+
+
+def _world_recorder(arguments: argparse.Namespace) -> WorldMemoryRecorder | None:
+    """Remember the outcome unless the operator opted out for this run."""
+    if arguments.no_world_memory:
+        return None
+    return WorldMemoryRecorder(arguments.world_memory_file)
 
 
 def _load_approved_plan(
@@ -181,53 +206,6 @@ def _load_approved_plan(
         raise RuntimeError(f"Reviewed MissionSpec is no longer approved: {details}")
     require_executable_mission(report.mission)
     return document, report.mission
-
-
-def _default_plan_path(mission_id: str) -> Path:
-    return Path("simulation/artifacts/agent-missions") / f"{mission_id}.mission-spec.json"
-
-
-def _write_reviewed_plan(path: Path, mission_spec: dict[str, object], model: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(mission_spec, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    document_hash = sha256(path.read_bytes()).hexdigest()
-    approval = {
-        "schema_version": "nim-reviewed-plan-v0.1",
-        "approved_at": datetime.now(UTC).isoformat(),
-        "model": model,
-        "mission_id": mission_spec["mission_id"],
-        "plan_filename": path.name,
-        "plan_sha256": document_hash,
-        "safety_decision": "approved",
-    }
-    approval_path = _approval_path(path)
-    approval_path.write_text(json.dumps(approval, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-
-
-def _approval_path(plan_path: Path) -> Path:
-    return plan_path.with_name(f"{plan_path.name}.approval.json")
-
-
-def _require_matching_review_approval(plan_path: Path, raw_document: bytes) -> None:
-    approval_path = _approval_path(plan_path)
-    try:
-        approval = json.loads(approval_path.read_text(encoding="utf-8"))
-    except OSError as error:
-        raise RuntimeError(
-            f"Reviewed MissionSpec has no approval record: '{approval_path}'."
-        ) from error
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"Reviewed MissionSpec approval record is not JSON: '{approval_path}'.") from error
-    if not isinstance(approval, dict):
-        raise RuntimeError("Reviewed MissionSpec approval record must be a JSON object.")
-    if approval.get("schema_version") != "nim-reviewed-plan-v0.1":
-        raise RuntimeError("Reviewed MissionSpec approval record has an unsupported schema version.")
-    if approval.get("safety_decision") != "approved":
-        raise RuntimeError("Reviewed MissionSpec approval record is not approved.")
-    if approval.get("plan_filename") != plan_path.name:
-        raise RuntimeError("Reviewed MissionSpec approval record is for a different plan file.")
-    if approval.get("plan_sha256") != sha256(raw_document).hexdigest():
-        raise RuntimeError("Reviewed MissionSpec differs from the safety-approved plan.")
 
 
 def _write_agent_decision(

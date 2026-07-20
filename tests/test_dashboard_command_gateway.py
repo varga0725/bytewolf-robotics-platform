@@ -41,5 +41,70 @@ class DashboardCommandGatewayTests(unittest.TestCase):
             self.gateway.approve("browser-1", "plan-1")
 
 
+class PendingPlanReplacementTests(unittest.TestCase):
+    """One pending plan per session — replaced when needed, never in silence.
+
+    A second proposal cannot make two plans approvable at once; that is the
+    safety property. What it can do is leave the user looking at a plan the
+    gateway has already dropped, so the reply names what lost its turn and the
+    later refusal says why.
+    """
+
+    def _gateway(self) -> DashboardCommandGateway:
+        self.executed: list[str] = []
+        return DashboardCommandGateway(
+            converse=lambda _session, _text: AgentReply("Rendben.", False),
+            review=lambda _text: "plan-x",
+            execute=lambda plan: self.executed.append(plan) or "submitted",
+        )
+
+    def test_a_replacement_names_the_plan_it_displaced(self) -> None:
+        gateway = self._gateway()
+
+        gateway.propose("session", "plan-a", "Első terv.")
+        reply = gateway.propose("session", "plan-b", "Második terv.")
+
+        self.assertIn("plan-a", reply.text)
+        self.assertEqual(reply.plan_id, "plan-b")
+
+    def test_the_displaced_plan_is_refused_with_the_reason(self) -> None:
+        gateway = self._gateway()
+        gateway.propose("session", "plan-a", "Első terv.")
+        gateway.propose("session", "plan-b", "Második terv.")
+
+        with self.assertRaisesRegex(PermissionError, "newer mission replaced it"):
+            gateway.approve("session", "plan-a")
+
+        self.assertEqual(self.executed, [], "only the pending plan can ever fly")
+
+    def test_proposing_the_same_plan_twice_says_nothing_extra(self) -> None:
+        gateway = self._gateway()
+
+        gateway.propose("session", "plan-a", "Terv.")
+        reply = gateway.propose("session", "plan-a", "Terv.")
+
+        self.assertEqual(reply.text, "Terv.")
+
+    def test_a_session_with_no_pending_plan_still_says_so(self) -> None:
+        gateway = self._gateway()
+
+        with self.assertRaisesRegex(PermissionError, "No pending plan"):
+            gateway.approve("session", "plan-a")
+
+    def test_replacing_across_surfaces_keeps_one_slot(self) -> None:
+        """A chat plan and a map plan compete for the same slot, visibly."""
+        gateway = DashboardCommandGateway(
+            converse=lambda _session, _text: AgentReply("Tervet készítek.", True),
+            review=lambda _text: "chat-plan",
+            execute=lambda plan: "submitted",
+        )
+        gateway.propose("session", "map-plan", "Térkép-terv.")
+
+        reply = gateway.chat("session", "repülj a piros jelhez")
+
+        self.assertIn("map-plan", reply.text)
+        self.assertEqual(reply.plan_id, "chat-plan")
+
+
 if __name__ == "__main__":
     unittest.main()

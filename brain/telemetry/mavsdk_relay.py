@@ -71,6 +71,11 @@ class DashboardTelemetryState:
     position: PositionTelemetryEvent | None = None
     battery: BatteryTelemetryEvent | None = None
     flight_state: FlightStateTelemetryEvent | None = None
+    # Heading is not one of the three streams a dashboard snapshot requires: a
+    # vehicle with no attitude fix still has a position worth showing. It is
+    # published when known and simply absent when not, because a missing yaw
+    # read as zero would point every body-frame observation at north.
+    heading_deg: float | None = None
 
     @property
     def complete(self) -> bool:
@@ -83,6 +88,10 @@ class DashboardTelemetryState:
             return replace(self, battery=event)
         if isinstance(event, FlightStateTelemetryEvent):
             return replace(self, flight_state=event)
+        if isinstance(event, SupplementalTelemetryEvent) and event.source.endswith("attitude_euler"):
+            heading = dict(event.payload).get("yaw_deg")
+            if isinstance(heading, (int, float)) and not isinstance(heading, bool):
+                return replace(self, heading_deg=float(heading))
         return self
 
     def as_dashboard_document(self, captured_at: datetime) -> dict[str, object]:
@@ -101,6 +110,7 @@ class DashboardTelemetryState:
             "battery": {"remaining_percent": self.battery.remaining_percent},
             "in_air": self.flight_state.in_air,
             "captured_at": _format_timestamp(captured_at),
+            **({} if self.heading_deg is None else {"heading_deg": self.heading_deg}),
         }
 
 

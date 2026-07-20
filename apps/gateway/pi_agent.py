@@ -18,6 +18,12 @@ from typing import Any
 
 
 _MAX_REPLY_CHARS = 2_000
+# The runner's post-turn hook reports one of these words and nothing else.
+# Anything unrecognised is treated as a failed hook rather than rendered.
+_MEMORY_UPDATE_STATES = frozenset({"updated", "skipped", "unavailable"})
+# The briefing is bounded here as well as at the renderer: a runaway world log
+# must not be able to push the conversation's own instructions out of context.
+_MAX_WORLD_CONTEXT_CHARS = 1_200
 _RUNNER_TIMEOUT_S = 60
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _RUNNER_PATH = _PROJECT_ROOT / "apps" / "pi_agent" / "runner.mjs"
@@ -31,6 +37,7 @@ class PiAgentError(RuntimeError):
 class PiAgentReply:
     text: str
     requests_drone_action: bool
+    memory_update: str = "unavailable"
 
 
 RunPi = Callable[[dict[str, object]], Mapping[str, object]]
@@ -47,11 +54,29 @@ class PiAgentClient:
     def __init__(self, *, runner: RunPi | None = None) -> None:
         self._runner = runner or _run_pi
 
-    def converse(self, session_id: str, text: str) -> PiAgentReply:
+    def converse(
+        self,
+        session_id: str,
+        text: str,
+        world_context: str = "",
+        capability_context: str = "",
+    ) -> PiAgentReply:
+        """Run one turn with read-only briefings of the world and of itself.
+
+        Both are resolved in Python and passed in as text: Pi never gains a way
+        to read the store or the safety profile itself, sees nothing the
+        dashboard would not have shown a human, and holds no second copy of a
+        limit that `twin.yaml` already decides.
+        """
         if not session_id.strip() or not text.strip():
             raise PiAgentError("Pi agent request is invalid.")
+        request: dict[str, object] = {"session_id": session_id, "text": text}
+        if world_context.strip():
+            request["world_context"] = world_context[:_MAX_WORLD_CONTEXT_CHARS]
+        if capability_context.strip():
+            request["capability_context"] = capability_context[:_MAX_WORLD_CONTEXT_CHARS]
         try:
-            response = self._runner({"session_id": session_id, "text": text})
+            response = self._runner(request)
         except PiAgentError:
             raise
         except Exception as error:
@@ -65,7 +90,16 @@ class PiAgentClient:
             or not isinstance(requested, bool)
         ):
             raise PiAgentError("Pi agent returned an invalid reply; the drone received no command.")
-        return PiAgentReply(reply.strip(), requested)
+        return PiAgentReply(reply.strip(), requested, _memory_update(response.get("memory_update")))
+
+
+def _memory_update(value: object) -> str:
+    """Never let the hook's channel carry anything but a status word.
+
+    A broken or hostile runner must not be able to smuggle remembered text —
+    or an error message — into the dashboard through this field.
+    """
+    return value if isinstance(value, str) and value in _MEMORY_UPDATE_STATES else "unavailable"
 
 
 def _run_pi(request: dict[str, object]) -> Mapping[str, object]:

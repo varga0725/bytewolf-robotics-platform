@@ -6,10 +6,20 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 
+MEMORY_UPDATE_STATES = frozenset({"updated", "skipped", "unavailable"})
+
+
+def _superseded_note(superseded: str | None) -> str:
+    if superseded is None:
+        return ""
+    return f"\n(A korábbi, jóvá nem hagyott terv — {superseded} — ezzel érvényét vesztette.)"
+
+
 @dataclass(frozen=True)
 class AgentReply:
     text: str
     requests_drone_action: bool = False
+    memory_update: str = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -18,6 +28,9 @@ class DashboardReply:
     status: str
     plan_id: str | None = None
     approval_required: bool = False
+    # Diagnostics only: whether the isolated post-turn hook stored anything.
+    # It never carries a remembered fact, and it never gates the reply.
+    memory_update: str = "unavailable"
 
 
 Converse = Callable[[str, str], AgentReply]
@@ -43,12 +56,32 @@ class DashboardCommandGateway:
         if not text.strip():
             raise ValueError("Message cannot be empty.")
         reply = self._converse(session_id, text)
+        memory_update = reply.memory_update if reply.memory_update in MEMORY_UPDATE_STATES else "unavailable"
         if not reply.requests_drone_action:
-            return DashboardReply(reply.text, "conversation")
+            return DashboardReply(reply.text, "conversation", memory_update=memory_update)
         plan_id = self._review(text)
-        self._pending_by_session[session_id] = plan_id
+        superseded = self._set_pending(session_id, plan_id)
         return DashboardReply(
-            f"{reply.text}\nElkészítettem a tervet. Indítsam a szimulációban?",
+            f"{reply.text}\nElkészítettem a tervet. Indítsam a szimulációban?{_superseded_note(superseded)}",
+            "awaiting_approval",
+            plan_id=plan_id,
+            approval_required=True,
+            memory_update=memory_update,
+        )
+
+    def propose(self, session_id: str, plan_id: str, text: str) -> DashboardReply:
+        """Register an already-reviewed plan as this session's pending mission.
+
+        The map page reviews its own plan — a picked point needs no language
+        model — but the approval boundary must stay exactly the same one the
+        chat path uses, so the plan enters through this single pending slot and
+        leaves only through approve or cancel.
+        """
+        if not plan_id.strip():
+            raise ValueError("A proposed mission needs a plan.")
+        superseded = self._set_pending(session_id, plan_id)
+        return DashboardReply(
+            f"{text}{_superseded_note(superseded)}",
             "awaiting_approval",
             plan_id=plan_id,
             approval_required=True,
@@ -65,6 +98,25 @@ class DashboardCommandGateway:
         self._pending_by_session.pop(session_id)
         return DashboardReply("Rendben, nem indítok küldetést.", "cancelled", plan_id=plan_id)
 
+    def _set_pending(self, session_id: str, plan_id: str) -> str | None:
+        """Hold exactly one pending plan, and say which one it displaced.
+
+        One slot per session is the safety property: a second proposal can never
+        make two plans approvable at once. What it *can* do is leave the user
+        looking at a plan the gateway has already dropped, so replacing is
+        allowed but never silent — the reply names the plan that lost its turn.
+        """
+        superseded = self._pending_by_session.get(session_id)
+        self._pending_by_session[session_id] = plan_id
+        return superseded if superseded != plan_id else None
+
     def _require_pending(self, session_id: str, plan_id: str) -> None:
-        if self._pending_by_session.get(session_id) != plan_id:
+        pending = self._pending_by_session.get(session_id)
+        if pending == plan_id:
+            return
+        if pending is None:
             raise PermissionError("No pending plan belongs to this session.")
+        raise PermissionError(
+            "This plan is no longer the pending one; a newer mission replaced it. "
+            "Review it again before approving."
+        )

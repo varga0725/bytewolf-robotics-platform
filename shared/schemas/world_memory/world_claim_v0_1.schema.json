@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ByteWolf World Memory Claim v0.1",
+  "description": "One evidence-backed claim about the world: what was seen, by which sensor, when, how certainly, and until when it may be believed. World memory is separate from the personal memory the post-turn hook writes; see docs/world-memory-v0_1.md.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["contract_version", "subject", "category", "statement", "evidence"],
+  "properties": {
+    "contract_version": {
+      "const": "v0.1",
+      "description": "Pins the meaning of every field below. A consumer that does not know this version must reject the claim rather than guess."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The place, object, or mission a claim is about, e.g. 'marker:red-pad' or 'mission:9f2c'. A subject names a thing in the world, never a person."
+    },
+    "category": {
+      "enum": ["landmark", "obstacle", "target_sighting", "map_region", "mission_outcome"],
+      "description": "Deliberately narrow. There is no person, face, or identity category: a detection may not become an identity claim."
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "description": "What is claimed, in one bounded sentence. It is evidence for a human or a planner to read, never a command."
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "observed_at", "confidence", "expires_at"],
+      "description": "Without all four fields there is no claim: an unsourced, undated, unquantified, never-expiring belief is exactly what this store exists to prevent.",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "What produced the claim, e.g. 'camera:down_rgb', 'lidar_2d_v2', or 'mission-artifact'. Free text for audit, never for dispatch."
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339, UTC, with an explicit offset. When the world was observed, not when the claim was written."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "After this instant the claim is no longer believed. It must be later than observed_at: a claim that never expires would outlive the world it described."
+        },
+        "confidence": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "How strongly the producer believes the statement. Zero is not admissible: a claim nobody believes is not evidence."
+        },
+        "vehicle_id": {"type": "string", "minLength": 1},
+        "artifact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "description": "Repository-relative path to the recorded run, frame, or scan the claim was derived from, so a reader can go back to the raw evidence."
+        }
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame", "latitude_deg", "longitude_deg"],
+      "description": "Where the subject is, when that is known. Absent means unknown, never zero.",
+      "properties": {
+        "frame": {"const": "wgs84"},
+        "latitude_deg": {"type": "number", "minimum": -90, "maximum": 90},
+        "longitude_deg": {"type": "number", "minimum": -180, "maximum": 180},
+        "absolute_altitude_m": {"type": "number"}
+      }
+    }
+  }
+}

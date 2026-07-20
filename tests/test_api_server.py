@@ -44,6 +44,15 @@ class ApiServerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["in_air"])
 
+    def test_the_dashboard_ships_every_navigable_page(self) -> None:
+        """Each sidebar entry must have the section it claims to open."""
+        page = self.client.get("/").text
+
+        for identifier in ("page-state", "page-camera", "page-chat", "page-memory", "page-world"):
+            with self.subTest(page=identifier):
+                self.assertIn(f'data-target="{identifier}"', page, "the sidebar offers it")
+                self.assertIn(f'id="{identifier}"', page, "the section exists")
+
     def test_telemetry_keeps_unknown_flight_state_and_altitude(self) -> None:
         self.telemetry.write_text(json.dumps({
             "in_air": None,

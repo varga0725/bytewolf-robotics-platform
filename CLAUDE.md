@@ -39,6 +39,17 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./simulation/gazebo/launch/run_px4_gazebo.zsh base
 .venv/bin/python -m brain.cli.fly_takeoff_hover_land
 
+# Live dashboard while the simulator runs (terminal 2), then the web app (terminal 3).
+# Without the bridge nothing writes live-telemetry.json outside a mission run, so
+# the dashboard shows the last mission's snapshot and looks disconnected.
+.venv/bin/python -m brain.cli.dashboard_telemetry
+.venv/bin/python -m apps.api.server                    # http://127.0.0.1:8080
+
+# The world map is built from lidar returns, so it only fills for a lidar
+# airframe. `base` (gz_x500) carries no lidar and can never produce a map cell.
+./simulation/gazebo/launch/run_px4_gazebo_headless.zsh lidar-2d
+.venv/bin/python -m simulation.perception.survey_recorder --duration 120
+
 # Headless scenario matrices (start and tear down their own PX4/Gazebo)
 .venv/bin/python -m simulation.scenarios.scenarios                        # P0.v1 smoke
 .venv/bin/python -m simulation.scenarios.scenarios --runs 10              # repeatability gate
@@ -54,7 +65,12 @@ the PX4 checkout with `make px4_sitl gz_x500`. It runs PX4 in daemon mode (`-d`)
 purpose: the interactive `pxh>` prompt used to fill an unread output pipe and stall SITL
 before MAVLink came up.
 
-There is no lint, formatter, or CI config in this repo. `unittest` is the only gate.
+There is no lint or formatter in this repo. `unittest` is the only gate, plus the
+Node suite for the Pi agent memory boundary (`cd apps/pi_agent && node --test`).
+`.github/workflows/tests.yml` runs both on push and pull request. CI runs neither
+PX4 nor Gazebo — a hosted runner has neither — so a green tick proves the safety
+logic, contracts and memory boundaries, never that a flight works. SITL evidence
+stays manual and lives under `simulation/artifacts/`.
 
 ## Non-negotiable safety architecture
 

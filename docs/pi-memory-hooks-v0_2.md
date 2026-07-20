@@ -102,13 +102,26 @@ location, or biometric memory. Face identification is explicitly out of scope.
 3. Implement deterministic schema validation, sensitive-data rejection,
    merge, deduplication and `forget` semantics.
 4. Add Node unit tests for admission and hook failure isolation; keep the
-   Python gateway integration tests green.
+   Python gateway integration tests green. **Done:** `apps/pi_agent/post_turn.mjs`
+   holds the hook with its dependencies injected, so
+   `apps/pi_agent/post_turn.test.mjs` can prove a failing extractor or a failing
+   write stores nothing and reports `unavailable`, and
+   `tests/test_pi_memory_hook.py` proves the same failure leaves the reply, the
+   plan, and the approval boundary untouched — including one cross-runtime case
+   that drives the Node hook and feeds its output through the Python boundary.
 5. Surface a privacy-safe memory status in diagnostics only, not in chat.
+   **Done:** the hook reports exactly one of `updated`, `skipped` or
+   `unavailable`. Anything else — including remembered text — is downgraded to
+   `unavailable` at the Python boundary before the dashboard sees it, and the
+   runner's stderr carries only messages authored in this repository.
 6. Add explicit user controls to inspect, correct and erase their memory. **Done
    locally:** `GET`, `PUT` and `DELETE /api/v1/memory` are session-scoped and
    the dashboard presents the admitted facts with edit/delete controls.
 7. Add a separate evidence graph for spatial map, mission history and future
    vision/LiDAR observations; never mix it with personal memory by default.
+   **Done:** see `docs/world-memory-v0_1.md`. The two stores share no file, no
+   category and no code path, and the world store admits nothing without a
+   source, an observation time, a confidence and an expiry.
 
 ## Acceptance criteria
 

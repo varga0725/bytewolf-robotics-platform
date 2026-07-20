@@ -17,9 +17,12 @@ from typing import Any
 
 ALLOWED_CATEGORIES = frozenset({"name", "preference", "place_label", "relationship"})
 MAX_FACT_CHARS = 240
+# Kept deliberately in sync with `apps/pi_agent/memory.mjs`: a fact the hook
+# refuses must stay refused when a user types it into the dashboard by hand.
+# Hungarian inflects, so these stems are open-ended (`jelszavam`, `titkos`).
 _SENSITIVE = re.compile(
-    r"\b(api\s*key|api[-_ ]?kulcs\w*|token|jelsz[oó]|password|secret|titok|"
-    r"bankk[aá]rtya|credit\s*card|e-?mail|email|telefonsz[aá]m|phone)\b|"
+    r"\b(api\s*key|api[-_ ]?kulcs\w*|token|jelsz[oóa]\w*|password|secret|tit[ok]k?\w*|"
+    r"bankk[aá]rty\w*|credit\s*card|e-?mail\w*|telefonsz[aá]m\w*|phone)\b|"
     r"\b(?:utca|street|road|avenue)\b|\b\d{12,}\b|"
     r"\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b|\+?\d[\d\s()-]{7,}\d",
     re.IGNORECASE,

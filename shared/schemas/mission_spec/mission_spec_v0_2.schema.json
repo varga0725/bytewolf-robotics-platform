@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ByteWolf MissionSpec v0.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mission_id",
+    "vehicle_id",
+    "intent",
+    "constraints",
+    "steps",
+    "abort_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.2"
+    },
+    "mission_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "vehicle_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "test_flight",
+        "inspect_area",
+        "patrol"
+      ]
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_altitude_m",
+        "max_speed_m_s",
+        "max_radius_m",
+        "minimum_battery_percent_to_start",
+        "loss_of_link_action"
+      ],
+      "properties": {
+        "max_altitude_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_speed_m_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_radius_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "minimum_battery_percent_to_start": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "loss_of_link_action": {
+          "type": "string",
+          "enum": [
+            "RTL",
+            "LAND",
+            "HOLD"
+          ]
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 8,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "altitude_m"
+            ],
+            "properties": {
+              "type": {
+                "const": "TAKEOFF"
+              },
+              "altitude_m": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "north_m",
+              "east_m",
+              "down_m"
+            ],
+            "properties": {
+              "type": {
+                "const": "GOTO_LOCAL"
+              },
+              "north_m": {
+                "type": "number"
+              },
+              "east_m": {
+                "type": "number"
+              },
+              "down_m": {
+                "type": "number",
+                "exclusiveMaximum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "duration_s"
+            ],
+            "properties": {
+              "type": {
+                "const": "HOLD"
+              },
+              "duration_s": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "LAND"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "RTL"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "centre_north_m",
+              "centre_east_m",
+              "radius_m",
+              "spacing_m",
+              "altitude_m"
+            ],
+            "description": "Sweep a circular area. The compiler expands it into a lawnmower pattern and the SafetyGate checks every generated waypoint individually; bounds that cannot be met are refused rather than widened, because a quietly coarsened sweep has holes in it.",
+            "properties": {
+              "type": {
+                "const": "SURVEY_AREA"
+              },
+              "centre_north_m": {
+                "type": "number"
+              },
+              "centre_east_m": {
+                "type": "number"
+              },
+              "radius_m": {
+                "type": "number",
+                "minimum": 2,
+                "description": "Radius of the swept circle, metres."
+              },
+              "spacing_m": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 15,
+                "description": "Distance between sweep lines. Below the sensor's useful overlap the flight is mostly turns; above it the sweep stops being a survey."
+              },
+              "altitude_m": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            }
+          }
+        ]
+      }
+    },
+    "abort_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "on_timeout",
+        "on_low_battery",
+        "on_position_invalid"
+      ],
+      "properties": {
+        "on_timeout": {
+          "type": "string",
+          "enum": [
+            "LAND",
+            "RTL"
+          ]
+        },
+        "on_low_battery": {
+          "type": "string",
+          "enum": [
+            "LAND",
+            "RTL"
+          ]
+        },
+        "on_position_invalid": {
+          "type": "string",
+          "enum": [
+            "LAND"
+          ]
+        }
+      }
+    }
+  },
+  "description": "v0.1 plus SURVEY_AREA: the first step that states an area instead of a place. It stays one reviewable step in the document and becomes many gate-checked waypoints in the compiler; see docs/mission-spec-v0_1.md."
+}
