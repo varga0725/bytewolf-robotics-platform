@@ -18,8 +18,10 @@ import argparse
 import asyncio
 from collections.abc import Sequence
 from pathlib import Path
+import time
 
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
+from brain.telemetry.link_lease import DEFAULT_LEASE_PATH, link_is_leased
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
 
 
@@ -35,6 +37,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--mavsdk-server-port", type=int, default=50051)
     parser.add_argument("--snapshot-file", type=Path, default=DEFAULT_SNAPSHOT_PATH)
     parser.add_argument(
+        "--link-lease", type=Path, default=DEFAULT_LEASE_PATH,
+        help="Lease file a flying mission claims; the bridge yields the PX4 link while it exists.",
+    )
+    parser.add_argument(
         "--seconds",
         type=float,
         default=None,
@@ -44,6 +50,39 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 
 
 async def run(arguments: argparse.Namespace) -> None:
+    """Stream telemetry until stopped, standing aside while a mission flies.
+
+    Only one MAVSDK server can bind the PX4 endpoint. Rather than race a
+    mission for it — which the mission loses, silently — this waits out any
+    live lease and reconnects afterwards. The flying CLI writes the same
+    snapshot in the meantime, so the dashboard never goes dark.
+    """
+    deadline = None if arguments.seconds is None else time.monotonic() + arguments.seconds
+    announced_wait = False
+    while True:
+        if link_is_leased(arguments.link_lease):
+            if not announced_wait:
+                print("A mission holds the PX4 link; the bridge is standing by.")
+                announced_wait = True
+            if deadline is not None and time.monotonic() >= deadline:
+                return
+            await asyncio.sleep(1.0)
+            continue
+        announced_wait = False
+        remaining = None if deadline is None else max(deadline - time.monotonic(), 0.0)
+        if remaining == 0.0:
+            return
+        await _stream_once(arguments, remaining)
+        if deadline is None:
+            # A relay that ended without a lease taking over is a dropped link.
+            # Reconnecting is what keeps the dashboard live across a PX4 restart.
+            await asyncio.sleep(1.0)
+            continue
+        if time.monotonic() >= deadline:
+            return
+
+
+async def _stream_once(arguments: argparse.Namespace, seconds: float | None) -> None:
     try:
         from mavsdk import System
     except ModuleNotFoundError as error:  # pragma: no cover - environment guard
@@ -62,12 +101,13 @@ async def run(arguments: argparse.Namespace) -> None:
         # publishing a half-known vehicle.
         relay_task = asyncio.create_task(MavsdkTelemetryRelay(system, arguments.snapshot_file).run(stop))
         print(f"Streaming telemetry into {arguments.snapshot_file}. Press Ctrl-C to stop.")
-        if arguments.seconds is None:
-            await relay_task
-        else:
-            await asyncio.sleep(arguments.seconds)
+        await _relay_until_lease_or_deadline(relay_task, arguments.link_lease, seconds)
     except asyncio.CancelledError:  # pragma: no cover - interrupt path
         pass
+    except (OSError, RuntimeError, TimeoutError, asyncio.TimeoutError) as error:
+        # A link this process could not take is a wait, not a crash: the usual
+        # reason is a mission that claimed it a moment ago.
+        print(f"PX4 link unavailable: {type(error).__name__}: {error}")
     finally:
         stop.set()
         if relay_task is not None:
@@ -78,6 +118,24 @@ async def run(arguments: argparse.Namespace) -> None:
                 if not isinstance(error, asyncio.CancelledError):
                     print(f"Telemetry relay stopped: {type(error).__name__}: {error}")
         stop_owned_mavsdk_server(system)
+
+
+async def _relay_until_lease_or_deadline(
+    relay_task: asyncio.Task[None], lease_path: Path, seconds: float | None
+) -> None:
+    """Run the relay until a mission wants the link, or the run time is up.
+
+    Checked once a second rather than waited on: the lease is a file another
+    process writes, and a bridge that only noticed it on reconnect would keep
+    the socket for the whole flight it was meant to yield.
+    """
+    deadline = None if seconds is None else time.monotonic() + seconds
+    while not relay_task.done():
+        if link_is_leased(lease_path):
+            return
+        if deadline is not None and time.monotonic() >= deadline:
+            return
+        await asyncio.wait({relay_task}, timeout=1.0)
 
 
 def main(arguments: Sequence[str] | None = None) -> None:

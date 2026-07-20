@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import threading
 from threading import Lock
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -23,6 +24,12 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from apps.gateway.nim_mission_agent import DEFAULT_NIM_BASE_URL, NIMMissionAgent
+from brain.telemetry.link_lease import (
+    DEFAULT_LEASE_PATH,
+    claim_link,
+    release_link,
+    wait_for_free_link,
+)
 
 
 _TELEGRAM_API = "https://api.telegram.org"
@@ -30,6 +37,10 @@ _MAX_MESSAGE_CHARS = 2_000
 _PLAN_NAME = re.compile(r"^[0-9a-f-]{36}\.mission-spec\.json$")
 _DIRECT_VERTICAL_FLIGHT = re.compile(r"\b(emelkedj|szállj\s+fel|szallj\s+fel|lebegj|szállj\s+le|szallj\s+le)\b", re.IGNORECASE)
 _DEFAULT_PLAN_DIRECTORY = Path("simulation/artifacts/agent-missions")
+_LINK_LEASE_PATH = DEFAULT_LEASE_PATH
+# The flying subprocess's own account of itself. It used to go to DEVNULL, so a
+# mission that failed to reach PX4 left nothing at all behind to read.
+_MISSION_LOG_PATH = Path("simulation/artifacts/agent-missions/last-execution.log")
 _execution_lock = Lock()
 _active_execution: subprocess.Popen[bytes] | None = None
 
@@ -314,13 +325,54 @@ def _execute_with_cli(plan_name: str) -> str:
     with _execution_lock:
         if _active_execution is not None and _active_execution.poll() is None:
             raise TelegramGatewayError("A SITL mission is already running.")
+        # Claim the PX4 link before the process exists, so the dashboard's
+        # telemetry bridge has already stepped aside by the time MAVSDK tries to
+        # bind. Both used to take the same socket, and the mission was the one
+        # that lost — into a DEVNULL pipe, so the operator was told a mission
+        # had been submitted and nothing moved.
+        _LINK_LEASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # Claimed before the process exists, and — crucially — waited on. Asking
+        # the bridge to leave is not the same as it having left, and MAVSDK's
+        # server does not retry a failed bind.
+        claim_link("mission", pid=os.getpid(), path=_LINK_LEASE_PATH)
+        if not wait_for_free_link():
+            release_link(_LINK_LEASE_PATH)
+            raise TelegramGatewayError(
+                "The PX4 link is still held by another process, so no mission was started."
+            )
+        log_path = _MISSION_LOG_PATH
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log = log_path.open("w")
         _active_execution = subprocess.Popen(
             [sys.executable, "-m", "brain.cli.fly_nim_mission", "--mission-spec-file", str(plan_path), "--execute"],
             start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
         )
+        claim_link("mission", pid=_active_execution.pid, path=_LINK_LEASE_PATH)
+        threading.Thread(
+            target=_release_link_when_finished,
+            args=(_active_execution, log),
+            daemon=True,
+        ).start()
     return "submitted after local safety validation"
+
+
+def _release_link_when_finished(process: subprocess.Popen[bytes], log) -> None:
+    """Give the link back however the mission ends, including badly.
+
+    A lease that outlives its mission would leave the dashboard blind until
+    someone deleted a file, so this waits on the process rather than on the
+    mission succeeding.
+    """
+    try:
+        process.wait()
+    finally:
+        release_link(_LINK_LEASE_PATH)
+        try:
+            log.close()
+        except OSError:
+            pass
 
 
 def _parse_allowed_chat_ids(raw: str) -> frozenset[int]:
