@@ -219,6 +219,39 @@ class ObstacleScenarioWiringTests(unittest.TestCase):
             "the freshest scan speaks for the run",
         )
 
+    def test_a_scan_written_after_the_report_is_still_remembered(self) -> None:
+        """The capture clock decides, not the writing clock.
+
+        A lidar observation is usable for 0.3 s. Judging it against the moment
+        the report finished writing made every real run record nothing — and
+        say nothing, because refusing to remember stale data is not an error.
+        """
+        from simulation.perception.obstacle_scenario import SCENARIO_GRID, SCENARIO_POSE, remember_scanned_world
+
+        captured_at = NOW
+        recorder = WorldMemoryRecorder(self.path)
+
+        recording = remember_scanned_world(
+            [_scan_document(captured_at)],
+            recorder,
+            pose=SCENARIO_POSE,
+            grid=SCENARIO_GRID,
+            now=captured_at,
+        )
+
+        self.assertEqual(recording.written, 2)
+        self.assertEqual(
+            remember_scanned_world(
+                [_scan_document(captured_at)],
+                WorldMemoryRecorder(self.path.with_name("late.jsonl")),
+                pose=SCENARIO_POSE,
+                grid=SCENARIO_GRID,
+                now=captured_at + timedelta(seconds=30),
+            ).written,
+            0,
+            "a scan judged half a minute late is stale, which is why the capture clock is used",
+        )
+
     def test_a_run_that_captured_nothing_remembers_nothing(self) -> None:
         from simulation.perception.obstacle_scenario import SCENARIO_GRID, SCENARIO_POSE, remember_scanned_world
 

@@ -197,6 +197,13 @@ def remember_scanned_world(
     times. Writing all of them would bury the log in duplicates that the
     contradiction rules then have to re-resolve on every read, so only the last
     scan — the freshest evidence — is recorded.
+
+    ``now`` must be **the moment of capture**, not the moment of writing. A
+    lidar observation is usable for 0.3 s, so evaluating it against the clock
+    after the report has been written makes every scan stale and records
+    nothing — silently, because a refusal to remember is not an error. The
+    question a memory asks is "was this trustworthy when it was taken", and the
+    claim then carries its own observation time and expiry for later readers.
     """
     if not observation_documents:
         return RecordingResult(0)
@@ -214,9 +221,23 @@ SCENARIO_POSE = VehiclePose(GZ_DEFAULT_HOME_LATITUDE_DEG, GZ_DEFAULT_HOME_LONGIT
 SCENARIO_GRID = MapGrid(GZ_DEFAULT_HOME_LATITUDE_DEG, GZ_DEFAULT_HOME_LONGITUDE_DEG, cell_size_m=2.0)
 
 
-LIDAR_SCAN_TOPIC = (
-    "/world/default/model/x500_lidar_2d_0/link/link/sensor/lidar_2d_v2/scan"
-)
+# The scenario pins its own world instead of accepting the launcher's default.
+# Two reasons, and both are the difference between a measurement and a guess:
+# the gz topic and service names *contain* the world name, so a mismatch means
+# the run finds nothing; and only an empty world lets "the lidar saw the placed
+# obstacle" mean anything — in a populated world the sensor also sees terrain,
+# buildings and props, which the scoring would happily count as the obstacle.
+SCENARIO_WORLD = "default"
+
+
+def scan_topic(world: str = SCENARIO_WORLD) -> str:
+    """The gz topic carrying the lidar scan in a given world."""
+    return f"/world/{world}/model/x500_lidar_2d_0/link/link/sensor/lidar_2d_v2/scan"
+
+
+def create_service(world: str = SCENARIO_WORLD) -> str:
+    """The gz service that spawns an entity into a given world."""
+    return f"/world/{world}/create"
 _LAUNCHER = Path("simulation/gazebo/launch/run_px4_gazebo_headless.zsh")
 _OBSTACLE_SDF = (
     '<sdf version="1.9"><model name="obstacle_front"><static>true</static>'
@@ -247,6 +268,7 @@ def run_obstacle_scenario(
     launcher = subprocess.Popen(
         (str(_LAUNCHER), "lidar-2d"),
         cwd=root,
+        env=environment,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -259,6 +281,7 @@ def run_obstacle_scenario(
         observations = observations_from_scans(
             messages, vehicle_id="x500v2_reference_01", sensor_id="lidar_2d", now=clock
         )
+        captured_at = clock()
         report = evaluate_obstacle_scenario(observations, FRONT_OBSTACLE)
     finally:
         launcher.terminate()
@@ -269,14 +292,22 @@ def run_obstacle_scenario(
     report_path = write_report(report, output_directory, now=clock)
     if world_recorder is not None:
         # The artifact is the evidence of record; world memory is the derived,
-        # perishable summary, so it is written after the report is safe on disk.
-        remember_scanned_world(
+        # perishable summary, so it is written after the report is safe on disk
+        # — but judged against the capture clock, or every scan is already stale.
+        recording = remember_scanned_world(
             observations,
             world_recorder,
             pose=SCENARIO_POSE,
             grid=SCENARIO_GRID,
-            now=clock(),
+            now=captured_at,
             artifact=str(report_path),
+        )
+        # Never swallow this: a run that remembered nothing must say so, or the
+        # empty world log reads as "the sensor saw nothing worth keeping".
+        print(
+            f"World memory: {recording.written} claim(s) recorded"
+            + (f", {recording.dropped} dropped" if recording.dropped else "")
+            + (f" — {recording.failure}" if recording.failure else "")
         )
     return report_path
 
@@ -285,14 +316,16 @@ def _gz_environment() -> dict[str, str]:
     import os
 
     # The launcher pins the Gazebo server to this interface; a client that does
-    # not match it discovers nothing.
-    return {**os.environ, "GZ_IP": "127.0.0.1"}
+    # not match it discovers nothing.  PX4_GZ_WORLD is set here rather than left
+    # to the launcher default so that the world the launcher starts and the
+    # world in every topic and service name below are the same string.
+    return {**os.environ, "GZ_IP": "127.0.0.1", "PX4_GZ_WORLD": SCENARIO_WORLD}
 
 
 def _spawn_obstacle(environment: dict[str, str]) -> None:
     result = subprocess.run(
         (
-            "gz", "service", "-s", "/world/default/create",
+            "gz", "service", "-s", create_service(),
             "--reqtype", "gz.msgs.EntityFactory", "--reptype", "gz.msgs.Boolean",
             "--timeout", "5000",
             "--req", f'name: "obstacle_front", allow_renaming: false, sdf: {json.dumps(_OBSTACLE_SDF)}',
@@ -305,7 +338,7 @@ def _spawn_obstacle(environment: dict[str, str]) -> None:
 
 def _capture_scans(scans: int, environment: dict[str, str]) -> list[dict]:
     result = subprocess.run(
-        ("gz", "topic", "-e", "-t", LIDAR_SCAN_TOPIC, "--json-output", "-n", str(scans)),
+        ("gz", "topic", "-e", "-t", scan_topic(), "--json-output", "-n", str(scans)),
         capture_output=True, text=True, timeout=60.0, check=False, env=environment,
     )
     messages = []
