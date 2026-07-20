@@ -54,18 +54,27 @@ class PiAgentClient:
     def __init__(self, *, runner: RunPi | None = None) -> None:
         self._runner = runner or _run_pi
 
-    def converse(self, session_id: str, text: str, world_context: str = "") -> PiAgentReply:
-        """Run one turn, optionally with a read-only briefing of world evidence.
+    def converse(
+        self,
+        session_id: str,
+        text: str,
+        world_context: str = "",
+        capability_context: str = "",
+    ) -> PiAgentReply:
+        """Run one turn with read-only briefings of the world and of itself.
 
-        The briefing is resolved in Python and passed in as text: Pi never gains
-        a way to read the store itself, and it sees nothing the dashboard would
-        not have shown a human.
+        Both are resolved in Python and passed in as text: Pi never gains a way
+        to read the store or the safety profile itself, sees nothing the
+        dashboard would not have shown a human, and holds no second copy of a
+        limit that `twin.yaml` already decides.
         """
         if not session_id.strip() or not text.strip():
             raise PiAgentError("Pi agent request is invalid.")
         request: dict[str, object] = {"session_id": session_id, "text": text}
         if world_context.strip():
             request["world_context"] = world_context[:_MAX_WORLD_CONTEXT_CHARS]
+        if capability_context.strip():
+            request["capability_context"] = capability_context[:_MAX_WORLD_CONTEXT_CHARS]
         try:
             response = self._runner(request)
         except PiAgentError:

@@ -18,10 +18,11 @@ from apps.api.command_gateway import AgentReply, DashboardCommandGateway, Dashbo
 from apps.dashboard.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.gateway.pi_agent import PiAgentClient
-from brain.memory.briefing import world_briefing
+from brain.memory.briefing import capability_briefing, world_briefing
 from brain.memory.graph import knowledge_view
 from brain.memory.world_map import map_view
 from brain.memory.world_memory import load_world_memory
+from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, SafetyProfileError, load_safety_profile
 from apps.gateway.telegram_mission_gateway import _execute_with_cli, _review_with_cli
 
 
@@ -48,13 +49,20 @@ def create_app(
     agent_artifact_dir: Path = Path("simulation/artifacts/agent-missions"),
     memory_dir: Path = Path("var/pi-agent/memory"),
     world_memory_path: Path = Path("var/world-memory/claims.jsonl"),
+    safety_profile_path: Path = DEFAULT_SAFETY_PROFILE_PATH,
     gateway: DashboardCommandGateway | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ByteWolf Command Gateway", version="0.1")
     pi_agent = PiAgentClient()
+    # The envelope is read once: it is the same file the SafetyGate loads, and
+    # a profile that cannot be read leaves the agent saying it does not know
+    # its limits rather than inventing one.
+    capabilities = _capability_briefing(safety_profile_path)
     command_gateway = gateway or DashboardCommandGateway(
         converse=lambda session_id, text: AgentReply(
-            **pi_agent.converse(session_id, text, _world_briefing(world_memory_path)).__dict__
+            **pi_agent.converse(
+                session_id, text, _world_briefing(world_memory_path), capabilities
+            ).__dict__
         ),
         review=_review_with_cli,
         execute=_execute_with_cli,
@@ -164,6 +172,14 @@ def create_app(
     web_root = Path(__file__).resolve().parents[1] / "dashboard" / "web"
     app.mount("/", StaticFiles(directory=web_root, html=True), name="dashboard")
     return app
+
+
+def _capability_briefing(safety_profile_path: Path) -> str:
+    """Render the agent's own envelope, or admit it is unknown."""
+    try:
+        return capability_briefing(load_safety_profile(safety_profile_path))
+    except SafetyProfileError:
+        return ""
 
 
 def _world_briefing(world_memory_path: Path) -> str:

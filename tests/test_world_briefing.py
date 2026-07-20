@@ -131,5 +131,127 @@ class BriefingBoundaryTests(unittest.TestCase):
         self.assertNotIn("world_context", seen[0])
 
 
+class MissionFeedbackLoopTests(unittest.TestCase):
+    """What the agent asked for, it can learn the outcome of.
+
+    Pi requests a plan, a human approves it, and the executor runs it in a
+    separate process the agent never sees. Before mission outcomes were
+    recorded, that was the end of the story: the agent could ask for a flight
+    and never find out whether it happened. The audit artifact closes the loop
+    by becoming a claim the next turn's briefing carries.
+    """
+
+    def test_a_finished_run_becomes_something_the_agent_can_say_next_turn(self) -> None:
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from brain.cli.artifacts import write_run_artifact
+        from brain.memory.recorder import WorldMemoryRecorder
+        from brain.memory.world_memory import load_world_memory
+        from brain.mission.execution import MissionExecution
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            world_path = root / "world" / "claims.jsonl"
+
+            write_run_artifact(
+                root / "runs",
+                MissionExecution.empty(),
+                "approved",
+                "completed",
+                None,
+                world_recorder=WorldMemoryRecorder(world_path),
+            )
+
+            memory = load_world_memory(world_path)
+            now = datetime.now(UTC)
+            briefing = world_briefing(memory.recall(now), memory.disputed(now), now=now)
+
+        self.assertIn("mission_outcome", briefing)
+        self.assertIn("completed", briefing)
+
+    def test_a_failed_run_is_reported_as_such_not_omitted(self) -> None:
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from brain.cli.artifacts import write_run_artifact
+        from brain.memory.recorder import WorldMemoryRecorder
+        from brain.memory.world_memory import load_world_memory
+        from brain.mission.execution import MissionExecution
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            world_path = root / "world" / "claims.jsonl"
+
+            write_run_artifact(
+                root / "runs",
+                MissionExecution.empty(),
+                "approved",
+                "failed",
+                "MissionPreflightError: battery below reserve",
+                world_recorder=WorldMemoryRecorder(world_path),
+            )
+
+            memory = load_world_memory(world_path)
+            now = datetime.now(UTC)
+            briefing = world_briefing(memory.recall(now), memory.disputed(now), now=now)
+
+        self.assertIn("failed", briefing)
+        self.assertIn("battery below reserve", briefing)
+
+
+class CapabilityBriefingTests(unittest.TestCase):
+    """The agent's self-model comes from the same file the gate enforces."""
+
+    def _profile(self):
+        from brain.safety.profile import load_safety_profile
+
+        return load_safety_profile()
+
+    def test_the_envelope_is_stated_in_the_units_the_gate_uses(self) -> None:
+        from brain.memory.briefing import capability_briefing
+
+        profile = self._profile()
+        text = capability_briefing(profile)
+
+        self.assertIn(f"{profile.max_altitude_m:g} m", text)
+        self.assertIn(f"{profile.max_speed_m_s:g} m/s", text)
+        self.assertIn(f"{profile.max_radius_m:g} m", text)
+        self.assertIn(f"{profile.minimum_battery_percent_to_start:g}%", text)
+
+    def test_the_briefing_frames_limits_as_refusals_not_permissions(self) -> None:
+        from brain.memory.briefing import capability_briefing
+
+        text = capability_briefing(self._profile())
+
+        self.assertIn("ne ígérd meg", text)
+        self.assertIn("gate", text)
+
+    def test_it_never_becomes_a_second_source_of_a_limit(self) -> None:
+        """Every number must come from the profile object, not from the text."""
+        from dataclasses import replace
+
+        from brain.memory.briefing import capability_briefing
+
+        tightened = replace(self._profile(), max_altitude_m=7.5)
+
+        self.assertIn("7.5 m", capability_briefing(tightened))
+
+    def test_the_envelope_reaches_pi_as_its_own_bounded_field(self) -> None:
+        from brain.memory.briefing import capability_briefing
+
+        seen: list[dict[str, object]] = []
+        client = PiAgentClient(
+            runner=lambda request: seen.append(request) or {
+                "text": "Rendben.", "requests_drone_action": False, "memory_update": "skipped"
+            }
+        )
+
+        client.converse(SESSION, "milyen magasra tudsz menni?", "", capability_briefing(self._profile()))
+
+        self.assertIn("capability_context", seen[0])
+        self.assertNotIn("world_context", seen[0], "an empty world is not sent as an empty section")
+
+
 if __name__ == "__main__":
     unittest.main()

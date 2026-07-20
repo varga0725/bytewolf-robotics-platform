@@ -1,7 +1,7 @@
 /**
  * One Pi SDK turn for the local ByteWolf dashboard.
  *
- * stdin  { session_id, text, world_context? }
+ * stdin  { session_id, text, world_context?, capability_context? }
  * stdout { text, requests_drone_action, memory_update }
  *
  * This process deliberately has no generic shell, file-edit, network, MAVSDK,
@@ -26,6 +26,7 @@ import { Type } from "typebox";
 import { extractMemoryDelta } from "./memory.mjs";
 import { diagnosticFailureMessage, runPostTurnMemoryHook, safeMemoryUpdate } from "./post_turn.mjs";
 import { systemPrompt } from "./prompt.mjs";
+import { telemetryLine } from "./telemetry_view.mjs";
 
 const ROOT = process.cwd();
 const RUNTIME_DIR = path.join(ROOT, "var", "pi-agent");
@@ -79,12 +80,12 @@ async function postTurnMemory(request, assistantReply) {
 
 async function telemetrySummary() {
   const document = await readJsonOr(path.join(ROOT, "simulation", "artifacts", "dashboard", "live-telemetry.json"), null);
-  if (!document || typeof document !== "object") {
-    return toolResult("warning", "Nincs friss telemetria.", ["Kérdezd meg, indítsam-e a szimulációt."]);
+  const view = telemetryLine(document, Date.now());
+  if (!view.usable) {
+    return toolResult("warning", view.summary, ["Kérdezd meg, indítsam-e a szimulációt."]) + `\n${view.line}`;
   }
-  const position = document.position && typeof document.position === "object" ? document.position : {};
-  return toolResult("success", "Élő telemetria olvasva.", [], ["simulation/artifacts/dashboard/live-telemetry.json"])
-    + `\nflight=${document.in_air === true ? "airborne" : document.in_air === false ? "grounded" : "unknown"}; altitude_m=${position.relative_altitude_m ?? "unknown"}; battery_percent=${document.battery_percent ?? "unknown"}`;
+  return toolResult("success", view.summary, [], ["simulation/artifacts/dashboard/live-telemetry.json"])
+    + `\n${view.line}`;
 }
 
 async function visionSummary() {
@@ -121,10 +122,12 @@ async function readRequest() {
   }
   // The briefing is optional and never trusted for length: an oversized one is
   // truncated rather than allowed to crowd out the safety instructions above it.
-  const worldContext = typeof request.world_context === "string"
-    ? request.world_context.slice(0, MAX_WORLD_CONTEXT_CHARS)
-    : "";
-  return { ...request, world_context: worldContext };
+  const bounded = (value) => (typeof value === "string" ? value.slice(0, MAX_WORLD_CONTEXT_CHARS) : "");
+  return {
+    ...request,
+    world_context: bounded(request.world_context),
+    capability_context: bounded(request.capability_context),
+  };
 }
 
 async function main() {
@@ -148,7 +151,7 @@ async function main() {
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
-    systemPromptOverride: () => systemPrompt(awaitedMemory, request.world_context),
+    systemPromptOverride: () => systemPrompt(awaitedMemory, request.world_context, request.capability_context),
     appendSystemPromptOverride: () => [],
   });
   const awaitedMemory = await memoryFor(request.session_id);

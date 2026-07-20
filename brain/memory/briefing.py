@@ -6,7 +6,11 @@ resolution the dashboard uses, and handed to the runner as bounded text. Pi
 gets no file access, no second store implementation, and no claim the resolver
 would not have shown a human.
 
-Three rules shape the text:
+The same module renders the agent's own envelope, for the same reason: an
+agent that does not know its ceiling promises a climb the gate then refuses,
+which reads as the robot changing its mind rather than a limit doing its job.
+
+Three rules shape the world text:
 
 * **Disputed subjects stay marked.** If the evidence disagrees, the agent must
   say so rather than pick a side the store refused to pick.
@@ -23,6 +27,7 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from brain.memory.world_memory import WorldClaim
+from brain.safety.profile import SafetyProfile
 
 
 MAX_BRIEFING_CLAIMS = 8
@@ -58,6 +63,36 @@ def world_briefing(
         rendered.append(line)
         used += len(line) + 1
     return "\n".join(rendered)
+
+
+def capability_briefing(profile: SafetyProfile) -> str:
+    """Tell the agent what it actually is, from the one file that decides it.
+
+    Without this the agent knows its prohibitions but not its envelope, so it
+    cheerfully offers a 40 m climb that the gate then refuses — which reads to
+    the user as the robot changing its mind, not as a limit doing its job. The
+    numbers come from the same `twin.yaml` the SafetyGate enforces; restating
+    them anywhere else would create a second source of a limit.
+
+    It is deliberately framed as *what will be refused*, not as permission: the
+    gate decides, and the agent's copy is only there so it can say no earlier
+    and honestly.
+    """
+    geofence = (
+        "van megadott geofence-poligon; azon kívülre eső célt a gate elutasít"
+        if profile.allowed_geofence is not None
+        else "nincs külön geofence-poligon a sugáron felül"
+    )
+    return "\n".join([
+        f"- Jármű: {profile.vehicle_id} (szimulált X500 V2 digital twin).",
+        f"- Maximális magasság: {profile.max_altitude_m:g} m. Efölé nem kérhetsz tervet.",
+        f"- Maximális sebesség: {profile.max_speed_m_s:g} m/s.",
+        f"- Maximális távolság a kiindulóponttól: {profile.max_radius_m:g} m; {geofence}.",
+        f"- Armoláshoz szükséges minimum akkumulátor: {profile.minimum_battery_percent_to_start:g}%.",
+        f"- Kapcsolatvesztéskor: {profile.loss_of_link_action}; ezt a PX4 hajtja végre, nem te.",
+        "- Ezeket a határokat egy determinisztikus safety gate érvényesíti a te kérésed előtt. "
+        "Ha valami ezeken kívül esik, mondd meg őszintén, hogy nem fér bele — ne ígérd meg.",
+    ])
 
 
 def _line(claim: WorldClaim, now: datetime, *, contested: bool) -> str:
