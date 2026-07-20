@@ -235,10 +235,23 @@ def _schema() -> dict[str, Any]:
         ) from error
 
 
+@lru_cache(maxsize=1)
+def _validator() -> Any:
+    """Compile the contract once rather than once per camera frame.
+
+    `jsonschema.validate` re-derives the schema on every call, and this runs on
+    every frame the camera stream publishes.
+    """
+    schema = _schema()
+    validator_class = jsonschema.validators.validator_for(schema)
+    validator_class.check_schema(schema)
+    return validator_class(schema)
+
+
 def validate_detection_document(document: object) -> None:
     """Check a detection document against the versioned contract."""
     try:
-        jsonschema.validate(document, _schema())
+        _validator().validate(document)
     except jsonschema.ValidationError as error:
         location = "/".join(str(part) for part in error.absolute_path) or "<root>"
         raise DetectionContractError(f"Detection rejected at '{location}': {error.message}") from error

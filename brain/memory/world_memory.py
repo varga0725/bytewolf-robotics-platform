@@ -116,10 +116,28 @@ def world_claim_categories() -> frozenset[str]:
     return frozenset(_schema()["properties"]["category"]["enum"])
 
 
+@lru_cache(maxsize=1)
+def _validator() -> Any:
+    """Compile the contract once instead of once per claim.
+
+    `jsonschema.validate` re-derives and re-checks the schema on every call. The
+    schema is the same file every time, so that work is pure repetition — and it
+    dominated: reading a log of five thousand claims took eleven seconds, which
+    made `/api/v1/world-map` take over a minute and the dashboard's obstacle
+    cells simply never arrive after a real survey had run.
+
+    The contract enforced is identical; only the compilation is reused.
+    """
+    schema = _schema()
+    validator_class = jsonschema.validators.validator_for(schema)
+    validator_class.check_schema(schema)
+    return validator_class(schema)
+
+
 def validate_world_claim_document(document: object) -> None:
     """Check a document against the versioned contract, raising on any breach."""
     try:
-        jsonschema.validate(document, _schema())
+        _validator().validate(document)
     except jsonschema.ValidationError as error:
         location = "/".join(str(part) for part in error.absolute_path) or "<root>"
         raise WorldMemoryError(f"World claim rejected at '{location}': {error.message}") from error

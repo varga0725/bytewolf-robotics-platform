@@ -282,5 +282,66 @@ class WorldMemoryApiTests(unittest.TestCase):
                 self.assertEqual(method("/api/v1/world-memory").status_code, 405)
 
 
+class SchemaCompilationTests(unittest.TestCase):
+    """Reading a log must not cost one schema compilation per line.
+
+    `jsonschema.validate` re-derives and re-checks the schema every call. At one
+    claim per call that is invisible; at five thousand claims — one survey's
+    worth — it took eleven seconds to read the log, which made the dashboard's
+    world map endpoint answer in over a minute and its obstacle cells never
+    arrive at all. The contract enforced is unchanged; only the compilation is
+    shared.
+    """
+
+    def test_the_contract_is_compiled_once_and_reused(self) -> None:
+        from brain.memory import world_memory
+
+        world_memory._validator.cache_clear()
+        first = world_memory._validator()
+        second = world_memory._validator()
+
+        self.assertIs(first, second)
+
+    def test_validation_no_longer_goes_through_the_recompiling_entry_point(self) -> None:
+        """`jsonschema.validate` is the call that re-derives the schema each time.
+
+        Asserting it is not used is what keeps the cost from creeping back: the
+        symptom — a world map endpoint taking a minute — appears only with
+        thousands of claims, long after the change that caused it.
+        """
+        import jsonschema
+        from unittest import mock
+
+        from brain.memory import world_memory
+
+        with mock.patch.object(jsonschema, "validate", side_effect=AssertionError("recompiled")):
+            for _ in range(50):
+                world_memory.validate_world_claim_document(_claim_document())
+
+    def test_the_cached_validator_still_refuses_a_broken_claim(self) -> None:
+        from brain.memory import world_memory
+
+        document = _claim_document()
+        del document["evidence"]["confidence"]
+
+        with self.assertRaises(WorldMemoryError):
+            world_memory.validate_world_claim_document(document)
+
+
+def _claim_document() -> dict:
+    return {
+        "contract_version": "v0.1",
+        "subject": "obstacle:north-wall",
+        "category": "obstacle",
+        "statement": "Fal észak felé.",
+        "evidence": {
+            "source": "gz lidar_2d",
+            "observed_at": NOW.isoformat(),
+            "expires_at": (NOW + timedelta(minutes=5)).isoformat(),
+            "confidence": 0.9,
+        },
+    }
+
+
 if __name__ == "__main__":
     unittest.main()
