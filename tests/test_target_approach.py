@@ -144,9 +144,17 @@ class FailClosedTests(unittest.TestCase):
         self.assertIsNone(decision.waypoint)
 
     def test_a_target_outside_the_geofence_is_refused_by_the_gate(self) -> None:
-        # The vehicle sits at the north geofence edge (twin fence is a +/-30 box);
-        # a marker projecting further north puts the target outside it.
-        decision = _plan(_marker_frame((150, 70, 20, 20)), yaw_deg=90.0, vehicle_north_m=29.0)
+        # The vehicle sits just inside the fence's north edge, wherever the
+        # active contract puts it; a marker projecting further north puts the
+        # target outside. Hardcoding 29 m tested this only while the fence was a
+        # 30 m box — widen the contract and the vehicle starts well inside it,
+        # so the refusal this test is named after quietly stops happening.
+        profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
+        assert profile.allowed_geofence is not None
+        north_edge_m = max(north for north, _east in profile.allowed_geofence.vertices_m)
+        decision = _plan(
+            _marker_frame((150, 70, 20, 20)), yaw_deg=90.0, vehicle_north_m=north_edge_m - 1.0
+        )
 
         self.assertFalse(decision.accepted)
         self.assertIsNone(decision.waypoint)

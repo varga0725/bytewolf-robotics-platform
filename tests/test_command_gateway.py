@@ -108,7 +108,11 @@ class RejectionTests(unittest.TestCase):
         self.assertEqual(rejection.source_text, "Take off to 500 metres then land")
 
     def test_an_out_of_range_waypoint_is_rejected(self) -> None:
-        result = _interpret("Take off to 2 m, fly 500 m north, then land")
+        # Derived from the active envelope: a fixed 500 m was out of range only
+        # while the radius was 50 m, and became a perfectly legal waypoint the
+        # moment the contract widened.
+        beyond_m = int(_PROFILE.max_radius_m) + 100
+        result = _interpret(f"Take off to 2 m, fly {beyond_m} m north, then land")
 
         self.assertFalse(result.accepted)
         self.assertTrue(result.rejections)

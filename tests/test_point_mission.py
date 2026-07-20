@@ -30,6 +30,16 @@ def _profile():
     return load_mission_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
 
 
+def _beyond_the_radius_m() -> float:
+    """A distance the active contract must refuse, whatever it currently is.
+
+    A fixed 400 m was out of range only while the radius was 50 m; it became a
+    legal waypoint the moment the envelope widened, and the test that named
+    itself "outside the radius" would have started asserting the opposite.
+    """
+    return _profile().max_radius_m + 100.0
+
+
 class PointMissionSpecTests(unittest.TestCase):
     def test_the_plan_flies_out_holds_and_returns(self) -> None:
         spec = build_point_mission_spec(north_m=20, east_m=-10, altitude_m=5, profile=_profile())
@@ -94,7 +104,7 @@ class PointMissionReviewTests(unittest.TestCase):
 
     def test_a_point_outside_the_radius_is_refused_and_writes_nothing(self) -> None:
         with self.assertRaisesRegex(PointMissionError, "radius"):
-            self._review(north_m=400.0)
+            self._review(north_m=_beyond_the_radius_m())
 
         self.assertEqual(list(self.plans.iterdir()), [], "an unapproved plan must not exist on disk")
 
@@ -166,7 +176,7 @@ class PointMissionApiTests(unittest.TestCase):
         self.assertEqual(self.executed, [])
 
     def test_a_refused_point_reports_the_constraint_and_stays_unapprovable(self) -> None:
-        refused = self._pick(north_m=400.0)
+        refused = self._pick(north_m=_beyond_the_radius_m())
 
         self.assertEqual(refused.status_code, 422)
         self.assertIn("radius", refused.json()["detail"])

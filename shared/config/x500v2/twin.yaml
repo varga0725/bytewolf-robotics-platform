@@ -83,15 +83,28 @@ simulation:
 safety:
   max_altitude_m: 20
   max_speed_m_s: 3
-  max_radius_m: 50
+  # 2 km. This is a simulation envelope, not a flight-endurance claim: the twin
+  # has no measured battery (capacity_mah is null with provenance), so nothing
+  # here says the vehicle can reach 2 km and come back. At the 3 m/s limit the
+  # transit alone is about 11 minutes each way, and the only thing standing
+  # between a distant waypoint and a dead battery is the runtime watchdog and
+  # PX4's own failsafe. Treat a long-range run as a simulator exercise until an
+  # endurance figure exists to size it against.
+  max_radius_m: 2000
   # Local north/east metres relative to launch. This guard is evaluated before
   # arming; PX4's runtime fence remains an additional future integration.
+  #
+  # The square stays strictly inside the radius circle, as it always has: its
+  # half-diagonal is 1697 m against the 2000 m limit, so the fence is the
+  # tighter bound in every direction and the radius can never be reached without
+  # the fence refusing first. Widening one without the other would leave corners
+  # that pass one check and fail the other for reasons nobody could see.
   allowed_geofence:
     vertices_m:
-      - [-30, -30]
-      - [30, -30]
-      - [30, 30]
-      - [-30, 30]
+      - [-1200, -1200]
+      - [1200, -1200]
+      - [1200, 1200]
+      - [-1200, 1200]
   minimum_battery_percent_to_start: 40
   loss_of_link_action: RTL
 

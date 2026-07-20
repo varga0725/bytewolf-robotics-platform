@@ -57,6 +57,15 @@ def _profile():
     return load_mission_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
 
 
+def _centre_whose_edge_leaves_the_radius_m() -> float:
+    """A sweep centre the active contract must refuse, whatever the radius is.
+
+    The point of the check is that reach is measured from the area's *far edge*,
+    not its centre. A fixed 40 m tested that only while the limit was 50 m.
+    """
+    return _profile().max_radius_m + 10.0
+
+
 class SurveyPatternTests(unittest.TestCase):
     def test_the_sweep_stays_inside_the_requested_circle(self) -> None:
         waypoints = survey_waypoints(centre_north_m=0, centre_east_m=0, radius_m=30, spacing_m=10)
@@ -128,7 +137,7 @@ class SurveyCompilationTests(unittest.TestCase):
         self.assertEqual(len(report.mission.commands), 12, "takeoff + 10 waypoints + RTL")
 
     def test_an_area_whose_edge_leaves_the_radius_is_refused(self) -> None:
-        report = validate_and_compile_mission_spec(self._spec(centre_north_m=40.0), _profile())
+        report = validate_and_compile_mission_spec(self._spec(centre_north_m=_centre_whose_edge_leaves_the_radius_m()), _profile())
 
         self.assertFalse(report.approved)
         self.assertIn("beyond the mission radius", "; ".join(i.message for i in report.issues))
@@ -231,7 +240,7 @@ class SurveyApiTests(unittest.TestCase):
         self.assertEqual(self.executed, [], "reviewing is not executing")
 
     def test_a_survey_reaching_past_the_radius_is_refused(self) -> None:
-        response = self._request(centre_north_m=40.0)
+        response = self._request(centre_north_m=_centre_whose_edge_leaves_the_radius_m())
 
         self.assertEqual(response.status_code, 422)
         self.assertIn("radius", response.json()["detail"])

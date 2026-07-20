@@ -78,8 +78,9 @@ circle, and every bound in it is a **refusal, not a clamp**:
   quietly widened spacing is a survey with holes in it that still reports
   success;
 - the radius check is on the **reach** (`hypot(centre) + radius`), not on the
-  centre: a 30 m sweep centred 40 m out would otherwise pass a 50 m limit and
-  fly to 70 m.
+  centre: a 30 m sweep centred 40 m out reaches 70 m, so against a 50 m limit it
+  would otherwise pass while flying half again as far as allowed. The numbers
+  are an illustration; the limit in force is whatever `twin.yaml` says.
 
 ## Mapping while flying
 
