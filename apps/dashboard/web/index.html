@@ -79,6 +79,7 @@
       <button type="button" data-target="page-state" aria-current="page"><span class="nav-icon">📡</span>Állapot</button>
       <button type="button" data-target="page-camera"><span class="nav-icon">🎥</span>Kamera</button>
       <button type="button" data-target="page-chat"><span class="nav-icon">💬</span>Chat</button>
+      <button type="button" data-target="page-mission"><span class="nav-icon">🎯</span>Küldetés</button>
       <button type="button" data-target="page-memory"><span class="nav-icon">🧠</span>Memória</button>
       <button type="button" data-target="page-world"><span class="nav-icon">🗺️</span>Világ</button>
     </div>
@@ -130,6 +131,37 @@
           <button id="approve" class="button">Indítás</button> <button id="cancel" class="button cancel">Mégse</button>
         </div>
         <form id="composer" class="composer"><input id="prompt" placeholder="Beszélj ByteWolf-fal…" autocomplete="off"><button class="button">Küldés</button></form>
+      </div>
+    </section>
+
+    <section class="page" id="page-mission">
+      <div class="page-head"><h1 class="page-title">Küldetés</h1><span id="mission-hint" class="memory-note">Kattints a térképre egy célpontra.</span></div>
+      <div class="split">
+        <div class="panel">
+          <div class="label">Célpont kijelölése (észak felfelé, méterben a kiindulóponttól)</div>
+          <p class="memory-note">A szürke gyűrű a repülési sugárkorlát. A zöld cellák mért akadályok — de a térkép csak foglaltságot ismer, szabad területet nem állít, tehát a kijelölt út nem „ellenőrzötten üres".</p>
+          <svg id="mission-map" class="map" aria-label="Küldetés térkép"></svg>
+          <p id="mission-target" class="memory-note">Nincs kijelölt pont.</p>
+        </div>
+        <div class="panel">
+          <div class="label">A küldetés célja</div>
+          <form id="mission-form" class="memory-list">
+            <input id="mission-goal" class="camera-select" maxlength="240" placeholder="Pl. Nézd meg a kert végét, és szólj, ha odaértél." aria-label="A küldetés célja">
+            <label class="memory-note" for="mission-altitude">Magasság (m)
+              <input id="mission-altitude" class="camera-select" type="number" min="1" max="20" step="0.5" value="4">
+            </label>
+            <button id="mission-review" class="button" type="submit">Terv készítése</button>
+          </form>
+          <p id="mission-status" class="memory-note">A terv a SafetyGate ellenőrzése után jelenik meg. Indítani csak külön jóváhagyással lehet.</p>
+          <div id="mission-approval" class="approval hidden">
+            <b>Jóváhagyás szükséges</b>
+            <p id="mission-summary"></p>
+            <button id="mission-start" class="button" type="button">Indítás</button>
+            <button id="mission-cancel" class="button cancel" type="button">Mégse</button>
+          </div>
+          <div class="label" style="margin-top:14px">Küldetés-napló</div>
+          <div id="mission-log" class="memory-list"><div class="memory-note">Még nincs indított küldetés.</div></div>
+        </div>
       </div>
     </section>
 
@@ -186,7 +218,7 @@ const note=(text,className='memory-note')=>{const element=document.createElement
 function showPage(id){for(const page of document.querySelectorAll('.page'))page.dataset.active=String(page.id===id);
   for(const button of document.querySelectorAll('.nav button')){if(button.dataset.target===id)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current')}
   location.hash=id.replace('page-','');
-  if(id==='page-world'){refreshWorld()}if(id==='page-memory'){refreshMemory()}}
+  if(id==='page-world'){refreshWorld()}if(id==='page-memory'){refreshMemory()}if(id==='page-mission'){refreshMissionMap()}}
 $('nav').addEventListener('click',event=>{const button=event.target.closest('button');if(button)showPage(button.dataset.target)});
 
 async function api(path,body,method='POST'){const r=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw Error(d.detail||'A kérés sikertelen');return d}
@@ -281,6 +313,55 @@ async function refreshWorld(){const list=$('world-list');
   refreshKnowledge()}
 $('refresh-world').onclick=refreshWorld;
 
+let missionPoint=null;let missionPlan=null;let missionRadiusM=50;let missionScale=1;
+function missionLog(text){const list=$('mission-log');if(list.querySelector('.memory-note'))list.replaceChildren();const row=document.createElement('div');row.className='memory-item';row.textContent=`${new Date().toLocaleTimeString('hu-HU')} · ${text}`;list.prepend(row)}
+function drawMissionMap(cells){const svg=$('mission-map');svg.replaceChildren();const size=400,centre=size/2;
+  const reach=cells.length?Math.max(...cells.map(c=>Math.hypot(c.north_m,c.east_m))):0;
+  const span=Math.max(missionRadiusM*1.15,reach+4);missionScale=(size/2)/span;
+  svg.setAttribute('viewBox',`0 0 ${size} ${size}`);
+  svg.append(svgElement('line',{class:'axis',x1:centre,y1:0,x2:centre,y2:size}),svgElement('line',{class:'axis',x1:0,y1:centre,x2:size,y2:centre}));
+  svg.append(svgElement('circle',{cx:centre,cy:centre,r:missionRadiusM*missionScale,fill:'none',stroke:'#315461','stroke-dasharray':'5 5'}));
+  for(const cell of cells){const side=Math.max(3,(Number(cell.cell_size_m)||2)*missionScale);
+    svg.append(svgElement('rect',{class:cell.disputed?'cell disputed':'cell',x:centre+cell.east_m*missionScale-side/2,y:centre-cell.north_m*missionScale-side/2,width:side,height:side,rx:2}))}
+  svg.append(svgElement('circle',{cx:centre,cy:centre,r:4,fill:'#8ee5d2'}));
+  const north=svgElement('text',{x:centre+6,y:14});north.textContent='É';svg.append(north);
+  const scaleNote=svgElement('text',{x:6,y:size-8});scaleNote.textContent=`sugárkorlát: ${missionRadiusM} m`;svg.append(scaleNote);
+  if(missionPoint){svg.append(svgElement('circle',{cx:centre+missionPoint.east_m*missionScale,cy:centre-missionPoint.north_m*missionScale,r:6,fill:'#d9a84d'}));
+    svg.append(svgElement('line',{x1:centre,y1:centre,x2:centre+missionPoint.east_m*missionScale,y2:centre-missionPoint.north_m*missionScale,stroke:'#d9a84d','stroke-dasharray':'4 4'}))}}
+$('mission-map').addEventListener('click',event=>{const svg=$('mission-map');const box=svg.getBoundingClientRect();
+  if(!box.width||!box.height)return;const size=400;const scaleX=size/box.width,scaleY=size/box.height;
+  const x=(event.clientX-box.left)*scaleX,y=(event.clientY-box.top)*scaleY;const centre=size/2;
+  missionPoint={north_m:(centre-y)/missionScale,east_m:(x-centre)/missionScale};
+  const distance=Math.hypot(missionPoint.north_m,missionPoint.east_m);
+  $('mission-target').textContent=`Kijelölt pont: É ${missionPoint.north_m.toFixed(1)} m, K ${missionPoint.east_m.toFixed(1)} m (${distance.toFixed(1)} m-re a kiindulóponttól).`;
+  refreshMissionMap()});
+async function refreshMissionMap(){try{const map=await api('/api/v1/world-map',undefined,'GET');drawMissionMap(map.cells||[])}catch{drawMissionMap([])}}
+$('mission-form').addEventListener('submit',async event=>{event.preventDefault();
+  if(!missionPoint){$('mission-status').textContent='Előbb jelölj ki egy pontot a térképen.';return}
+  const goal=$('mission-goal').value.trim();
+  if(!goal){$('mission-status').textContent='Írd le, mi a küldetés célja.';return}
+  $('mission-status').textContent='Biztonsági ellenőrzés fut…';
+  try{const plan=await api('/api/v1/missions/point',{north_m:missionPoint.north_m,east_m:missionPoint.east_m,altitude_m:Number($('mission-altitude').value),goal});
+    missionPlan=plan.plan_id;
+    $('mission-summary').textContent=`${plan.summary} Cél: ${plan.goal} · lépések: ${(plan.steps||[]).join(' → ')}`;
+    $('mission-approval').classList.remove('hidden');
+    $('mission-status').textContent='A SafetyGate jóváhagyta a tervet. Indítani csak te tudsz.';
+    missionLog('Terv jóváhagyásra vár: '+plan.summary)}
+  catch(error){missionPlan=null;$('mission-approval').classList.add('hidden');$('mission-status').textContent='A safety réteg elutasította: '+error.message;missionLog('Elutasítva: '+error.message)}});
+$('mission-start').onclick=async()=>{if(!missionPlan)return;
+  try{const started=await api('/api/v1/plans/approve',{plan_id:missionPlan});missionLog('Indítva: '+started.text);
+    $('mission-status').textContent='A küldetés fut; jelzek, ha megérkezett.';
+    monitorMission(started.plan_id)}
+  catch(error){$('mission-status').textContent='Nem indítható: '+error.message}
+  missionPlan=null;$('mission-approval').classList.add('hidden')};
+$('mission-cancel').onclick=async()=>{if(missionPlan){try{await api('/api/v1/plans/cancel',{plan_id:missionPlan})}catch{}}
+  missionPlan=null;$('mission-approval').classList.add('hidden');$('mission-status').textContent='Nem indítottam küldetést.';missionLog('Visszavonva')};
+async function monitorMission(planId){const timer=setInterval(async()=>{
+  try{const r=await fetch(`/api/v1/plans/${planId}/status`,{cache:'no-store'});const d=await r.json();
+    if(!r.ok){if(r.status>=400&&r.status<500){clearInterval(timer);missionLog('Státusz nem érvényes: '+(d.detail||'ismeretlen terv'))}return}
+    if(d.status==='completed'){clearInterval(timer);$('mission-status').textContent='Megérkezett és visszatért.';missionLog('✅ '+d.message);refreshMissionMap()}
+    else if(d.status==='failed'){clearInterval(timer);$('mission-status').textContent='A küldetés hibával zárult.';missionLog('⚠️ '+d.message)}}
+  catch{}},1000)}
 async function refresh(){try{const r=await fetch('/api/v1/telemetry',{cache:'no-store'});const d=await r.json();if(!r.ok)throw Error();
     $('health').textContent=d.captured_at?'Élő telemetria':'Telemetria hiányzik';
     $('flight').textContent=d.in_air===true?'LEVEGŐBEN':d.in_air===false?'FÖLDÖN':'ISMERETLEN';
@@ -311,6 +392,6 @@ async function refreshCamera(){if(cameraRefreshing)return;cameraRefreshing=true;
 $('camera-select').addEventListener('change',event=>{cameraSensor=event.target.value;cameraEtag=null;clearDetections();refreshCamera()});
 
 if(location.hash)showPage('page-'+location.hash.replace('#',''));
-refresh();refreshCamera();refreshMemory();refreshWorld();
+refresh();refreshCamera();refreshMemory();refreshWorld();refreshMissionMap();
 setInterval(refresh,1000);setInterval(refreshCamera,250);setInterval(refreshWorld,5000);
 </script></body></html>

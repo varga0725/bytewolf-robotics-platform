@@ -63,6 +63,19 @@ class DashboardCommandGateway:
             memory_update=memory_update,
         )
 
+    def propose(self, session_id: str, plan_id: str, text: str) -> DashboardReply:
+        """Register an already-reviewed plan as this session's pending mission.
+
+        The map page reviews its own plan — a picked point needs no language
+        model — but the approval boundary must stay exactly the same one the
+        chat path uses, so the plan enters through this single pending slot and
+        leaves only through approve or cancel.
+        """
+        if not plan_id.strip():
+            raise ValueError("A proposed mission needs a plan.")
+        self._pending_by_session[session_id] = plan_id
+        return DashboardReply(text, "awaiting_approval", plan_id=plan_id, approval_required=True)
+
     def approve(self, session_id: str, plan_id: str) -> DashboardReply:
         self._require_pending(session_id, plan_id)
         self._pending_by_session.pop(session_id)

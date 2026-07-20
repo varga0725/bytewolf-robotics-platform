@@ -17,11 +17,13 @@ from pydantic import BaseModel, Field
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway, DashboardReply
 from apps.dashboard.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
+from apps.api.point_mission import PointMissionError, review_point_mission
 from apps.gateway.pi_agent import PiAgentClient
 from brain.memory.briefing import capability_briefing, world_briefing
 from brain.memory.graph import knowledge_view
 from brain.memory.world_map import map_view
 from brain.memory.world_memory import load_world_memory
+from brain.mission_spec.validation import load_mission_safety_profile
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, SafetyProfileError, load_safety_profile
 from apps.gateway.telegram_mission_gateway import _execute_with_cli, _review_with_cli
 
@@ -32,6 +34,13 @@ class ChatRequest(BaseModel):
 
 class PlanRequest(BaseModel):
     plan_id: str
+
+
+class PointMissionRequest(BaseModel):
+    north_m: float
+    east_m: float
+    altitude_m: float = Field(gt=0)
+    goal: str = Field(min_length=1, max_length=240)
 
 
 class MemoryFactRequest(BaseModel):
@@ -106,6 +115,35 @@ def create_app(
     @app.post("/api/v1/plans/cancel")
     def cancel(request: PlanRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
         return _handle_gateway(lambda: command_gateway.cancel(_session(x_bytewolf_session), request.plan_id))
+
+    @app.post("/api/v1/missions/point")
+    def point_mission(
+        request: PointMissionRequest, x_bytewolf_session: str = Header(max_length=128)
+    ) -> dict[str, object]:
+        """Review a point picked on the map, and offer it for approval.
+
+        This never starts a flight. It validates through the same MissionSpec
+        compiler and SafetyGate as every other path, writes the reviewed plan
+        with its approval proof, and hands the plan to the session's single
+        pending slot — where only an explicit approval can move it further.
+        """
+        session = _session(x_bytewolf_session)
+        try:
+            mission = review_point_mission(
+                north_m=request.north_m,
+                east_m=request.east_m,
+                altitude_m=request.altitude_m,
+                goal=request.goal,
+                profile=load_mission_safety_profile(safety_profile_path),
+            )
+        except PointMissionError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        reply = _handle_gateway(
+            lambda: command_gateway.propose(
+                session, mission.plan_id, f"Terv kész: {mission.summary} Indítsam?"
+            )
+        )
+        return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
 
     @app.get("/api/v1/memory")
     def memory(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
