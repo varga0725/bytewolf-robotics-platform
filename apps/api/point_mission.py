@@ -23,6 +23,7 @@ from typing import Any
 from uuid import uuid4
 
 from brain.mission_spec.reviewed_plan import default_plan_path, write_reviewed_plan
+from brain.mission_spec.survey import SurveyPatternError, survey_waypoints
 from brain.mission_spec.validation import (
     MissionSafetyProfile,
     validate_and_compile_mission_spec,
@@ -111,6 +112,100 @@ def build_point_mission_spec(
     }
 
 
+def build_survey_mission_spec(
+    *,
+    centre_north_m: float,
+    centre_east_m: float,
+    radius_m: float,
+    spacing_m: float,
+    altitude_m: float,
+    profile: MissionSafetyProfile,
+    mission_id: str | None = None,
+) -> dict[str, Any]:
+    """Compose a sweep of one area as a single reviewable step.
+
+    The document stays readable — climb, sweep this circle, come home — while
+    the compiler turns the sweep into individually gate-checked waypoints. The
+    spec is v0.2 because v0.1 is frozen: a document means what its own version
+    said it meant.
+    """
+    if altitude_m <= 0:
+        raise PointMissionError("A survey needs a positive altitude.")
+    return {
+        "schema_version": "0.2",
+        "mission_id": mission_id or str(uuid4()),
+        "vehicle_id": profile.vehicle_id,
+        "intent": "inspect_area",
+        "constraints": {
+            "max_altitude_m": profile.max_altitude_m,
+            "max_speed_m_s": profile.max_speed_m_s,
+            "max_radius_m": profile.max_radius_m,
+            "minimum_battery_percent_to_start": profile.minimum_battery_percent_to_start,
+            "loss_of_link_action": profile.loss_of_link_action,
+        },
+        "steps": [
+            {"type": "TAKEOFF", "altitude_m": float(altitude_m)},
+            {
+                "type": "SURVEY_AREA",
+                "centre_north_m": float(centre_north_m),
+                "centre_east_m": float(centre_east_m),
+                "radius_m": float(radius_m),
+                "spacing_m": float(spacing_m),
+                "altitude_m": float(altitude_m),
+            },
+            {"type": "RTL"},
+        ],
+        "abort_policy": {
+            "on_timeout": "RTL",
+            "on_low_battery": "RTL",
+            "on_position_invalid": "LAND",
+        },
+    }
+
+
+def review_survey_mission(
+    *,
+    centre_north_m: float,
+    centre_east_m: float,
+    radius_m: float,
+    spacing_m: float,
+    altitude_m: float,
+    goal: str,
+    profile: MissionSafetyProfile,
+    plan_directory: Path | None = None,
+) -> PointMission:
+    """Validate a requested sweep and, if approved, write the reviewed plan."""
+    try:
+        legs = len(
+            survey_waypoints(
+                centre_north_m=centre_north_m,
+                centre_east_m=centre_east_m,
+                radius_m=radius_m,
+                spacing_m=spacing_m,
+            )
+        )
+    except SurveyPatternError as error:
+        raise PointMissionError(str(error)) from error
+    spec = build_survey_mission_spec(
+        centre_north_m=centre_north_m,
+        centre_east_m=centre_east_m,
+        radius_m=radius_m,
+        spacing_m=spacing_m,
+        altitude_m=altitude_m,
+        profile=profile,
+    )
+    return _review_and_write(
+        spec,
+        goal=goal,
+        profile=profile,
+        plan_directory=plan_directory,
+        summary=(
+            f"{radius_m:g} m sugarú terület felderítése {spacing_m:g} m-es sávokkal, "
+            f"{altitude_m:g} m magasan — {legs} waypoint, majd visszatérés."
+        ),
+    )
+
+
 def review_point_mission(
     *,
     north_m: float,
@@ -127,14 +222,36 @@ def review_point_mission(
     safety layer says no: an unapproved plan file on disk is a plan somebody can
     later mistake for an approved one.
     """
-    goal_text = " ".join(goal.split())
-    if not goal_text:
-        raise PointMissionError("A mission needs a stated goal.")
-    if len(goal_text) > MAX_GOAL_CHARS:
-        raise PointMissionError(f"A mission goal must be at most {MAX_GOAL_CHARS} characters.")
     spec = build_point_mission_spec(
         north_m=north_m, east_m=east_m, altitude_m=altitude_m, profile=profile, hold_s=hold_s
     )
+    distance_m = (north_m**2 + east_m**2) ** 0.5
+    return _review_and_write(
+        spec,
+        goal=goal,
+        profile=profile,
+        plan_directory=plan_directory,
+        summary=(
+            f"{altitude_m:g} m magasan {distance_m:.0f} m-re "
+            f"(É {north_m:+.0f} m, K {east_m:+.0f} m), majd visszatérés."
+        ),
+    )
+
+
+def _review_and_write(
+    spec: dict[str, Any],
+    *,
+    goal: str,
+    profile: MissionSafetyProfile,
+    plan_directory: Path | None,
+    summary: str,
+) -> PointMission:
+    """The one path from a composed spec to an approved plan on disk.
+
+    Point and survey requests differ only in what they compose; they must not
+    differ in how they are reviewed, written, or refused.
+    """
+    goal_text = _admit_goal(goal)
     report = validate_and_compile_mission_spec(spec, profile)
     if not report.approved or report.mission is None:
         raise PointMissionError(
@@ -146,20 +263,24 @@ def review_point_mission(
         else plan_directory / f"{spec['mission_id']}.mission-spec.json"
     )
     write_reviewed_plan(plan_path, spec, BUILDER_NAME)
-    _write_goal_record(plan_path, spec["mission_id"], goal_text)
-    steps = tuple(str(step["type"]) for step in spec["steps"])
-    distance_m = (north_m**2 + east_m**2) ** 0.5
+    _write_goal_record(plan_path, str(spec["mission_id"]), goal_text)
     return PointMission(
         plan_id=plan_path.name,
         mission_id=str(spec["mission_id"]),
         plan_path=plan_path,
         goal=goal_text,
-        steps=steps,
-        summary=(
-            f"{altitude_m:g} m magasan {distance_m:.0f} m-re "
-            f"(É {north_m:+.0f} m, K {east_m:+.0f} m), majd visszatérés."
-        ),
+        steps=tuple(str(step["type"]) for step in spec["steps"]),
+        summary=summary,
     )
+
+
+def _admit_goal(goal: str) -> str:
+    goal_text = " ".join(goal.split())
+    if not goal_text:
+        raise PointMissionError("A mission needs a stated goal.")
+    if len(goal_text) > MAX_GOAL_CHARS:
+        raise PointMissionError(f"A mission goal must be at most {MAX_GOAL_CHARS} characters.")
+    return goal_text
 
 
 def _write_goal_record(plan_path: Path, mission_id: str, goal: str) -> None:

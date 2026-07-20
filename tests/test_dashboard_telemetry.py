@@ -185,6 +185,7 @@ class DashboardTelemetryTests(unittest.TestCase):
                         "battery_percent": None,
                         "in_air": False,
                         "captured_at": None,
+                        "heading_deg": None,
                     })
                 with self.assertRaises(HTTPError) as error:
                     urlopen(f"{base_url}/not-a-control-endpoint", data=b"{}")
@@ -233,6 +234,8 @@ class DashboardTelemetryTests(unittest.TestCase):
                                 "battery_percent": None,
                                 "in_air": payload["in_air"],
                                 "captured_at": payload.get("captured_at"),
+                                # Absent from the payload, so unknown rather than north.
+                                "heading_deg": None,
                             })
             finally:
                 self._stop_server(server, thread)

@@ -146,7 +146,19 @@
         <div class="panel">
           <div class="label">A küldetés célja</div>
           <form id="mission-form" class="memory-list">
+            <div class="memory-edit" role="radiogroup" aria-label="Küldetés típusa">
+              <label class="memory-note"><input type="radio" name="mission-kind" value="point" checked> Célpont</label>
+              <label class="memory-note"><input type="radio" name="mission-kind" value="survey"> Felderítés</label>
+            </div>
             <input id="mission-goal" class="camera-select" maxlength="240" placeholder="Pl. Nézd meg a kert végét, és szólj, ha odaértél." aria-label="A küldetés célja">
+            <div id="survey-fields" class="memory-edit hidden">
+              <label class="memory-note" for="survey-radius">Sugár (m)
+                <input id="survey-radius" class="camera-select" type="number" min="2" max="50" step="1" value="30">
+              </label>
+              <label class="memory-note" for="survey-spacing">Sávtávolság (m)
+                <input id="survey-spacing" class="camera-select" type="number" min="1" max="15" step="1" value="10">
+              </label>
+            </div>
             <label class="memory-note" for="mission-altitude">Magasság (m)
               <input id="mission-altitude" class="camera-select" type="number" min="1" max="20" step="0.5" value="4">
             </label>
@@ -326,6 +338,8 @@ function drawMissionMap(cells){const svg=$('mission-map');svg.replaceChildren();
   svg.append(svgElement('circle',{cx:centre,cy:centre,r:4,fill:'#8ee5d2'}));
   const north=svgElement('text',{x:centre+6,y:14});north.textContent='É';svg.append(north);
   const scaleNote=svgElement('text',{x:6,y:size-8});scaleNote.textContent=`sugárkorlát: ${missionRadiusM} m`;svg.append(scaleNote);
+  if(missionPoint&&missionKind()==='survey'){const radius=Number(($('survey-radius')||{}).value||0);
+    if(radius>0)svg.append(svgElement('circle',{cx:centre+missionPoint.east_m*missionScale,cy:centre-missionPoint.north_m*missionScale,r:radius*missionScale,fill:'rgba(217,168,77,.12)',stroke:'#d9a84d'}))}
   if(missionPoint){svg.append(svgElement('circle',{cx:centre+missionPoint.east_m*missionScale,cy:centre-missionPoint.north_m*missionScale,r:6,fill:'#d9a84d'}));
     svg.append(svgElement('line',{x1:centre,y1:centre,x2:centre+missionPoint.east_m*missionScale,y2:centre-missionPoint.north_m*missionScale,stroke:'#d9a84d','stroke-dasharray':'4 4'}))}}
 $('mission-map').addEventListener('click',event=>{const svg=$('mission-map');const box=svg.getBoundingClientRect();
@@ -336,12 +350,22 @@ $('mission-map').addEventListener('click',event=>{const svg=$('mission-map');con
   $('mission-target').textContent=`Kijelölt pont: É ${missionPoint.north_m.toFixed(1)} m, K ${missionPoint.east_m.toFixed(1)} m (${distance.toFixed(1)} m-re a kiindulóponttól).`;
   refreshMissionMap()});
 async function refreshMissionMap(){try{const map=await api('/api/v1/world-map',undefined,'GET');drawMissionMap(map.cells||[])}catch{drawMissionMap([])}}
+function missionKind(){const chosen=document.querySelector('input[name="mission-kind"]:checked');return chosen?chosen.value:'point'}
+for(const radio of document.querySelectorAll('input[name="mission-kind"]'))radio.addEventListener('change',()=>{
+  $('survey-fields').classList.toggle('hidden',missionKind()!=='survey');
+  $('mission-hint').textContent=missionKind()==='survey'?'Kattints a felderítendő terület közepére.':'Kattints a térképre egy célpontra.';
+  refreshMissionMap()});
 $('mission-form').addEventListener('submit',async event=>{event.preventDefault();
   if(!missionPoint){$('mission-status').textContent='Előbb jelölj ki egy pontot a térképen.';return}
   const goal=$('mission-goal').value.trim();
   if(!goal){$('mission-status').textContent='Írd le, mi a küldetés célja.';return}
   $('mission-status').textContent='Biztonsági ellenőrzés fut…';
-  try{const plan=await api('/api/v1/missions/point',{north_m:missionPoint.north_m,east_m:missionPoint.east_m,altitude_m:Number($('mission-altitude').value),goal});
+  const survey=missionKind()==='survey';
+  const endpoint=survey?'/api/v1/missions/survey':'/api/v1/missions/point';
+  const body=survey
+    ?{centre_north_m:missionPoint.north_m,centre_east_m:missionPoint.east_m,radius_m:Number($('survey-radius').value),spacing_m:Number($('survey-spacing').value),altitude_m:Number($('mission-altitude').value),goal}
+    :{north_m:missionPoint.north_m,east_m:missionPoint.east_m,altitude_m:Number($('mission-altitude').value),goal};
+  try{const plan=await api(endpoint,body);
     missionPlan=plan.plan_id;
     $('mission-summary').textContent=`${plan.summary} Cél: ${plan.goal} · lépések: ${(plan.steps||[]).join(' → ')}`;
     $('mission-approval').classList.remove('hidden');

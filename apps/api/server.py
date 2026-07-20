@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway, DashboardReply
 from apps.dashboard.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
-from apps.api.point_mission import PointMissionError, review_point_mission
+from apps.api.point_mission import PointMissionError, review_point_mission, review_survey_mission
 from apps.gateway.pi_agent import PiAgentClient
 from brain.memory.briefing import capability_briefing, world_briefing
 from brain.memory.graph import knowledge_view
@@ -34,6 +34,15 @@ class ChatRequest(BaseModel):
 
 class PlanRequest(BaseModel):
     plan_id: str
+
+
+class SurveyMissionRequest(BaseModel):
+    centre_north_m: float
+    centre_east_m: float
+    radius_m: float = Field(ge=2)
+    spacing_m: float = Field(ge=1, le=15)
+    altitude_m: float = Field(gt=0)
+    goal: str = Field(min_length=1, max_length=240)
 
 
 class PointMissionRequest(BaseModel):
@@ -141,6 +150,36 @@ def create_app(
         reply = _handle_gateway(
             lambda: command_gateway.propose(
                 session, mission.plan_id, f"Terv kész: {mission.summary} Indítsam?"
+            )
+        )
+        return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
+
+    @app.post("/api/v1/missions/survey")
+    def survey_mission(
+        request: SurveyMissionRequest, x_bytewolf_session: str = Header(max_length=128)
+    ) -> dict[str, object]:
+        """Review a requested area sweep, and offer it for approval.
+
+        The area is one step in the document and many gate-checked waypoints in
+        the compiler. Nothing flies here either: the plan lands in the same
+        pending slot that only an explicit approval empties.
+        """
+        session = _session(x_bytewolf_session)
+        try:
+            mission = review_survey_mission(
+                centre_north_m=request.centre_north_m,
+                centre_east_m=request.centre_east_m,
+                radius_m=request.radius_m,
+                spacing_m=request.spacing_m,
+                altitude_m=request.altitude_m,
+                goal=request.goal,
+                profile=load_mission_safety_profile(safety_profile_path),
+            )
+        except PointMissionError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        reply = _handle_gateway(
+            lambda: command_gateway.propose(
+                session, mission.plan_id, f"Felderítési terv kész: {mission.summary} Indítsam?"
             )
         )
         return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}

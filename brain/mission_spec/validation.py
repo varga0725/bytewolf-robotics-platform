@@ -1,4 +1,11 @@
-"""Deterministic validation and compilation for the MissionSpec v0.1 boundary."""
+"""Deterministic validation and compilation for the MissionSpec boundary.
+
+Two versions are live. v0.1 is frozen; v0.2 adds `SURVEY_AREA`, the first step
+that states an *area* instead of a place. A frozen contract does not grow a new
+step type — a v0.1 document means exactly what it meant when it was written —
+so the version in the document selects its schema, and an unknown version is
+refused rather than guessed at.
+"""
 
 from dataclasses import dataclass
 from hashlib import sha256
@@ -10,15 +17,30 @@ from typing import Any, Mapping
 from jsonschema import Draft202012Validator, FormatChecker
 
 from brain.mission.commands import LandCommand, ReturnToHomeCommand, TakeoffCommand, WaypointCommand
+from brain.mission_spec.survey import SurveyPatternError, survey_reach_m, survey_waypoints
 from brain.safety.gate import FlightLimits, SafetyGate
 from brain.safety.profile import SafetyProfile, load_safety_profile
 
 
-_SCHEMA_PATH = (
-    Path(__file__).resolve().parents[2] / "shared/schemas/mission_spec/mission_spec_v0_1.schema.json"
-)
+_SCHEMA_DIRECTORY = Path(__file__).resolve().parents[2] / "shared/schemas/mission_spec"
+_SCHEMA_PATHS = {
+    "0.1": _SCHEMA_DIRECTORY / "mission_spec_v0_1.schema.json",
+    "0.2": _SCHEMA_DIRECTORY / "mission_spec_v0_2.schema.json",
+}
+_VALIDATORS = {
+    version: Draft202012Validator(json.loads(path.read_text()), format_checker=FormatChecker())
+    for version, path in _SCHEMA_PATHS.items()
+}
+# Kept for callers that only ever spoke v0.1; the default stays the frozen one.
+_SCHEMA_PATH = _SCHEMA_PATHS["0.1"]
 _SCHEMA = json.loads(_SCHEMA_PATH.read_text())
-_VALIDATOR = Draft202012Validator(_SCHEMA, format_checker=FormatChecker())
+_VALIDATOR = _VALIDATORS["0.1"]
+
+
+def _validator_for(document: object) -> Draft202012Validator | None:
+    """Pick the schema the document itself declares, or refuse to guess."""
+    version = document.get("schema_version") if isinstance(document, Mapping) else None
+    return _VALIDATORS.get(version) if isinstance(version, str) else None
 
 
 @dataclass(frozen=True)
@@ -80,9 +102,22 @@ def validate_and_compile_mission_spec(
 ) -> ValidationReport:
     """Validate a mission before it can be handed to any flight adapter."""
     source = dict(document)
+    validator = _validator_for(source)
+    if validator is None:
+        return ValidationReport(
+            approved=False,
+            issues=(
+                _issue(
+                    ("schema_version",),
+                    "Unknown MissionSpec schema version; a document is only read by the "
+                    "contract it declares.",
+                ),
+            ),
+            mission=None,
+        )
     schema_issues = tuple(
         ValidationIssue(tuple(error.absolute_path), error.message)
-        for error in sorted(_VALIDATOR.iter_errors(source), key=_schema_error_sort_key)
+        for error in sorted(validator.iter_errors(source), key=_schema_error_sort_key)
     )
     if schema_issues:
         return ValidationReport(approved=False, issues=schema_issues, mission=None)
@@ -174,8 +209,48 @@ def _semantic_issues(
                     _issue(("steps", index), "Local waypoint exceeds the mission radius.")
                 )
             _check_step_altitude(issues, index, altitude, mission_altitude)
+        elif step_type == "SURVEY_AREA":
+            _check_survey_step(issues, index, step, mission_radius, mission_altitude)
 
     return tuple(sorted(issues, key=lambda issue: (tuple(map(str, issue.path)), issue.message)))
+
+
+def _check_survey_step(
+    issues: list[ValidationIssue],
+    index: int,
+    step: Mapping[str, Any],
+    mission_radius: float,
+    mission_altitude: float,
+) -> None:
+    """Refuse an area whose far edge, or whose pattern, leaves the envelope.
+
+    The radius check is on the *reach*, not the centre: a 30 m sweep centred
+    40 m out would otherwise pass a 50 m limit and fly to 70 m.
+    """
+    centre_north = float(step["centre_north_m"])
+    centre_east = float(step["centre_east_m"])
+    radius = float(step["radius_m"])
+    spacing = float(step["spacing_m"])
+    altitude = float(step["altitude_m"])
+    if not all(isfinite(value) for value in (centre_north, centre_east, radius, spacing, altitude)):
+        issues.append(_issue(("steps", index), "Survey values must be finite."))
+        return
+    _check_step_altitude(issues, index, altitude, mission_altitude)
+    reach = survey_reach_m(centre_north_m=centre_north, centre_east_m=centre_east, radius_m=radius)
+    if reach > mission_radius:
+        issues.append(
+            _issue(("steps", index), "Survey area reaches beyond the mission radius.")
+        )
+        return
+    try:
+        survey_waypoints(
+            centre_north_m=centre_north,
+            centre_east_m=centre_east,
+            radius_m=radius,
+            spacing_m=spacing,
+        )
+    except SurveyPatternError as error:
+        issues.append(_issue(("steps", index), str(error)))
 
 
 def _check_finite_numbers(issues: list[ValidationIssue], source: Mapping[str, Any]) -> None:
@@ -249,6 +324,20 @@ def _compile(source: Mapping[str, Any], profile: MissionSafetyProfile) -> Compil
             )
             gate.evaluate(command)
             commands.append(command)
+        elif step_type == "SURVEY_AREA":
+            # One reviewable step, many gate-checked commands: the reviewer sees
+            # the area, and the gate still sees every waypoint individually.
+            for north_m, east_m in survey_waypoints(
+                centre_north_m=float(step["centre_north_m"]),
+                centre_east_m=float(step["centre_east_m"]),
+                radius_m=float(step["radius_m"]),
+                spacing_m=float(step["spacing_m"]),
+            ):
+                command = WaypointCommand(
+                    north_m=north_m, east_m=east_m, target_altitude_m=float(step["altitude_m"])
+                )
+                gate.evaluate(command)
+                commands.append(command)
         elif step_type == "HOLD":
             hold_durations.append(float(step["duration_s"]))
         elif step_type == "RTL":
