@@ -8,6 +8,7 @@ sweep has holes in it and still reports success.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import json
 from math import hypot
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -17,7 +18,12 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway
-from apps.api.point_mission import PointMissionError, build_survey_mission_spec, review_survey_mission
+from apps.api.point_mission import (
+    PointMissionError,
+    build_survey_mission_spec,
+    review_point_mission,
+    review_survey_mission,
+)
 from apps.api.server import create_app
 from apps.dashboard.telemetry import Position, TelemetrySnapshot
 from brain.memory.recorder import WorldMemoryRecorder
@@ -33,8 +39,12 @@ from brain.mission_spec.validation import load_mission_safety_profile, validate_
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH
 from simulation.perception.survey_recorder import (
     SurveyProgress,
+    SurveyRecorderError,
+    discover_scan_topic,
+    origin_from_telemetry,
     pose_from_snapshot,
     record_survey_scan,
+    run_survey_observer,
 )
 
 
@@ -288,6 +298,166 @@ class SurveyRecorderTests(unittest.TestCase):
             self.assertEqual(progress.scans_mapped, 1)
             self.assertGreater(progress.claims_written, 0)
             self.assertIn("map_region", {claim.category for claim in claims})
+
+
+class SurveyRoutePreviewTests(unittest.TestCase):
+    """The preview must be the route that flies, not one the browser guessed."""
+
+    def _profile(self):
+        return load_mission_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
+
+    def test_a_reviewed_survey_carries_the_waypoints_the_compiler_produced(self) -> None:
+        with TemporaryDirectory() as directory:
+            mission = review_survey_mission(
+                centre_north_m=0.0, centre_east_m=0.0, radius_m=20.0, spacing_m=10.0,
+                altitude_m=4.0, goal="teszt", profile=self._profile(),
+                plan_directory=Path(directory),
+            )
+
+        body = mission.as_dict()
+        self.assertGreater(len(body["waypoints"]), 1)
+        self.assertTrue(all({"north_m", "east_m"} == set(point) for point in body["waypoints"]))
+
+    def test_the_previewed_waypoints_are_the_compiled_ones(self) -> None:
+        """Re-deriving the sweep in the browser would eventually disagree with
+        the pattern that actually flies, and the preview would show a mission
+        that does not exist."""
+        profile = self._profile()
+        with TemporaryDirectory() as directory:
+            mission = review_survey_mission(
+                centre_north_m=0.0, centre_east_m=0.0, radius_m=20.0, spacing_m=10.0,
+                altitude_m=4.0, goal="teszt", profile=profile, plan_directory=Path(directory),
+            )
+            spec = json.loads(mission.plan_path.read_text())
+        compiled = validate_and_compile_mission_spec(
+            spec.get("mission_spec", spec), profile
+        ).mission
+
+        expected = [
+            (command.north_m, command.east_m)
+            for command in compiled.commands
+            if type(command).__name__ == "WaypointCommand"
+        ]
+        self.assertEqual(list(mission.waypoints), expected)
+
+    def test_a_point_mission_previews_the_single_leg_it_will_fly(self) -> None:
+        with TemporaryDirectory() as directory:
+            mission = review_point_mission(
+                north_m=12.0, east_m=-4.0, altitude_m=4.0, goal="teszt",
+                profile=self._profile(), plan_directory=Path(directory),
+            )
+
+        self.assertEqual(mission.waypoints, ((12.0, -4.0),))
+
+
+class SurveyObserverRunTests(unittest.TestCase):
+    """What a whole observation run reports about itself has to be true."""
+
+    def test_the_counters_accumulate_instead_of_restarting_each_scan(self) -> None:
+        """A run that saw forty scans used to report having seen one.
+
+        `record_survey_scan` was called without the running total, so each scan
+        started a fresh tally and the printed summary described the last scan
+        alone — which made a sweep that mapped nothing indistinguishable from a
+        sweep that barely looked.
+        """
+        from unittest import mock
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "claims.jsonl"
+            telemetry = Path(directory) / "telemetry.json"
+            telemetry.write_text(json.dumps({
+                "position": {
+                    "latitude_deg": 47.397971 + 0.00018, "longitude_deg": 8.546164,
+                    "absolute_altitude_m": 500.0, "relative_altitude_m": 6.0,
+                },
+                "battery": {"remaining_percent": 80.0},
+                "in_air": True,
+                "captured_at": NOW.isoformat(),
+                "heading_deg": 90.0,
+            }))
+            # Quarter-second steps so several scans fit inside the run and each
+            # one still pairs with a pose fresher than MAX_POSE_AGE_S.
+            ticks = iter([NOW + timedelta(milliseconds=250 * index) for index in range(0, 40)])
+            with mock.patch(
+                "simulation.perception.survey_recorder._capture_one_scan",
+                return_value=_scan_message(),
+            ):
+                progress = run_survey_observer(
+                    telemetry_path=telemetry,
+                    world_memory_path=path,
+                    grid=GRID,
+                    scan_topic="irrelevant",
+                    duration_s=1.0,
+                    interval_s=0.0,
+                    now=lambda: next(ticks),
+                    sleep=lambda _seconds: None,
+                )
+
+        self.assertGreater(progress.scans_seen, 1, "every scan must be counted, not just the last")
+
+
+class ScanTopicDiscoveryTests(unittest.TestCase):
+    """Subscribing to the wrong lidar reads as 'the lidar sees nothing'."""
+
+    def _listing(self, *topics: str):
+        import subprocess
+
+        return lambda _arguments: subprocess.CompletedProcess([], 0, stdout="\n".join(topics), stderr="")
+
+    def test_the_running_worlds_topic_is_found_rather_than_assumed(self) -> None:
+        topic = "/world/baylands/model/x500_mono_cam_down_0/link/link/sensor/lidar_2d_v2/scan"
+
+        self.assertEqual(discover_scan_topic(self._listing("/clock", topic)), topic)
+
+    def test_a_differently_shaped_lidar_is_not_mistaken_for_the_2d_sweep(self) -> None:
+        """The obstacle sectors are built on the 2D unit's 270° field.
+
+        The full-sensors profile carries a second lidar; feeding it in would
+        make sectors whose geometry nobody has checked.
+        """
+        with self.assertRaisesRegex(SurveyRecorderError, "No lidar_2d_v2"):
+            discover_scan_topic(
+                self._listing("/world/w/model/m/link/lidar_sensor_link/sensor/lidar/scan")
+            )
+
+    def test_two_candidate_sweeps_are_refused_rather_than_guessed_between(self) -> None:
+        with self.assertRaisesRegex(SurveyRecorderError, "Several"):
+            discover_scan_topic(
+                self._listing(
+                    "/world/w/model/a/link/link/sensor/lidar_2d_v2/scan",
+                    "/world/w/model/b/link/link/sensor/lidar_2d_v2/scan",
+                )
+            )
+
+
+class MapOriginTests(unittest.TestCase):
+    """The recorder's origin must be the same point the dashboard calls zero."""
+
+    def _snapshot(self, **overrides) -> TelemetrySnapshot:
+        values = {
+            "position": Position(37.4135695, -121.9965634, 38.5, 0.0),
+            "battery_percent": 100.0,
+            "in_air": False,
+            "captured_at": NOW.isoformat(),
+            "heading_deg": 0.0,
+        }
+        values.update(overrides)
+        return TelemetrySnapshot(**values)
+
+    def test_the_grounded_vehicles_position_is_the_launch_point(self) -> None:
+        latitude, longitude = origin_from_telemetry(self._snapshot())
+
+        self.assertAlmostEqual(latitude, 37.4135695)
+        self.assertAlmostEqual(longitude, -121.9965634)
+
+    def test_an_airborne_position_is_refused_rather_than_used_as_home(self) -> None:
+        with self.assertRaisesRegex(SurveyRecorderError, "airborne"):
+            origin_from_telemetry(self._snapshot(in_air=True))
+
+    def test_no_position_means_no_origin_rather_than_a_default_one(self) -> None:
+        with self.assertRaisesRegex(SurveyRecorderError, "origin is unknown"):
+            origin_from_telemetry(self._snapshot(position=None))
 
 
 def _scan_message() -> dict:

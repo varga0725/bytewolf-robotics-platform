@@ -39,6 +39,9 @@ _EARTH_RADIUS_M = 6_371_000.0
 # second is three metres of error, which is more than one map cell.
 MAX_POSE_AGE_S = 1.5
 DEFAULT_SCAN_INTERVAL_S = 2.0
+# The sensor the obstacle sectors downstream are shaped for; see
+# `discover_scan_topic` for why any other lidar is the wrong subscription.
+LIDAR_2D_SENSOR = "lidar_2d_v2"
 
 
 class SurveyRecorderError(RuntimeError):
@@ -159,7 +162,14 @@ def run_survey_observer(
         except TelemetryFormatError:
             snapshot = TelemetrySnapshot(None, None, None, None, None)
         if message is not None:
-            progress = record_survey_scan(message, snapshot, recorder, grid, clock())
+            # Carrying the running total forward is the whole point of the
+            # counters. Without it every scan started a fresh tally, so a run
+            # that saw forty scans and dropped all forty reported having seen
+            # one — and a sweep that maps nothing looked like a sweep that
+            # barely looked.
+            progress = record_survey_scan(
+                message, snapshot, recorder, grid, clock(), progress=progress
+            )
         sleep(interval_s)
     return progress
 
@@ -167,11 +177,17 @@ def run_survey_observer(
 def _capture_one_scan(scan_topic: str) -> dict | None:
     import os
 
-    result = subprocess.run(
-        ("gz", "topic", "-e", "-t", scan_topic, "--json-output", "-n", "1"),
-        capture_output=True, text=True, timeout=20.0, check=False,
-        env={**os.environ, "GZ_IP": "127.0.0.1"},
-    )
+    try:
+        result = subprocess.run(
+            ("gz", "topic", "-e", "-t", scan_topic, "--json-output", "-n", "1"),
+            capture_output=True, text=True, timeout=20.0, check=False,
+            env={**os.environ, "GZ_IP": "127.0.0.1"},
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        # A silent topic is a scan this run did not get, not a crash. The run
+        # keeps observing and the miss shows up in the counters; a traceback
+        # here used to end the whole sweep on the first quiet moment.
+        return None
     for line in result.stdout.splitlines():
         if line.strip():
             try:
@@ -179,6 +195,79 @@ def _capture_one_scan(scan_topic: str) -> dict | None:
             except json.JSONDecodeError:
                 continue
     return None
+
+
+def discover_scan_topic(
+    run: Callable[[tuple[str, ...]], subprocess.CompletedProcess[str]] | None = None
+) -> str:
+    """Find the running world's 2D lidar topic instead of assuming last run's.
+
+    The default used to name a world and a model that only exist in one launch
+    profile (`default` / `x500_lidar_2d_0`). Point it at any other profile and
+    every scan timed out against a topic that was never there — which reads as
+    "the lidar sees nothing", not as "you are subscribed to the wrong thing".
+
+    Only `lidar_2d_v2` counts. The full-sensors profile also carries a second
+    lidar, and the obstacle sectors downstream are built on the 2D unit's 270
+    degree sweep — the rear 90 degrees come out `unobserved` precisely because
+    that sensor cannot see them. Feeding a differently shaped lidar into that
+    would produce sectors whose geometry nobody checked.
+
+    Ambiguity among 2D lidars is still refused rather than resolved by picking
+    the first: two of them means the caller has to say which one is sweeping.
+    """
+    import os
+
+    runner = run or (
+        lambda arguments: subprocess.run(
+            arguments, capture_output=True, text=True, timeout=15.0, check=False,
+            env={**os.environ, "GZ_IP": "127.0.0.1"},
+        )
+    )
+    try:
+        result = runner(("gz", "topic", "-l"))
+    except (subprocess.TimeoutExpired, OSError) as error:
+        raise SurveyRecorderError("Gazebo is not reachable, so no lidar topic can be found.") from error
+    candidates = [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip().endswith(f"/{LIDAR_2D_SENSOR}/scan")
+    ]
+    if not candidates:
+        raise SurveyRecorderError(
+            f"No {LIDAR_2D_SENSOR} scan topic is published. Is the simulator running on a lidar "
+            "profile (lidar-2d or full-sensors)?"
+        )
+    if len(candidates) > 1:
+        raise SurveyRecorderError(
+            "Several 2D lidar scan topics are published; name one with --scan-topic: "
+            + ", ".join(sorted(candidates))
+        )
+    return candidates[0]
+
+
+def origin_from_telemetry(snapshot: TelemetrySnapshot) -> tuple[float, float]:
+    """Take the map origin from where the vehicle actually is, on the ground.
+
+    The dashboard's grid has its origin at the launch point, so the recorder's
+    grid must too, or every cell lands on the map at an offset nobody can see.
+    The old default was a fixed Zurich coordinate — right for one PX4 world and
+    silently wrong everywhere else.
+
+    Refused while airborne: a position taken mid-flight is not the launch point,
+    and a map built on it would be plausible and displaced.
+    """
+    if snapshot.position is None:
+        raise SurveyRecorderError(
+            "No position telemetry, so the map origin is unknown. Start the dashboard "
+            "telemetry bridge, or pass --home-latitude/--home-longitude."
+        )
+    if snapshot.in_air:
+        raise SurveyRecorderError(
+            "The vehicle is already airborne, so its position is not the launch point. "
+            "Pass --home-latitude/--home-longitude to say where the map's origin is."
+        )
+    return snapshot.position.latitude_deg, snapshot.position.longitude_deg
 
 
 def main(arguments: tuple[str, ...] | None = None) -> int:
@@ -191,19 +280,34 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
         "--telemetry-file", type=Path, default=Path("simulation/artifacts/dashboard/live-telemetry.json")
     )
     parser.add_argument("--world-memory-file", type=Path, default=DEFAULT_WORLD_MEMORY_PATH)
-    parser.add_argument("--home-latitude", type=float, default=47.397971)
-    parser.add_argument("--home-longitude", type=float, default=8.546164)
+    parser.add_argument(
+        "--home-latitude", type=float, default=None,
+        help="Map origin latitude. Taken from the grounded vehicle's telemetry when omitted.",
+    )
+    parser.add_argument("--home-longitude", type=float, default=None, help="Map origin longitude.")
     parser.add_argument("--cell-size", type=float, default=2.0)
     parser.add_argument(
-        "--scan-topic",
-        default="/world/default/model/x500_lidar_2d_0/link/link/sensor/lidar_2d_v2/scan",
+        "--scan-topic", default=None,
+        help="Lidar scan topic. Discovered from the running world when omitted.",
     )
     parsed = parser.parse_args(arguments)
+    try:
+        scan_topic = parsed.scan_topic or discover_scan_topic()
+        if parsed.home_latitude is None or parsed.home_longitude is None:
+            latitude, longitude = origin_from_telemetry(load_telemetry_snapshot(parsed.telemetry_file))
+        else:
+            latitude, longitude = parsed.home_latitude, parsed.home_longitude
+    except (SurveyRecorderError, TelemetryFormatError, FileNotFoundError) as error:
+        # Say what is missing and record nothing, rather than sweep against a
+        # topic or an origin that belongs to some other run.
+        print(f"Survey observer cannot start: {error}")
+        return 2
+    print(f"Survey observer: {scan_topic} · origin {latitude:.6f}, {longitude:.6f}")
     progress = run_survey_observer(
         telemetry_path=parsed.telemetry_file,
         world_memory_path=parsed.world_memory_file,
-        grid=MapGrid(parsed.home_latitude, parsed.home_longitude, cell_size_m=parsed.cell_size),
-        scan_topic=parsed.scan_topic,
+        grid=MapGrid(latitude, longitude, cell_size_m=parsed.cell_size),
+        scan_topic=scan_topic,
         duration_s=parsed.duration,
         interval_s=parsed.interval,
     )
