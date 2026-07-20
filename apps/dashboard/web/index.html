@@ -141,6 +141,15 @@
           <div class="label">Célpont kijelölése (észak felfelé, méterben a kiindulóponttól)</div>
           <p class="memory-note">A szürke gyűrű a repülési sugárkorlát, a szaggatott sárga sokszög a geofence — mindkettő a <code>twin.yaml</code>-ből. A zöld háromszög a drón és az iránya, a halvány zöld vonal a megtett út, a sárga szaggatott a jóváhagyásra váró terv waypointjai. A zöld cellák mért akadályok — de a térkép csak foglaltságot ismer, szabad területet nem állít, tehát a kijelölt út nem „ellenőrzötten üres".</p>
           <p id="mission-basemap-note" class="memory-note">Háttérkép: nincs. Indítsd a felülnézeti kamerát: <code>python -m simulation.gazebo.map_view</code></p>
+          <label class="label" for="mission-zoom">Látótér
+            <select id="mission-zoom" class="camera-select">
+              <option value="fit">Igazítás a tartalomhoz</option>
+              <option value="50">±50 m</option>
+              <option value="200">±200 m</option>
+              <option value="1000">±1000 m</option>
+              <option value="2300">Teljes envelope</option>
+            </select>
+          </label>
           <svg id="mission-map" class="map" aria-label="Küldetés térkép"></svg>
           <p id="mission-target" class="memory-note">Nincs kijelölt pont.</p>
         </div>
@@ -424,9 +433,28 @@ function drawPlannedRoute(svg,centre){
   missionPlanRoute.forEach((point,index)=>{
     svg.append(svgElement('circle',{cx:centre+point.east_m*missionScale,cy:centre-point.north_m*missionScale,
       r:index===missionPlanRoute.length-1?4:2.5,fill:'#d9a84d'}))})}
+// How far the map reaches, in metres from the launch point. Drawing the whole
+// envelope stopped being useful when it grew: at a 2 km radius the basemap is a
+// 16-pixel speck and the vehicle, the cells and the plan are one dot in the
+// middle. 'fit' frames what there is to look at instead, and the scale note
+// always states the extent actually shown, so a view is never mistaken for the
+// limit.
+let missionZoom='fit';
+function missionSpanM(cells){
+  if(missionZoom!=='fit')return Number(missionZoom);
+  const reaches=[
+    ...cells.map(c=>Math.hypot(c.north_m,c.east_m)+(Number(c.cell_size_m)||2)),
+    ...missionPlanRoute.map(p=>Math.hypot(p.north_m,p.east_m)),
+    ...missionTrail.map(p=>Math.hypot(p.north,p.east)),
+  ];
+  if(missionVehicle)reaches.push(Math.hypot(missionVehicle.north,missionVehicle.east));
+  if(missionPoint)reaches.push(Math.hypot(missionPoint.north_m,missionPoint.east_m));
+  if(missionBasemap)reaches.push(missionBasemap.w*missionBasemap.mpp/2);
+  // Never wider than the envelope itself: beyond it there is nothing to fly to.
+  return Math.min(missionRadiusM*1.15,Math.max(12,...reaches)*1.15);
+}
 function drawMissionMap(cells){const svg=$('mission-map');svg.replaceChildren();const size=400,centre=size/2;
-  const reach=cells.length?Math.max(...cells.map(c=>Math.hypot(c.north_m,c.east_m))):0;
-  const span=Math.max(missionRadiusM*1.15,reach+4);missionScale=(size/2)/span;
+  const span=missionSpanM(cells);missionScale=(size/2)/span;
   svg.setAttribute('viewBox',`0 0 ${size} ${size}`);
   // Under everything: the world itself, placed by its own scale so a metre on
   // the grid is the same metre on the picture. Never stretched to fit — a
@@ -453,9 +481,13 @@ function drawMissionMap(cells){const svg=$('mission-map');svg.replaceChildren();
   drawVehicle(svg,centre);
   const north=svgElement('text',{x:centre+6,y:14});north.textContent='É';svg.append(north);
   const scaleNote=svgElement('text',{x:6,y:size-8});
-  scaleNote.textContent=missionFence.length>2
-    ? `sugárkorlát: ${missionRadiusM} m · szaggatott sárga: geofence`
-    : `sugárkorlát: ${missionRadiusM} m`;
+  // The extent shown and the limit in force are different numbers, and saying
+  // only the second while drawing the first is how a view gets mistaken for a
+  // boundary.
+  const parts=[`látótér: ±${span<100?span.toFixed(0):Math.round(span/10)*10} m`,
+    `sugárkorlát: ${missionRadiusM} m`];
+  if(missionFence.length>2)parts.push('szaggatott sárga: geofence');
+  scaleNote.textContent=parts.join(' · ');
   svg.append(scaleNote);
   drawPlannedRoute(svg,centre);
   if(missionPoint&&missionKind()==='survey'){const radius=Number(($('survey-radius')||{}).value||0);
@@ -484,6 +516,7 @@ function redrawMissionMap(){drawMissionMap(missionCells)}
 async function refreshMissionMap(){await refreshEnvelope();await refreshBasemap();
   try{const map=await api('/api/v1/world-map',undefined,'GET');missionCells=map.cells||[]}catch{missionCells=[]}
   redrawMissionMap()}
+$('mission-zoom').addEventListener('change',event=>{missionZoom=event.target.value;redrawMissionMap()});
 function missionKind(){const chosen=document.querySelector('input[name="mission-kind"]:checked');return chosen?chosen.value:'point'}
 for(const radio of document.querySelectorAll('input[name="mission-kind"]'))radio.addEventListener('change',()=>{
   $('survey-fields').classList.toggle('hidden',missionKind()!=='survey');
