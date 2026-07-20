@@ -18,7 +18,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from brain.mission.commands import LandCommand, ReturnToHomeCommand, TakeoffCommand, WaypointCommand
 from brain.mission_spec.survey import SurveyPatternError, survey_reach_m, survey_waypoints
-from brain.safety.gate import FlightLimits, SafetyGate
+from brain.safety.gate import FlightLimits, LocalPolygonGeofence, SafetyGate
 from brain.safety.profile import SafetyProfile, load_safety_profile
 
 
@@ -53,6 +53,13 @@ class MissionSafetyProfile:
     max_radius_m: float
     minimum_battery_percent_to_start: float
     loss_of_link_action: str
+    # The fence is a platform limit like the others, and it was the one this
+    # shape dropped. Every MissionSpec route — the dashboard's map, the chat
+    # agent, the Telegram gateway — compiled against altitude and radius alone,
+    # so the tighter of the twin's two horizontal bounds was enforced on the
+    # hand-written CLIs and nowhere else. A mission cannot state a fence of its
+    # own, so this comes from the profile and never from the document.
+    allowed_geofence: LocalPolygonGeofence | None = None
 
 
 def load_mission_safety_profile(path: Path | str) -> MissionSafetyProfile:
@@ -68,6 +75,7 @@ def _mission_safety_profile(profile: SafetyProfile) -> MissionSafetyProfile:
         max_radius_m=profile.max_radius_m,
         minimum_battery_percent_to_start=profile.minimum_battery_percent_to_start,
         loss_of_link_action=profile.loss_of_link_action,
+        allowed_geofence=profile.allowed_geofence,
     )
 
 
@@ -208,11 +216,20 @@ def _semantic_issues(
                 issues.append(
                     _issue(("steps", index), "Local waypoint exceeds the mission radius.")
                 )
+            elif not _inside_fence(profile, north, east):
+                issues.append(
+                    _issue(("steps", index), "Local waypoint is outside the allowed geofence.")
+                )
             _check_step_altitude(issues, index, altitude, mission_altitude)
         elif step_type == "SURVEY_AREA":
-            _check_survey_step(issues, index, step, mission_radius, mission_altitude)
+            _check_survey_step(issues, index, step, mission_radius, mission_altitude, profile)
 
     return tuple(sorted(issues, key=lambda issue: (tuple(map(str, issue.path)), issue.message)))
+
+
+def _inside_fence(profile: MissionSafetyProfile, north_m: float, east_m: float) -> bool:
+    """Whether the platform's fence admits a point. No fence admits everything."""
+    return profile.allowed_geofence is None or profile.allowed_geofence.contains(north_m, east_m)
 
 
 def _check_survey_step(
@@ -221,6 +238,7 @@ def _check_survey_step(
     step: Mapping[str, Any],
     mission_radius: float,
     mission_altitude: float,
+    profile: MissionSafetyProfile,
 ) -> None:
     """Refuse an area whose far edge, or whose pattern, leaves the envelope.
 
@@ -243,7 +261,7 @@ def _check_survey_step(
         )
         return
     try:
-        survey_waypoints(
+        waypoints = survey_waypoints(
             centre_north_m=centre_north,
             centre_east_m=centre_east,
             radius_m=radius,
@@ -251,6 +269,13 @@ def _check_survey_step(
         )
     except SurveyPatternError as error:
         issues.append(_issue(("steps", index), str(error)))
+        return
+    # Every swept waypoint, not just the reach: a circle can sit inside the
+    # radius and still push its corners past a fence that is not a circle.
+    if any(not _inside_fence(profile, north, east) for north, east in waypoints):
+        issues.append(
+            _issue(("steps", index), "Survey area reaches outside the allowed geofence.")
+        )
 
 
 def _check_finite_numbers(issues: list[ValidationIssue], source: Mapping[str, Any]) -> None:
@@ -305,6 +330,9 @@ def _compile(source: Mapping[str, Any], profile: MissionSafetyProfile) -> Compil
         FlightLimits(
             max_altitude_m=float(constraints["max_altitude_m"]),
             max_distance_m=float(constraints["max_radius_m"]),
+            # The document may tighten altitude and radius; it cannot state a
+            # fence at all, so the platform's own is the only one there is.
+            allowed_geofence=profile.allowed_geofence,
         )
     )
     takeoff_altitude_m = float(steps[0]["altitude_m"])
