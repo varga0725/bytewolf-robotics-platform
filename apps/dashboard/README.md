@@ -13,6 +13,24 @@ bridge ugyanarra az alakra írhat adatot.
 | Küldetés-térkép háttérképe | `simulation.gazebo.map_view` | a térkép üres koordináta-rendszer marad, és vakon kell célpontot kijelölni |
 | Küldetés indítása | `apps.api.server` + explicit jóváhagyás | a dashboard csak olvas |
 
+## A PX4-link egyszerre egy folyamaté
+
+A `udpin://0.0.0.0:14540` portot egyszerre csak egy MAVSDK-szerver kötheti. A
+telemetria-híd fogja, amíg a szimulátor fut; egy jóváhagyott küldetésnek viszont
+szüksége van rá. Ezt egy bérlet-fájl rendezi
+(`simulation/artifacts/dashboard/mavlink-link.lease`): a küldetés indulás előtt
+bejegyzi magát, a híd erre elengedi a portot, a küldetés vége után pedig a híd
+magától visszaveszi. A repülő CLI ugyanabba a snapshotba ír, ezért a dashboard a
+váltás alatt is látja a drónt — a böngészőből az egész átadás láthatatlan.
+
+A bérlet semmit nem engedélyez és semmit nem tilt: nem tud armolni, parancsolni
+vagy repülést megakadályozni. Csak azt mondja meg, melyik olvasó tartsa a
+socketet; a biztonsági hatóság változatlanul a PX4.
+
+Egy összeomlott küldetés bérlete nem marad örökre érvényes: a fájl a birtokló
+process azonosítóját is rögzíti, és egy már nem élő processzre hivatkozó bérlet
+felszabadítottnak számít.
+
 A `base` (`gz_x500`) airframe-en **nincs lidar**, ezért térkép sem keletkezhet;
 ehhez `lidar-2d` (`gz_x500_lidar_2d`) kell.
 

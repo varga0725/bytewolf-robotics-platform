@@ -103,6 +103,33 @@ def create_app(
     def selected_camera(sensor: str, if_none_match: str | None = Header(default=None)) -> Response:
         return _camera_response(_sensor_path(camera_path, down_camera_path, sensor), if_none_match=if_none_match)
 
+    @app.get("/api/v1/safety-envelope")
+    def safety_envelope() -> dict[str, object]:
+        """Serve the flight envelope from the one file that decides it.
+
+        The mission map used to draw a 50 m ring from a number written into the
+        browser, and never drew the geofence at all — so an operator could pick
+        a target well outside a fence they could not see, and only learn about
+        it from a rejection. Both numbers come from `twin.yaml` here; the
+        dashboard renders the contract rather than a copy of it.
+        """
+        try:
+            profile = load_safety_profile(safety_profile_path)
+        except SafetyProfileError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        fence = profile.allowed_geofence
+        return {
+            "max_altitude_m": profile.max_altitude_m,
+            "max_speed_m_s": profile.max_speed_m_s,
+            "max_radius_m": profile.max_radius_m,
+            "minimum_battery_percent_to_start": profile.minimum_battery_percent_to_start,
+            "geofence_vertices_m": (
+                [{"north_m": north, "east_m": east} for north, east in fence.vertices_m]
+                if fence is not None
+                else []
+            ),
+        }
+
     @app.get("/api/v1/map-view")
     def basemap_image(if_none_match: str | None = Header(default=None)) -> Response:
         """Serve the overhead render of the simulated world. Read-only, like every camera here."""

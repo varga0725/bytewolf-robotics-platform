@@ -139,7 +139,7 @@
       <div class="split">
         <div class="panel">
           <div class="label">Célpont kijelölése (észak felfelé, méterben a kiindulóponttól)</div>
-          <p class="memory-note">A szürke gyűrű a repülési sugárkorlát. A zöld cellák mért akadályok — de a térkép csak foglaltságot ismer, szabad területet nem állít, tehát a kijelölt út nem „ellenőrzötten üres".</p>
+          <p class="memory-note">A szürke gyűrű a repülési sugárkorlát, a szaggatott sárga sokszög a geofence — mindkettő a <code>twin.yaml</code>-ből. A zöld háromszög a drón és az iránya, a halvány zöld vonal a megtett út, a sárga szaggatott a jóváhagyásra váró terv waypointjai. A zöld cellák mért akadályok — de a térkép csak foglaltságot ismer, szabad területet nem állít, tehát a kijelölt út nem „ellenőrzötten üres".</p>
           <p id="mission-basemap-note" class="memory-note">Háttérkép: nincs. Indítsd a felülnézeti kamerát: <code>python -m simulation.gazebo.map_view</code></p>
           <svg id="mission-map" class="map" aria-label="Küldetés térkép"></svg>
           <p id="mission-target" class="memory-note">Nincs kijelölt pont.</p>
@@ -326,7 +326,59 @@ async function refreshWorld(){const list=$('world-list');
   refreshKnowledge()}
 $('refresh-world').onclick=refreshWorld;
 
+// The radius is a fallback for the moments before the envelope has loaded, not
+// a second source of the limit: `twin.yaml` decides it and /safety-envelope
+// serves it. A number typed here that drifts from the contract would draw a
+// ring the gate does not enforce.
 let missionPoint=null;let missionPlan=null;let missionRadiusM=50;let missionScale=1;
+let missionFence=[];let missionEnvelope=null;
+// Where the vehicle is now, and where it has been since this page loaded. Both
+// come from the read-only telemetry snapshot; neither is persisted, because a
+// trail restored from an earlier flight would draw a path this one never flew.
+let missionVehicle=null;const missionTrail=[];const MAX_TRAIL_POINTS=600;
+// The compiled, gate-checked route of the plan waiting for approval.
+let missionPlanRoute=[];
+const EARTH_RADIUS_M=6371000;
+// The map's origin is the launch point, and the only launch point this page can
+// know is where the vehicle first reported itself on the ground. A trail drawn
+// from a guessed origin would be a real path in the wrong place.
+let missionOrigin=null;
+function updateVehicleFromTelemetry(snapshot){
+  const position=snapshot&&snapshot.position;
+  if(!position||!Number.isFinite(position.latitude_deg)||!Number.isFinite(position.longitude_deg)){
+    missionVehicle=null;return}
+  if(!missionOrigin){
+    if(snapshot.in_air)return;  // Airborne first sight: no origin, so place nothing.
+    missionOrigin={lat:position.latitude_deg,lon:position.longitude_deg}}
+  const north=(position.latitude_deg-missionOrigin.lat)*Math.PI/180*EARTH_RADIUS_M;
+  const east=(position.longitude_deg-missionOrigin.lon)*Math.PI/180*EARTH_RADIUS_M
+    *Math.cos(missionOrigin.lat*Math.PI/180);
+  const heading=Number.isFinite(snapshot.heading_deg)?snapshot.heading_deg:null;
+  missionVehicle={north,east,heading};
+  const last=missionTrail[missionTrail.length-1];
+  // One point per metre of travel: a trail sampled per poll would be thousands
+  // of coincident points on a hovering vehicle.
+  if(!last||Math.hypot(north-last.north,east-last.east)>1){
+    missionTrail.push({north,east});
+    if(missionTrail.length>MAX_TRAIL_POINTS)missionTrail.shift()}}
+async function refreshEnvelope(){
+  try{const envelope=await api('/api/v1/safety-envelope',undefined,'GET');
+    if(Number(envelope.max_radius_m)>0)missionRadiusM=Number(envelope.max_radius_m);
+    missionFence=(envelope.geofence_vertices_m||[]).map(v=>({north:Number(v.north_m),east:Number(v.east_m)}));
+    missionEnvelope=envelope}
+  catch{/* Keep the last known envelope: a ring drawn from a stale contract is
+           still closer to the truth than no ring at all, and the gate remains
+           the thing that actually refuses. */}}
+// Point-in-polygon, matching the gate's own inclusive-boundary rule. This only
+// tells the operator sooner; the SafetyGate stays the authority that refuses.
+function insideFence(north,east){
+  if(!missionFence.length)return true;
+  let inside=false;
+  for(let i=0,j=missionFence.length-1;i<missionFence.length;j=i++){
+    const a=missionFence[i],b=missionFence[j];
+    if((a.east>east)!==(b.east>east)&&
+       north<(b.north-a.north)*(east-a.east)/(b.east-a.east)+a.north)inside=!inside}
+  return inside}
 function missionLog(text){const list=$('mission-log');if(list.querySelector('.memory-note'))list.replaceChildren();const row=document.createElement('div');row.className='memory-item';row.textContent=`${new Date().toLocaleTimeString('hu-HU')} · ${text}`;list.prepend(row)}
 // The overhead render of the simulated world, and the numbers that make it a
 // map rather than a picture. Null until the map_view producer has written one;
@@ -343,6 +395,35 @@ async function refreshBasemap(){const note=$('mission-basemap-note');
       href:`/api/v1/map-view?v=${encodeURIComponent(meta.captured_at||'')}`};
     note.textContent=`Háttérkép: ${meta.world} felülnézetből, ${(mpp*w).toFixed(0)} m széles, ${mpp.toFixed(2)} m/pixel · ${meta.captured_at||'—'}`}
   catch{missionBasemap=null;note.textContent='Háttérkép: nincs. Indítsd a felülnézeti kamerát: python -m simulation.gazebo.map_view'}}
+// The vehicle as a heading triangle, not a dot: which way it faces decides
+// which way the lidar is looking, so a dot hides half of what the map means.
+// Drawn only from a snapshot fresh enough to still describe now.
+function drawVehicle(svg,centre){
+  if(!missionVehicle)return;
+  const x=centre+missionVehicle.east*missionScale,y=centre-missionVehicle.north*missionScale;
+  const heading=missionVehicle.heading;
+  if(heading===null){
+    // No heading is not north. Show the position and say the facing is unknown.
+    svg.append(svgElement('circle',{cx:x,cy:y,r:6,fill:'none',stroke:'#8ee5d2','stroke-dasharray':'2 2'}));
+    return}
+  const radians=heading*Math.PI/180,nose=9,tail=5;
+  const point=(distance,offset)=>{
+    const angle=radians+offset;
+    return `${x+distance*Math.sin(angle)},${y-distance*Math.cos(angle)}`};
+  svg.append(svgElement('polygon',{
+    points:`${point(nose,0)} ${point(tail,2.5)} ${point(tail,-2.5)}`,
+    fill:'#8ee5d2',stroke:'#03080b','stroke-width':.5}))}
+// The route the server compiled and the gate already checked, drawn before the
+// operator approves it. Never re-derived here — see PointMission.waypoints.
+function drawPlannedRoute(svg,centre){
+  if(!missionPlanRoute.length)return;
+  const at=p=>`${centre+p.east_m*missionScale},${centre-p.north_m*missionScale}`;
+  svg.append(svgElement('polyline',{
+    points:[`${centre},${centre}`,...missionPlanRoute.map(at)].join(' '),
+    fill:'none',stroke:'#d9a84d','stroke-width':1.5,'stroke-dasharray':'5 3',opacity:.9}));
+  missionPlanRoute.forEach((point,index)=>{
+    svg.append(svgElement('circle',{cx:centre+point.east_m*missionScale,cy:centre-point.north_m*missionScale,
+      r:index===missionPlanRoute.length-1?4:2.5,fill:'#d9a84d'}))})}
 function drawMissionMap(cells){const svg=$('mission-map');svg.replaceChildren();const size=400,centre=size/2;
   const reach=cells.length?Math.max(...cells.map(c=>Math.hypot(c.north_m,c.east_m))):0;
   const span=Math.max(missionRadiusM*1.15,reach+4);missionScale=(size/2)/span;
@@ -356,11 +437,27 @@ function drawMissionMap(cells){const svg=$('mission-map');svg.replaceChildren();
       y:centre-b.north*missionScale-drawnH/2,width:drawnW,height:drawnH,opacity:0.85,preserveAspectRatio:'none'}))}
   svg.append(svgElement('line',{class:'axis',x1:centre,y1:0,x2:centre,y2:size}),svgElement('line',{class:'axis',x1:0,y1:centre,x2:size,y2:centre}));
   svg.append(svgElement('circle',{cx:centre,cy:centre,r:missionRadiusM*missionScale,fill:'none',stroke:'#315461','stroke-dasharray':'5 5'}));
+  // The geofence is the tighter of the two bounds here and was invisible until
+  // now, so a target could be picked well outside it and only a rejection said so.
+  if(missionFence.length>2){
+    const points=missionFence.map(v=>`${centre+v.east*missionScale},${centre-v.north*missionScale}`).join(' ');
+    svg.append(svgElement('polygon',{points,fill:'rgba(217,168,77,.05)',stroke:'#7d5f2a','stroke-dasharray':'3 4','stroke-width':1.5}))}
   for(const cell of cells){const side=Math.max(3,(Number(cell.cell_size_m)||2)*missionScale);
     svg.append(svgElement('rect',{class:cell.disputed?'cell disputed':'cell',x:centre+cell.east_m*missionScale-side/2,y:centre-cell.north_m*missionScale-side/2,width:side,height:side,rx:2}))}
+  // Where it has already flown, so it is visible which ground the lidar has
+  // actually swept — an empty patch of map means unswept, not empty.
+  if(missionTrail.length>1){
+    const points=missionTrail.map(p=>`${centre+p.east*missionScale},${centre-p.north*missionScale}`).join(' ');
+    svg.append(svgElement('polyline',{points,fill:'none',stroke:'#54d4b5',opacity:.45,'stroke-width':1.5}))}
   svg.append(svgElement('circle',{cx:centre,cy:centre,r:4,fill:'#8ee5d2'}));
+  drawVehicle(svg,centre);
   const north=svgElement('text',{x:centre+6,y:14});north.textContent='É';svg.append(north);
-  const scaleNote=svgElement('text',{x:6,y:size-8});scaleNote.textContent=`sugárkorlát: ${missionRadiusM} m`;svg.append(scaleNote);
+  const scaleNote=svgElement('text',{x:6,y:size-8});
+  scaleNote.textContent=missionFence.length>2
+    ? `sugárkorlát: ${missionRadiusM} m · szaggatott sárga: geofence`
+    : `sugárkorlát: ${missionRadiusM} m`;
+  svg.append(scaleNote);
+  drawPlannedRoute(svg,centre);
   if(missionPoint&&missionKind()==='survey'){const radius=Number(($('survey-radius')||{}).value||0);
     if(radius>0)svg.append(svgElement('circle',{cx:centre+missionPoint.east_m*missionScale,cy:centre-missionPoint.north_m*missionScale,r:radius*missionScale,fill:'rgba(217,168,77,.12)',stroke:'#d9a84d'}))}
   if(missionPoint){svg.append(svgElement('circle',{cx:centre+missionPoint.east_m*missionScale,cy:centre-missionPoint.north_m*missionScale,r:6,fill:'#d9a84d'}));
@@ -370,13 +467,21 @@ $('mission-map').addEventListener('click',event=>{const svg=$('mission-map');con
   const x=(event.clientX-box.left)*scaleX,y=(event.clientY-box.top)*scaleY;const centre=size/2;
   missionPoint={north_m:(centre-y)/missionScale,east_m:(x-centre)/missionScale};
   const distance=Math.hypot(missionPoint.north_m,missionPoint.east_m);
-  $('mission-target').textContent=`Kijelölt pont: É ${missionPoint.north_m.toFixed(1)} m, K ${missionPoint.east_m.toFixed(1)} m (${distance.toFixed(1)} m-re a kiindulóponttól).`;
+  // Say it here, before the round trip. The SafetyGate still decides; this only
+  // stops the operator learning about the fence from a rejection.
+  const outside=[];
+  if(!insideFence(missionPoint.north_m,missionPoint.east_m))outside.push('a geofence-en kívül');
+  if(distance>missionRadiusM)outside.push(`a ${missionRadiusM} m-es sugárkorláton kívül`);
+  $('mission-target').textContent=
+    `Kijelölt pont: É ${missionPoint.north_m.toFixed(1)} m, K ${missionPoint.east_m.toFixed(1)} m `
+    +`(${distance.toFixed(1)} m-re a kiindulóponttól)`
+    +(outside.length?` — ${outside.join(' és ')}, a gate ezt el fogja utasítani.`:'.');
   redrawMissionMap()});
 // The last cells drawn, so picking a point redraws instantly from what is
 // already known instead of waiting on the network to show the operator's click.
 let missionCells=[];
 function redrawMissionMap(){drawMissionMap(missionCells)}
-async function refreshMissionMap(){await refreshBasemap();
+async function refreshMissionMap(){await refreshEnvelope();await refreshBasemap();
   try{const map=await api('/api/v1/world-map',undefined,'GET');missionCells=map.cells||[]}catch{missionCells=[]}
   redrawMissionMap()}
 function missionKind(){const chosen=document.querySelector('input[name="mission-kind"]:checked');return chosen?chosen.value:'point'}
@@ -396,11 +501,16 @@ $('mission-form').addEventListener('submit',async event=>{event.preventDefault()
     :{north_m:missionPoint.north_m,east_m:missionPoint.east_m,altitude_m:Number($('mission-altitude').value),goal};
   try{const plan=await api(endpoint,body);
     missionPlan=plan.plan_id;
-    $('mission-summary').textContent=`${plan.summary} Cél: ${plan.goal} · lépések: ${(plan.steps||[]).join(' → ')}`;
+    // What the compiler produced and the gate already checked — drawn before
+    // approval so the whole swept route is visible, not just its circle.
+    missionPlanRoute=(plan.waypoints||[]).filter(p=>Number.isFinite(p.north_m)&&Number.isFinite(p.east_m));
+    redrawMissionMap();
+    const legs=missionPlanRoute.length?` · ${missionPlanRoute.length} waypoint a térképen`:'';
+    $('mission-summary').textContent=`${plan.summary} Cél: ${plan.goal} · lépések: ${(plan.steps||[]).join(' → ')}${legs}`;
     $('mission-approval').classList.remove('hidden');
     $('mission-status').textContent='A SafetyGate jóváhagyta a tervet. Indítani csak te tudsz.';
     missionLog('Terv jóváhagyásra vár: '+plan.summary)}
-  catch(error){missionPlan=null;$('mission-approval').classList.add('hidden');$('mission-status').textContent='A safety réteg elutasította: '+error.message;missionLog('Elutasítva: '+error.message)}});
+  catch(error){missionPlan=null;missionPlanRoute=[];redrawMissionMap();$('mission-approval').classList.add('hidden');$('mission-status').textContent='A safety réteg elutasította: '+error.message;missionLog('Elutasítva: '+error.message)}});
 $('mission-start').onclick=async()=>{if(!missionPlan)return;
   try{const started=await api('/api/v1/plans/approve',{plan_id:missionPlan});missionLog('Indítva: '+started.text);
     $('mission-status').textContent='A küldetés fut; jelzek, ha megérkezett.';
@@ -408,7 +518,8 @@ $('mission-start').onclick=async()=>{if(!missionPlan)return;
   catch(error){$('mission-status').textContent='Nem indítható: '+error.message}
   missionPlan=null;$('mission-approval').classList.add('hidden')};
 $('mission-cancel').onclick=async()=>{if(missionPlan){try{await api('/api/v1/plans/cancel',{plan_id:missionPlan})}catch{}}
-  missionPlan=null;$('mission-approval').classList.add('hidden');$('mission-status').textContent='Nem indítottam küldetést.';missionLog('Visszavonva')};
+  missionPlan=null;missionPlanRoute=[];redrawMissionMap();
+  $('mission-approval').classList.add('hidden');$('mission-status').textContent='Nem indítottam küldetést.';missionLog('Visszavonva')};
 async function monitorMission(planId){const timer=setInterval(async()=>{
   try{const r=await fetch(`/api/v1/plans/${planId}/status`,{cache:'no-store'});const d=await r.json();
     if(!r.ok){if(r.status>=400&&r.status<500){clearInterval(timer);missionLog('Státusz nem érvényes: '+(d.detail||'ismeretlen terv'))}return}
@@ -420,8 +531,12 @@ async function refresh(){try{const r=await fetch('/api/v1/telemetry',{cache:'no-
     $('flight').textContent=d.in_air===true?'LEVEGŐBEN':d.in_air===false?'FÖLDÖN':'ISMERETLEN';
     $('altitude').textContent=d.position?.relative_altitude_m==null?'—':d.position.relative_altitude_m.toFixed(1)+' m';
     $('battery').textContent=d.battery_percent==null?'—':d.battery_percent.toFixed(0)+'%';
-    $('position').textContent=d.position?d.position.latitude_deg.toFixed(4)+', '+d.position.longitude_deg.toFixed(4):'—'}
-  catch{$('health').textContent='Telemetria nem elérhető'}}
+    $('position').textContent=d.position?d.position.latitude_deg.toFixed(4)+', '+d.position.longitude_deg.toFixed(4):'—';
+    updateVehicleFromTelemetry(d);
+    // Only while the mission page is the one being looked at: redrawing a
+    // hidden SVG every poll is work nobody sees.
+    if($('page-mission').dataset.active==='true')redrawMissionMap()}
+  catch{$('health').textContent='Telemetria nem elérhető';missionVehicle=null}}
 function clearDetections(){const overlay=$('detection-overlay');overlay.replaceChildren();overlay.removeAttribute('viewBox')}
 function renderDetections(document_){const overlay=$('detection-overlay');const frame=document_.frame||{};const width=Number(frame.width),height=Number(frame.height);
   if(!(width>0&&height>0)){clearDetections();return}

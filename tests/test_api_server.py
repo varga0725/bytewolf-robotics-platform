@@ -225,5 +225,49 @@ class ApiServerTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Memory fact is invalid or sensitive.")
 
 
+class SafetyEnvelopeApiTests(unittest.TestCase):
+    """The dashboard draws the contract, never a copy of it."""
+
+    def setUp(self) -> None:
+        self.directory = TemporaryDirectory()
+        telemetry = Path(self.directory.name) / "telemetry.json"
+        telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
+        self.client = TestClient(create_app(telemetry))
+
+    def tearDown(self) -> None:
+        self.directory.cleanup()
+
+    def test_the_envelope_comes_from_the_same_file_the_gate_loads(self) -> None:
+        from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
+
+        profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
+        body = self.client.get("/api/v1/safety-envelope").json()
+
+        self.assertEqual(body["max_radius_m"], profile.max_radius_m)
+        self.assertEqual(body["max_altitude_m"], profile.max_altitude_m)
+
+    def test_the_geofence_is_served_so_it_can_be_seen_before_it_refuses(self) -> None:
+        """The fence is the tighter bound and the map never drew it.
+
+        A target picked outside it was reviewable-looking right up to the
+        rejection, which taught the operator nothing about where they may fly.
+        """
+        body = self.client.get("/api/v1/safety-envelope").json()
+
+        vertices = body["geofence_vertices_m"]
+        self.assertGreaterEqual(len(vertices), 3)
+        self.assertTrue(all({"north_m", "east_m"} == set(vertex) for vertex in vertices))
+
+    def test_the_envelope_has_no_write_endpoint(self) -> None:
+        for method in (self.client.post, self.client.put, self.client.delete):
+            with self.subTest(method=method.__name__):
+                self.assertEqual(method("/api/v1/safety-envelope").status_code, 405)
+
+    def test_the_dashboard_stops_hardcoding_the_limits_it_draws(self) -> None:
+        page = self.client.get("/").text
+
+        self.assertIn("/api/v1/safety-envelope", page)
+
+
 if __name__ == "__main__":
     unittest.main()

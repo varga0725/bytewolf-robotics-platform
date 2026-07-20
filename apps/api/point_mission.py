@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from brain.mission.commands import WaypointCommand
 from brain.mission_spec.reviewed_plan import default_plan_path, write_reviewed_plan
 from brain.mission_spec.survey import SurveyPatternError, survey_waypoints
 from brain.mission_spec.validation import (
@@ -49,6 +50,12 @@ class PointMission:
     goal: str
     steps: tuple[str, ...]
     summary: str
+    # The route the compiler actually produced, in launch-relative metres. The
+    # dashboard draws these rather than re-deriving the sweep pattern in the
+    # browser: a second implementation of the pattern would eventually disagree
+    # with the one that flies, and the preview would be showing a mission that
+    # does not exist.
+    waypoints: tuple[tuple[float, float], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +64,7 @@ class PointMission:
             "goal": self.goal,
             "steps": list(self.steps),
             "summary": self.summary,
+            "waypoints": [{"north_m": north, "east_m": east} for north, east in self.waypoints],
         }
 
 
@@ -271,6 +279,11 @@ def _review_and_write(
         goal=goal_text,
         steps=tuple(str(step["type"]) for step in spec["steps"]),
         summary=summary,
+        waypoints=tuple(
+            (command.north_m, command.east_m)
+            for command in report.mission.commands
+            if isinstance(command, WaypointCommand)
+        ),
     )
 
 
