@@ -25,7 +25,13 @@ from brain.memory.world_memory import load_world_claim
 NOW = datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
 
 
-def _claim(subject: str = "marker:red-pad", *, source: str = "camera:down_rgb", confidence: float = 0.9):
+def _claim(
+    subject: str = "marker:red-pad",
+    *,
+    source: str = "camera:down_rgb",
+    confidence: float = 0.9,
+    observed_at: datetime = NOW,
+):
     return load_world_claim({
         "contract_version": "v0.1",
         "subject": subject,
@@ -33,11 +39,22 @@ def _claim(subject: str = "marker:red-pad", *, source: str = "camera:down_rgb", 
         "statement": f"{subject} látható.",
         "evidence": {
             "source": source,
-            "observed_at": NOW.isoformat(),
-            "expires_at": (NOW + timedelta(minutes=10)).isoformat(),
+            "observed_at": observed_at.isoformat(),
+            "expires_at": (observed_at + timedelta(minutes=10)).isoformat(),
             "confidence": confidence,
         },
     })
+
+
+def _live_claim(subject: str = "marker:red-pad"):
+    """A claim that has not expired for whoever is running the suite right now.
+
+    The graph functions take claims directly, so a frozen `NOW` is fine for
+    them. The API reads through world memory, which drops expired evidence
+    against the real clock — so a fixture pinned to a wall-clock instant is a
+    test that passes until that instant passes, and then never again.
+    """
+    return _claim(subject, observed_at=datetime.now(UTC))
 
 
 class PersonalGraphTests(unittest.TestCase):
@@ -148,7 +165,7 @@ class KnowledgeApiTests(unittest.TestCase):
             encoding="utf-8",
         )
         world_path = root / "world" / "claims.jsonl"
-        append_claim(world_path, _claim())
+        append_claim(world_path, _live_claim())
         gateway = DashboardCommandGateway(
             converse=lambda _session, _text: AgentReply("Szia!", False, "skipped"),
             review=lambda _text: "plan-1",
