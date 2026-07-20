@@ -17,6 +17,7 @@ from brain.mission.flight import (
     TakeoffTargetApproachLandMission,
     TakeoffWaypointLandMission,
     TakeoffWaypointsLandMission,
+    TakeoffWaypointsReturnToHomeMission,
     TakeoffWaypointSquareLandMission,
 )
 from brain.mission.runtime_policy import RuntimePolicy, load_runtime_policy
@@ -364,6 +365,60 @@ class MavsdkMissionAdapter:
             await self._drone.action.takeoff()
             airborne = True
             await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
+            execution = self._record(execution, MissionPhase.HOVERING)
+            await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
+            execution = self._record(execution, MissionPhase.RETURNING)
+            await self._drone.action.return_to_launch()
+            await self.wait_until_landed(
+                min(mission.landing_timeout_s, self._runtime_policy.landing_confirmation_timeout_s)
+            )
+            airborne = False
+            landing_position = await self._global_position_sample("landing position")
+            home_error_m = horizontal_distance_m(home, landing_position)
+            if home_error_m > mission.home_tolerance_m:
+                raise RuntimeError(
+                    f"RTL landed {home_error_m:.1f} m from home; limit is {mission.home_tolerance_m:.1f} m."
+                )
+        except Exception:
+            await self._fallback_land_after_airborne_failure(
+                execution,
+                airborne,
+                min(mission.landing_timeout_s, self._runtime_policy.landing_confirmation_timeout_s),
+            )
+            raise
+        return self._record(execution, MissionPhase.COMPLETED)
+
+    async def execute_waypoints_return_to_home_mission(
+        self, mission: TakeoffWaypointsReturnToHomeMission
+    ) -> MissionExecution:
+        """Fly every approved route point, then let PX4 bring the vehicle home.
+
+        This is `execute_waypoints_mission` and `execute_return_to_home_mission`
+        joined at the point where they differ, and nowhere else: the same
+        per-waypoint arrival confirmation, the same single land fallback, and
+        the same landed-at-home tolerance check that refuses to call a return
+        successful because the vehicle merely stopped moving.
+
+        There is no retry and no skip. A waypoint that cannot be reached is one
+        bounded landing and a raised error, exactly as on the landing route.
+        """
+        await self._require_preflight()
+        home = await self._global_position_sample("home")
+        execution = self._begin_execution()
+        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+        await self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m)
+        airborne = False
+        try:
+            await self._drone.action.arm()
+            execution = self._record(execution, MissionPhase.TAKING_OFF)
+            await self._drone.action.takeoff()
+            airborne = True
+            await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
+            execution = self._record(execution, MissionPhase.NAVIGATING)
+            timeout_s = min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s)
+            for waypoint in mission.waypoints:
+                target = await self.goto_relative_waypoint(waypoint)
+                await self.wait_until_waypoint_reached(target, mission.waypoint_tolerance_m, timeout_s)
             execution = self._record(execution, MissionPhase.HOVERING)
             await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
             execution = self._record(execution, MissionPhase.RETURNING)

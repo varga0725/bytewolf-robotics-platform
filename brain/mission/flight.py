@@ -115,6 +115,34 @@ class TakeoffReturnToHomeMission:
     home_tolerance_m: float = 6.0
 
 
+@dataclass(frozen=True)
+class TakeoffWaypointsReturnToHomeMission:
+    """Fly an approved local route, then let PX4 bring the vehicle home and land.
+
+    A survey is the mission that needs this: its last waypoint is at the far
+    edge of the swept area, so landing where the pattern ended would leave the
+    vehicle wherever the sweep happened to finish. Landing at the end of a
+    route is a different promise from coming home at the end of a route, and
+    only the second one is what an area sweep means.
+
+    The hover is allowed to be zero. A route that goes straight from its last
+    waypoint to the return has no hover step in it, and inventing one would put
+    a wait in the air that nobody approved.
+    """
+
+    takeoff: TakeoffCommand
+    waypoints: tuple[WaypointCommand, ...]
+    hover_duration_s: float
+    return_to_home: ReturnToHomeCommand = field(
+        default_factory=lambda: ReturnToHomeCommand(target_altitude_m=2.0)
+    )
+    takeoff_settle_seconds: float = 4.0
+    waypoint_tolerance_m: float = 1.0
+    waypoint_timeout_s: float = 30.0
+    landing_timeout_s: float = 60.0
+    home_tolerance_m: float = 6.0
+
+
 def authorize_takeoff_hover_land(
     gate: SafetyGate, target_altitude_m: float, hover_duration_s: float
 ) -> TakeoffHoverLandMission:

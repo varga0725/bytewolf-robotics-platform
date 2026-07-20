@@ -11,6 +11,7 @@ from brain.mission.flight import (
     TakeoffReturnToHomeMission,
     TakeoffWaypointLandMission,
     TakeoffWaypointsLandMission,
+    TakeoffWaypointsReturnToHomeMission,
 )
 from brain.mission_spec.validation import CompiledMission
 
@@ -32,6 +33,10 @@ class ApprovedMissionAdapter(Protocol):
 
     def execute_return_to_home_mission(
         self, mission: TakeoffReturnToHomeMission
+    ) -> Awaitable[MissionExecution]: ...
+
+    def execute_waypoints_return_to_home_mission(
+        self, mission: TakeoffWaypointsReturnToHomeMission
     ) -> Awaitable[MissionExecution]: ...
 
 
@@ -63,6 +68,16 @@ async def execute_compiled_mission(
             TakeoffWaypointsLandMission(takeoff=takeoff, waypoints=_route_legs(intermediate), hover_duration_s=hold_duration_s)
         )
 
+    if intermediate:
+        return await adapter.execute_waypoints_return_to_home_mission(
+            TakeoffWaypointsReturnToHomeMission(
+                takeoff=takeoff,
+                waypoints=_route_legs(intermediate),
+                hover_duration_s=hold_duration_s,
+                return_to_home=terminal,
+            )
+        )
+
     return await adapter.execute_return_to_home_mission(
         TakeoffReturnToHomeMission(
             takeoff=takeoff,
@@ -92,24 +107,30 @@ def _supported_shape(
     if mission.terminal_action != expected_terminal_action:
         raise MissionSpecExecutionError("unsupported compiled MissionSpec: terminal action is inconsistent.")
 
-    if len(mission.hold_durations_s) != 1:
+    # A mission may hold once or not at all. An area sweep goes from its last
+    # waypoint straight to the return, and requiring a HOLD there would mean
+    # either refusing a mission the operator did ask for, or inserting a wait in
+    # the air that they did not.
+    if len(mission.hold_durations_s) > 1:
         raise MissionSpecExecutionError(
-            "unsupported compiled MissionSpec: expected exactly one HOLD duration."
+            "unsupported compiled MissionSpec: expected at most one HOLD duration."
         )
-    hold_duration_s = mission.hold_durations_s[0]
-    if not isfinite(hold_duration_s) or hold_duration_s <= 0.0:
-        raise MissionSpecExecutionError("unsupported compiled MissionSpec: HOLD duration must be positive.")
+    hold_duration_s = mission.hold_durations_s[0] if mission.hold_durations_s else 0.0
+    if not isfinite(hold_duration_s) or hold_duration_s < 0.0:
+        raise MissionSpecExecutionError("unsupported compiled MissionSpec: HOLD duration must not be negative.")
 
     intermediate = commands[1:-1]
-    if len(intermediate) > 4 or any(not isinstance(command, WaypointCommand) for command in intermediate):
+    if any(not isinstance(command, WaypointCommand) for command in intermediate):
         raise MissionSpecExecutionError(
-            "unsupported compiled MissionSpec: at most four local waypoints are supported."
+            "unsupported compiled MissionSpec: only local waypoints may sit between takeoff and the terminal."
         )
+    # Deliberately uncapped here. How many waypoints a mission may carry is
+    # already decided in three places that know something this bridge does not:
+    # the survey pattern's own waypoint bound, the SafetyGate's per-waypoint
+    # geofence and radius check, and the runtime battery watchdog. A fourth
+    # number here would be a second source of a limit — and the one most likely
+    # to drift from the others.
     waypoints = tuple(command for command in intermediate if isinstance(command, WaypointCommand))
-    if isinstance(terminal, ReturnToHomeCommand) and waypoints:
-        raise MissionSpecExecutionError(
-            "unsupported compiled MissionSpec: RTL after a waypoint has no approved adapter path."
-        )
     return commands[0], waypoints, terminal, hold_duration_s
 
 

@@ -184,6 +184,10 @@ class _RecordingAdapter:
         self.calls.append("return-to-home")
         return self.calls[-1]
 
+    async def execute_waypoints_return_to_home_mission(self, mission: object) -> str:
+        self.calls.append("route-and-return")
+        return self.calls[-1]
+
 
 class OrchestrationOrderingTests(unittest.TestCase):
     """gateway -> validator -> compiler -> orchestrator, with no PX4 in the loop."""
@@ -217,18 +221,21 @@ class OrchestrationOrderingTests(unittest.TestCase):
         self.assertFalse(result.accepted)
         self.assertEqual(calls, [])
 
-    def test_the_canonical_demo_compiles_but_its_shape_has_no_adapter_path(self) -> None:
-        """A known limitation: takeoff-goto-return with no hover is valid but unroutable.
+    def test_the_canonical_demo_now_reaches_an_adapter_instead_of_a_dead_end(self) -> None:
+        """Takeoff-goto-return with no hover used to compile and then go nowhere.
 
-        The gateway and validator approve it; the orchestrator's bounded adapters
-        cannot represent that exact shape, and it refuses rather than dropping a
-        step. Surfaced here so the gap is visible, not silently accepted.
+        The gateway and validator approved it; the orchestrator had no adapter
+        able to represent it, so it refused rather than drop a step — correct,
+        but it meant the project's own canonical demo sentence could not fly.
+        The route-and-return path is what it was missing.
         """
         result = _interpret(_CANONICAL_EN, designated_point_m=(5.0, 0.0))
         self.assertTrue(result.accepted)
+        adapter = _RecordingAdapter()
 
-        with self.assertRaises(MissionSpecExecutionError):
-            asyncio.run(execute_compiled_mission(_RecordingAdapter(), result.mission))
+        asyncio.run(execute_compiled_mission(adapter, result.mission))
+
+        self.assertEqual(adapter.calls, ["route-and-return"])
 
 
 if __name__ == "__main__":

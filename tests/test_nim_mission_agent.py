@@ -128,7 +128,7 @@ class NIMMissionAgentTests(unittest.TestCase):
         self.assertIsNone(result.mission)
         self.assertTrue(any("altitude" in item.reason.lower() for item in result.rejections))
 
-    def test_valid_but_unroutable_shape_is_refused_before_execution(self) -> None:
+    def test_a_go_then_return_proposal_is_accepted_now_that_it_can_fly(self) -> None:
         agent = NIMMissionAgent(
             "key",
             "model",
@@ -146,8 +146,8 @@ class NIMMissionAgentTests(unittest.TestCase):
 
         result = agent.propose(MissionAgentRequest("go then return", PROFILE))
 
-        self.assertFalse(result.accepted)
-        self.assertIn("executable", result.rejections[0].constraint or "")
+        self.assertTrue(result.accepted)
+        self.assertEqual(result.mission.terminal_action, "RTL")
 
     def test_missing_credentials_fails_before_network_call(self) -> None:
         with self.assertRaisesRegex(NIMMissionAgentError, "NVIDIA_API_KEY"):

@@ -12,6 +12,7 @@ from brain.mission.flight import (
     TakeoffReturnToHomeMission,
     TakeoffTargetApproachLandMission,
     TakeoffWaypointLandMission,
+    TakeoffWaypointsReturnToHomeMission,
 )
 
 
@@ -134,6 +135,32 @@ class FailingWaypointDrone(FakeDrone):
     def __init__(self) -> None:
         super().__init__()
         self.action = FailingWaypointAction(self.events)
+
+
+class ArrivingTelemetry(FakeTelemetry):
+    """Report the launch point until the vehicle has been told where to go.
+
+    `FakeTelemetry` starts reporting arrival on its third `position()` call,
+    which is one sample too early here: the route-and-return path samples home
+    first, so the third call is the one that converts the relative waypoint into
+    a target. Reporting arrival there would place the target five metres beyond
+    a vehicle that had already 'arrived', and the wait would never end.
+    """
+
+    _SAMPLES_BEFORE_ARRIVAL = 3
+
+    async def position(self):
+        self._calls += 1
+        arrived = self._calls > self._SAMPLES_BEFORE_ARRIVAL
+        while True:
+            yield Position(latitude=47.5000449) if arrived else Position()
+            await asyncio.sleep(0)
+
+
+class ArrivingDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = ArrivingTelemetry()
 
 
 class UnhealthyTelemetry(FakeTelemetry):
@@ -711,3 +738,62 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("return_to_launch", drone.events)
         self.assertEqual(drone.events[-1], "land")
+
+    async def test_flies_every_route_point_then_returns_home(self) -> None:
+        """The shape an area sweep needs: go there, then come home from there.
+
+        Landing at the end of the route would put the vehicle wherever the
+        sweep happened to finish.
+        """
+        drone = ArrivingDrone()
+
+        async def fake_sleep(seconds: float) -> None:
+            drone.events.append(("wait", seconds))
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffWaypointsReturnToHomeMission(
+            takeoff=TakeoffCommand(2.0),
+            waypoints=(WaypointCommand(north_m=5.0, east_m=0.0, target_altitude_m=2.0),),
+            hover_duration_s=0.0,
+        )
+
+        execution = await adapter.execute_waypoints_return_to_home_mission(mission)
+
+        self.assertEqual(
+            tuple(event.phase for event in execution.events),
+            (
+                MissionPhase.ARMING,
+                MissionPhase.TAKING_OFF,
+                MissionPhase.NAVIGATING,
+                MissionPhase.HOVERING,
+                MissionPhase.RETURNING,
+                MissionPhase.COMPLETED,
+            ),
+        )
+        self.assertIn("return_to_launch", drone.events)
+        self.assertNotIn("land", drone.events)
+
+    async def test_a_route_that_returns_home_still_lands_once_on_failure(self) -> None:
+        """One bounded land fallback, exactly as on every other airborne path.
+
+        Two landing attempts would be a bug; none would leave a vehicle in the
+        air after the controller gave up on it.
+        """
+        drone = FailingWaypointDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffWaypointsReturnToHomeMission(
+            takeoff=TakeoffCommand(2.0),
+            waypoints=(WaypointCommand(north_m=5.0, east_m=0.0, target_altitude_m=2.0),),
+            hover_duration_s=0.0,
+        )
+
+        with self.assertRaises(Exception):
+            await adapter.execute_waypoints_return_to_home_mission(mission)
+
+        self.assertEqual(drone.events[-1], "land")
+        self.assertEqual(drone.events.count("land"), 1)
+        self.assertNotIn("return_to_launch", drone.events)
