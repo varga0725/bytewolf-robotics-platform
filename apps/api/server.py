@@ -64,6 +64,8 @@ def create_app(
     detections_path: Path | None = None,
     down_camera_path: Path | None = None,
     down_detections_path: Path | None = None,
+    map_view_path: Path | None = None,
+    map_view_meta_path: Path | None = None,
     agent_artifact_dir: Path = Path("simulation/artifacts/agent-missions"),
     memory_dir: Path = Path("var/pi-agent/memory"),
     world_memory_path: Path = Path("var/world-memory/claims.jsonl"),
@@ -100,6 +102,20 @@ def create_app(
     @app.get("/api/v1/cameras/{sensor}")
     def selected_camera(sensor: str, if_none_match: str | None = Header(default=None)) -> Response:
         return _camera_response(_sensor_path(camera_path, down_camera_path, sensor), if_none_match=if_none_match)
+
+    @app.get("/api/v1/map-view")
+    def basemap_image(if_none_match: str | None = Header(default=None)) -> Response:
+        """Serve the overhead render of the simulated world. Read-only, like every camera here."""
+        return _camera_response(map_view_path, if_none_match=if_none_match)
+
+    @app.get("/api/v1/map-view/meta")
+    def basemap_meta() -> Response:
+        """Serve the scale and centre of that render.
+
+        Kept separate from the image on purpose: a picture without its metres
+        per pixel is decoration, and the browser must not invent the number.
+        """
+        return _detections_response(map_view_meta_path)
 
     @app.get("/api/v1/detections")
     def detections() -> Response:
@@ -379,6 +395,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--detections-file", type=Path, default=Path("simulation/artifacts/dashboard/detections.json"))
     parser.add_argument("--down-camera-file", type=Path, default=Path("simulation/artifacts/dashboard/camera-down.jpg"))
     parser.add_argument("--down-detections-file", type=Path, default=Path("simulation/artifacts/dashboard/detections-down.json"))
+    parser.add_argument("--map-view-file", type=Path, default=Path("simulation/artifacts/dashboard/map-view.jpg"))
+    parser.add_argument("--map-view-meta-file", type=Path, default=Path("simulation/artifacts/dashboard/map-view.json"))
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args(argv)
     _load_project_environment(Path(__file__).resolve().parents[2] / ".env")
@@ -387,6 +405,7 @@ def main(argv: list[str] | None = None) -> None:
         create_app(
             args.telemetry_file, camera_path=args.camera_file, detections_path=args.detections_file,
             down_camera_path=args.down_camera_file, down_detections_path=args.down_detections_file,
+            map_view_path=args.map_view_file, map_view_meta_path=args.map_view_meta_file,
         ), host="127.0.0.1", port=args.port,
     )
 

@@ -10,10 +10,32 @@ bridge ugyanarra az alakra írhat adatot.
 | --- | --- | --- |
 | Telemetria, kamera, chat | `brain.cli.dashboard_telemetry` (vagy egy futó küldetés-CLI) | a snapshot a legutóbbi küldetésé marad, és a felület kapcsolat nélkülinek látszik |
 | Világtérkép, akadálycellák | `simulation.perception.survey_recorder` vagy az obstacle scenario | üres marad — **lidar nélküli airframe-en soha nem lesz cella** |
+| Küldetés-térkép háttérképe | `simulation.gazebo.map_view` | a térkép üres koordináta-rendszer marad, és vakon kell célpontot kijelölni |
 | Küldetés indítása | `apps.api.server` + explicit jóváhagyás | a dashboard csak olvas |
 
 A `base` (`gz_x500`) airframe-en **nincs lidar**, ezért térkép sem keletkezhet;
 ehhez `lidar-2d` (`gz_x500_lidar_2d`) kell.
+
+## A küldetés-térkép háttérképe
+
+```sh
+python -m simulation.gazebo.map_view
+```
+
+Ez egy statikus, lefelé néző kamerát helyez a **futó** Gazebo világba a vehicle
+spawn pontja fölé, és onnan renderel felülnézetet a küldetés-térkép alá, a saját
+méretarányával együtt (`map-view.json`). PX4-módosítást és újraindítást nem
+igényel.
+
+A világ jelenetét viszont megváltoztatja: **bizonyíték-futás alatt nem futhat.**
+Egy scenario- vagy baseline-futás világában nem lehet benne ez a kamera, mert egy
+befecskendezett modelltől a futás már nem az a világ, amit a `baseline.yaml`
+rögzít. A modell neve ezért beszédes: `bytewolf_map_camera`.
+
+A kép tájolása mért, nem feltételezett: a nyers renderben Kelet van fent és Észak
+balra, ezért a modul negyed fordulattal forgatja észak-fel állásba. A méretarány
+0,23 m/pixel 158 m magasságból, amit egy 40 m-es kameraeltolás 176 pixeles
+képelmozdulása igazol vissza (`tests/test_map_view.py`).
 
 ## Oldalak
 

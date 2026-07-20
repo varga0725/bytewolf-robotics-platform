@@ -140,6 +140,7 @@
         <div class="panel">
           <div class="label">Célpont kijelölése (észak felfelé, méterben a kiindulóponttól)</div>
           <p class="memory-note">A szürke gyűrű a repülési sugárkorlát. A zöld cellák mért akadályok — de a térkép csak foglaltságot ismer, szabad területet nem állít, tehát a kijelölt út nem „ellenőrzötten üres".</p>
+          <p id="mission-basemap-note" class="memory-note">Háttérkép: nincs. Indítsd a felülnézeti kamerát: <code>python -m simulation.gazebo.map_view</code></p>
           <svg id="mission-map" class="map" aria-label="Küldetés térkép"></svg>
           <p id="mission-target" class="memory-note">Nincs kijelölt pont.</p>
         </div>
@@ -327,10 +328,32 @@ $('refresh-world').onclick=refreshWorld;
 
 let missionPoint=null;let missionPlan=null;let missionRadiusM=50;let missionScale=1;
 function missionLog(text){const list=$('mission-log');if(list.querySelector('.memory-note'))list.replaceChildren();const row=document.createElement('div');row.className='memory-item';row.textContent=`${new Date().toLocaleTimeString('hu-HU')} · ${text}`;list.prepend(row)}
+// The overhead render of the simulated world, and the numbers that make it a
+// map rather than a picture. Null until the map_view producer has written one;
+// the grid must keep working without it, because a missing basemap is normal on
+// a vehicle that is not in a simulator at all.
+let missionBasemap=null;
+async function refreshBasemap(){const note=$('mission-basemap-note');
+  try{const meta=await api('/api/v1/map-view/meta',undefined,'GET');
+    const mpp=Number(meta.metres_per_pixel),w=Number(meta.width),h=Number(meta.height);
+    if(!(mpp>0)||!(w>0)||!(h>0)||meta.orientation!=='north_up_east_right'){missionBasemap=null;
+      note.textContent='Háttérkép: a méretarány olvashatatlan, ezért nincs kirajzolva.';return}
+    missionBasemap={mpp,w,h,north:Number(meta.centre_north_m)||0,east:Number(meta.centre_east_m)||0,
+      // Cache-busted per capture so a refreshed render actually replaces the old one.
+      href:`/api/v1/map-view?v=${encodeURIComponent(meta.captured_at||'')}`};
+    note.textContent=`Háttérkép: ${meta.world} felülnézetből, ${(mpp*w).toFixed(0)} m széles, ${mpp.toFixed(2)} m/pixel · ${meta.captured_at||'—'}`}
+  catch{missionBasemap=null;note.textContent='Háttérkép: nincs. Indítsd a felülnézeti kamerát: python -m simulation.gazebo.map_view'}}
 function drawMissionMap(cells){const svg=$('mission-map');svg.replaceChildren();const size=400,centre=size/2;
   const reach=cells.length?Math.max(...cells.map(c=>Math.hypot(c.north_m,c.east_m))):0;
   const span=Math.max(missionRadiusM*1.15,reach+4);missionScale=(size/2)/span;
   svg.setAttribute('viewBox',`0 0 ${size} ${size}`);
+  // Under everything: the world itself, placed by its own scale so a metre on
+  // the grid is the same metre on the picture. Never stretched to fit — a
+  // basemap that does not line up is worse than none.
+  if(missionBasemap){const b=missionBasemap;
+    const drawnW=b.w*b.mpp*missionScale,drawnH=b.h*b.mpp*missionScale;
+    svg.append(svgElement('image',{href:b.href,x:centre+b.east*missionScale-drawnW/2,
+      y:centre-b.north*missionScale-drawnH/2,width:drawnW,height:drawnH,opacity:0.85,preserveAspectRatio:'none'}))}
   svg.append(svgElement('line',{class:'axis',x1:centre,y1:0,x2:centre,y2:size}),svgElement('line',{class:'axis',x1:0,y1:centre,x2:size,y2:centre}));
   svg.append(svgElement('circle',{cx:centre,cy:centre,r:missionRadiusM*missionScale,fill:'none',stroke:'#315461','stroke-dasharray':'5 5'}));
   for(const cell of cells){const side=Math.max(3,(Number(cell.cell_size_m)||2)*missionScale);
@@ -348,8 +371,14 @@ $('mission-map').addEventListener('click',event=>{const svg=$('mission-map');con
   missionPoint={north_m:(centre-y)/missionScale,east_m:(x-centre)/missionScale};
   const distance=Math.hypot(missionPoint.north_m,missionPoint.east_m);
   $('mission-target').textContent=`Kijelölt pont: É ${missionPoint.north_m.toFixed(1)} m, K ${missionPoint.east_m.toFixed(1)} m (${distance.toFixed(1)} m-re a kiindulóponttól).`;
-  refreshMissionMap()});
-async function refreshMissionMap(){try{const map=await api('/api/v1/world-map',undefined,'GET');drawMissionMap(map.cells||[])}catch{drawMissionMap([])}}
+  redrawMissionMap()});
+// The last cells drawn, so picking a point redraws instantly from what is
+// already known instead of waiting on the network to show the operator's click.
+let missionCells=[];
+function redrawMissionMap(){drawMissionMap(missionCells)}
+async function refreshMissionMap(){await refreshBasemap();
+  try{const map=await api('/api/v1/world-map',undefined,'GET');missionCells=map.cells||[]}catch{missionCells=[]}
+  redrawMissionMap()}
 function missionKind(){const chosen=document.querySelector('input[name="mission-kind"]:checked');return chosen?chosen.value:'point'}
 for(const radio of document.querySelectorAll('input[name="mission-kind"]'))radio.addEventListener('change',()=>{
   $('survey-fields').classList.toggle('hidden',missionKind()!=='survey');
