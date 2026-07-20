@@ -18,6 +18,8 @@ from apps.api.command_gateway import AgentReply, DashboardCommandGateway, Dashbo
 from apps.dashboard.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.gateway.pi_agent import PiAgentClient
+from brain.memory.graph import knowledge_view
+from brain.memory.world_map import map_view
 from brain.memory.world_memory import load_world_memory
 from apps.gateway.telegram_mission_gateway import _execute_with_cli, _review_with_cli
 
@@ -132,6 +134,29 @@ def create_app(
             "claims": [claim.as_dict() for claim in memory.recall(now)],
             "disputed": [claim.as_dict() for claim in memory.disputed(now)],
         }
+
+    @app.get("/api/v1/world-map")
+    def world_map() -> dict[str, object]:
+        """Read the occupancy grid built from obstacle scans; read-only.
+
+        Cells describe where something *was* measured. There is no free-space
+        layer, because neither a clear nor an unobserved sector may be stored.
+        """
+        memory = load_world_memory(world_memory_path)
+        now = datetime.now(UTC)
+        cells = map_view(memory.recall(now), memory.disputed(now))
+        return {
+            "cells": [cell.as_dict() for cell in cells],
+            "occupancy_only": True,
+        }
+
+    @app.get("/api/v1/knowledge")
+    def knowledge(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
+        """Two graphs, never one: personal facts and world evidence stay apart."""
+        memory = load_world_memory(world_memory_path)
+        now = datetime.now(UTC)
+        facts = list_memory(memory_dir, _session(x_bytewolf_session))["facts"]
+        return knowledge_view(facts, memory.recall(now), memory.disputed(now))
 
     web_root = Path(__file__).resolve().parents[1] / "dashboard" / "web"
     app.mount("/", StaticFiles(directory=web_root, html=True), name="dashboard")
