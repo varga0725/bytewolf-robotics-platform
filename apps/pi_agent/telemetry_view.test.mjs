@@ -56,3 +56,24 @@ test("a missing artifact reports unknown, never a default of zero", () => {
   assert.match(view.line, /battery_percent=unknown/);
   assert.doesNotMatch(view.line, /battery_percent=0/);
 });
+
+test("a tool result is one JSON document, data included", () => {
+  // Mirrors runner.mjs's toolResult: an appended second line would be a
+  // contract only by habit, and a reader that parsed the first line would
+  // have to guess at the rest.
+  const toolResult = (status, summary, nextActions = [], artifacts = [], data = undefined) =>
+    JSON.stringify({
+      status,
+      summary,
+      next_actions: nextActions,
+      artifacts,
+      ...(data === undefined ? {} : { data }),
+    });
+  const view = telemetryLine(snapshot(), CAPTURED_MS + 1_000);
+
+  const parsed = JSON.parse(toolResult("success", view.summary, [], ["live.json"], view.line));
+
+  assert.equal(parsed.status, "success");
+  assert.match(parsed.data, /flight=airborne/);
+  assert.match(parsed.data, /stale=false/);
+});

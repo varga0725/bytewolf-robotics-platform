@@ -37,8 +37,17 @@ const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_WORLD_CONTEXT_CHARS = 1200;
 
-function toolResult(status, summary, nextActions = [], artifacts = []) {
-  return JSON.stringify({ status, summary, next_actions: nextActions, artifacts });
+function toolResult(status, summary, nextActions = [], artifacts = [], data = undefined) {
+  // One well-formed JSON document per tool result. An earlier version appended a
+  // second, differently-shaped line after the JSON; a reader that parsed the
+  // first line then had to guess at the rest, which is a contract only by habit.
+  return JSON.stringify({
+    status,
+    summary,
+    next_actions: nextActions,
+    artifacts,
+    ...(data === undefined ? {} : { data }),
+  });
 }
 
 async function readJsonOr(pathname, fallback) {
@@ -81,11 +90,15 @@ async function postTurnMemory(request, assistantReply) {
 async function telemetrySummary() {
   const document = await readJsonOr(path.join(ROOT, "simulation", "artifacts", "dashboard", "live-telemetry.json"), null);
   const view = telemetryLine(document, Date.now());
-  if (!view.usable) {
-    return toolResult("warning", view.summary, ["Kérdezd meg, indítsam-e a szimulációt."]) + `\n${view.line}`;
-  }
-  return toolResult("success", view.summary, [], ["simulation/artifacts/dashboard/live-telemetry.json"])
-    + `\n${view.line}`;
+  return view.usable
+    ? toolResult(
+        "success",
+        view.summary,
+        [],
+        ["simulation/artifacts/dashboard/live-telemetry.json"],
+        view.line,
+      )
+    : toolResult("warning", view.summary, ["Kérdezd meg, indítsam-e a szimulációt."], [], view.line);
 }
 
 async function visionSummary() {
