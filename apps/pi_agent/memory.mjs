@@ -11,7 +11,9 @@ const ALLOWED_OPERATIONS = new Set(["upsert", "forget"]);
 const MAX_MEMORY_ITEMS = 40;
 const MAX_OPERATIONS = 6;
 const MAX_VALUE_CHARS = 240;
-const SENSITIVE_MEMORY = /\b(api\s*key|api[-_ ]?kulcs\w*|token|jelsz[oó]|password|secret|titok|bankk[aá]rtya|credit\s*card|e-?mail|email|telefonsz[aá]m|phone)\b|\b(?:utca|street|road|avenue)\b|\b\d{12,}\b|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b|\+?\d[\d\s()-]{7,}\d/i;
+// Hungarian inflects: `jelszavam`, `titkos`, `bankkártyám` must fail closed
+// exactly like their dictionary forms, so these stems stay open-ended.
+const SENSITIVE_MEMORY = /\b(api\s*key|api[-_ ]?kulcs\w*|token|jelsz[oóa]\w*|password|secret|tit[ok]k?\w*|bankk[aá]rty\w*|credit\s*card|e-?mail\w*|telefonsz[aá]m\w*|phone)\b|\b(?:utca|street|road|avenue)\b|\b\d{12,}\b|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b|\+?\d[\d\s()-]{7,}\d/i;
 
 export function normalizeMemoryText(value) {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";

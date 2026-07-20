@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from apps.api.command_gateway import AgentReply, DashboardCommandGateway, Dashbo
 from apps.dashboard.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.gateway.pi_agent import PiAgentClient
+from brain.memory.world_memory import load_world_memory
 from apps.gateway.telegram_mission_gateway import _execute_with_cli, _review_with_cli
 
 
@@ -42,6 +44,7 @@ def create_app(
     down_detections_path: Path | None = None,
     agent_artifact_dir: Path = Path("simulation/artifacts/agent-missions"),
     memory_dir: Path = Path("var/pi-agent/memory"),
+    world_memory_path: Path = Path("var/world-memory/claims.jsonl"),
     gateway: DashboardCommandGateway | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ByteWolf Command Gateway", version="0.1")
@@ -114,6 +117,21 @@ def create_app(
             return delete_memory_fact(memory_dir, _session(x_bytewolf_session), fact_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/api/v1/world-memory")
+    def world_memory() -> dict[str, object]:
+        """Read the evidence-backed world claims; this endpoint never writes.
+
+        World memory is not session-scoped: it describes the shared simulated
+        world, not a person.  Contradicted subjects are reported separately so
+        the dashboard cannot present disputed evidence as a fact.
+        """
+        memory = load_world_memory(world_memory_path)
+        now = datetime.now(UTC)
+        return {
+            "claims": [claim.as_dict() for claim in memory.recall(now)],
+            "disputed": [claim.as_dict() for claim in memory.disputed(now)],
+        }
 
     web_root = Path(__file__).resolve().parents[1] / "dashboard" / "web"
     app.mount("/", StaticFiles(directory=web_root, html=True), name="dashboard")

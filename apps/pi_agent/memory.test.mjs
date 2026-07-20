@@ -23,6 +23,23 @@ test("rejects sensitive and unknown memory suggestions", () => {
   assert.deepEqual(operations, []);
 });
 
+test("rejects inflected Hungarian forms of sensitive words", () => {
+  const inflected = [
+    "A jelszavam titkos123.",
+    "A bankkártyámat a fiókban tartom.",
+    "Az e-mailcímem a profilban van.",
+    "A telefonszámomat ne hívd.",
+  ];
+
+  for (const value of inflected) {
+    assert.deepEqual(
+      admitMemoryDelta({ kind: "memory_delta", operations: [{ op: "upsert", category: "preference", value }] }),
+      [],
+      value,
+    );
+  }
+});
+
 test("merge deduplicates, replaces a name, and applies forget before upsert", () => {
   const existing = [
     { category: "name", fact: "Péter", recorded_at: "old" },

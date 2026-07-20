@@ -23,7 +23,8 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { admitMemoryDelta, extractMemoryDelta, mergeMemory } from "./memory.mjs";
+import { extractMemoryDelta } from "./memory.mjs";
+import { diagnosticFailureMessage, runPostTurnMemoryHook, safeMemoryUpdate } from "./post_turn.mjs";
 
 const ROOT = process.cwd();
 const RUNTIME_DIR = path.join(ROOT, "var", "pi-agent");
@@ -53,21 +54,25 @@ async function memoryFor(sessionId) {
     .slice(-40);
 }
 
-async function runPostTurnMemoryHook(request, assistantReply) {
-  const proposal = await extractMemoryDelta({
-    fetchImpl: fetch,
-    baseUrl: process.env.NIM_BASE_URL || "https://integrate.api.nvidia.com/v1",
-    apiKey: process.env.NVIDIA_API_KEY,
-    model: process.env.NIM_MEMORY_MODEL || process.env.NIM_MISSION_MODEL,
+async function postTurnMemory(request, assistantReply) {
+  return runPostTurnMemoryHook({
+    extract: ({ userMessage, assistantReply: reply }) => extractMemoryDelta({
+      fetchImpl: fetch,
+      baseUrl: process.env.NIM_BASE_URL || "https://integrate.api.nvidia.com/v1",
+      apiKey: process.env.NVIDIA_API_KEY,
+      model: process.env.NIM_MEMORY_MODEL || process.env.NIM_MISSION_MODEL,
+      userMessage,
+      assistantReply: reply,
+    }),
+    loadFacts: memoryFor,
+    saveFacts: (sessionId, facts) =>
+      writeFile(path.join(MEMORY_DIR, `${sessionId}.json`), JSON.stringify({ facts }, null, 2), "utf8"),
+    now: () => new Date().toISOString(),
+    sessionId: request.session_id,
+    turnId: `${request.session_id}:${Date.now()}`,
     userMessage: request.text,
     assistantReply,
   });
-  const operations = admitMemoryDelta(proposal);
-  if (!operations.length) return "skipped";
-  const facts = await memoryFor(request.session_id);
-  const next = mergeMemory(facts, operations, new Date().toISOString(), `${request.session_id}:${Date.now()}`);
-  await writeFile(path.join(MEMORY_DIR, `${request.session_id}.json`), JSON.stringify({ facts: next }, null, 2), "utf8");
-  return "updated";
 }
 
 async function telemetrySummary() {
@@ -219,12 +224,7 @@ async function main() {
     }
     // Memory extraction is isolated from the conversational turn. Its failure
     // must never suppress an otherwise safe chat reply or alter flight intent.
-    let memoryUpdate = "skipped";
-    try {
-      memoryUpdate = await runPostTurnMemoryHook(request, finalReply);
-    } catch {
-      memoryUpdate = "skipped";
-    }
+    const memoryUpdate = safeMemoryUpdate(await postTurnMemory(request, finalReply));
     process.stdout.write(JSON.stringify({ text: finalReply, requests_drone_action: requestedFlight, memory_update: memoryUpdate }));
   } finally {
     session.dispose();
@@ -233,7 +233,8 @@ async function main() {
 
 main().catch((error) => {
   // stderr is captured by the Python boundary and never returned to the UI.
-  // Keep this concise for local diagnosis without including request data.
-  process.stderr.write(`Pi runner failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
+  // Only messages authored here survive: a third-party error text can carry
+  // request content, an endpoint, or a key fragment.
+  process.stderr.write(`Pi runner failed: ${diagnosticFailureMessage(error)}\n`);
   process.exitCode = 1;
 });

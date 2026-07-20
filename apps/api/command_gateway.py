@@ -6,10 +6,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 
+MEMORY_UPDATE_STATES = frozenset({"updated", "skipped", "unavailable"})
+
+
 @dataclass(frozen=True)
 class AgentReply:
     text: str
     requests_drone_action: bool = False
+    memory_update: str = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -18,6 +22,9 @@ class DashboardReply:
     status: str
     plan_id: str | None = None
     approval_required: bool = False
+    # Diagnostics only: whether the isolated post-turn hook stored anything.
+    # It never carries a remembered fact, and it never gates the reply.
+    memory_update: str = "unavailable"
 
 
 Converse = Callable[[str, str], AgentReply]
@@ -43,8 +50,9 @@ class DashboardCommandGateway:
         if not text.strip():
             raise ValueError("Message cannot be empty.")
         reply = self._converse(session_id, text)
+        memory_update = reply.memory_update if reply.memory_update in MEMORY_UPDATE_STATES else "unavailable"
         if not reply.requests_drone_action:
-            return DashboardReply(reply.text, "conversation")
+            return DashboardReply(reply.text, "conversation", memory_update=memory_update)
         plan_id = self._review(text)
         self._pending_by_session[session_id] = plan_id
         return DashboardReply(
@@ -52,6 +60,7 @@ class DashboardCommandGateway:
             "awaiting_approval",
             plan_id=plan_id,
             approval_required=True,
+            memory_update=memory_update,
         )
 
     def approve(self, session_id: str, plan_id: str) -> DashboardReply:
