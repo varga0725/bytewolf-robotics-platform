@@ -39,6 +39,17 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./simulation/gazebo/launch/run_px4_gazebo.zsh base
 .venv/bin/python -m brain.cli.fly_takeoff_hover_land
 
+# Live dashboard while the simulator runs (terminal 2), then the web app (terminal 3).
+# Without the bridge nothing writes live-telemetry.json outside a mission run, so
+# the dashboard shows the last mission's snapshot and looks disconnected.
+.venv/bin/python -m brain.cli.dashboard_telemetry
+.venv/bin/python -m apps.api.server                    # http://127.0.0.1:8080
+
+# The world map is built from lidar returns, so it only fills for a lidar
+# airframe. `base` (gz_x500) carries no lidar and can never produce a map cell.
+./simulation/gazebo/launch/run_px4_gazebo_headless.zsh lidar-2d
+.venv/bin/python -m simulation.perception.survey_recorder --duration 120
+
 # Headless scenario matrices (start and tear down their own PX4/Gazebo)
 .venv/bin/python -m simulation.scenarios.scenarios                        # P0.v1 smoke
 .venv/bin/python -m simulation.scenarios.scenarios --runs 10              # repeatability gate

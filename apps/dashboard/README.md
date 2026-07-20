@@ -4,6 +4,17 @@ Helyi, csak olvasható telemetriai nézet. Nincsenek vezérlő végpontok vagy
 drón-parancsok. A telemetria egy JSON-fájlból olvasható, ezért a későbbi ROS 2
 bridge ugyanarra az alakra írhat adatot.
 
+## Mire van szükség ahhoz, hogy éljen
+
+| Amit látni akarsz | Mi írja | Ha nem fut |
+| --- | --- | --- |
+| Telemetria, kamera, chat | `brain.cli.dashboard_telemetry` (vagy egy futó küldetés-CLI) | a snapshot a legutóbbi küldetésé marad, és a felület kapcsolat nélkülinek látszik |
+| Világtérkép, akadálycellák | `simulation.perception.survey_recorder` vagy az obstacle scenario | üres marad — **lidar nélküli airframe-en soha nem lesz cella** |
+| Küldetés indítása | `apps.api.server` + explicit jóváhagyás | a dashboard csak olvas |
+
+A `base` (`gz_x500`) airframe-en **nincs lidar**, ezért térkép sem keletkezhet;
+ehhez `lidar-2d` (`gz_x500_lidar_2d`) kell.
+
 ## Oldalak
 
 A `apps/api/server` alatt futó teljes felület bal oldali sávból öt oldalra bomlik:
