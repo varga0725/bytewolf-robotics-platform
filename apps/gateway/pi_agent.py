@@ -10,12 +10,15 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
 import subprocess
 from typing import Any
 
+
+_LOGGER = logging.getLogger(__name__)
 
 _MAX_REPLY_CHARS = 2_000
 # The runner's post-turn hook reports one of these words and nothing else.
@@ -25,6 +28,10 @@ _MEMORY_UPDATE_STATES = frozenset({"updated", "skipped", "unavailable"})
 # must not be able to push the conversation's own instructions out of context.
 _MAX_WORLD_CONTEXT_CHARS = 1_200
 _RUNNER_TIMEOUT_S = 60
+# The runner authors its own stderr text precisely so it can be recorded without
+# leaking request content or a key fragment. Bounded anyway: a runner that dies
+# mid-stream must not be able to flood the operator's log.
+_MAX_DIAGNOSTIC_CHARS = 2_000
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _RUNNER_PATH = _PROJECT_ROOT / "apps" / "pi_agent" / "runner.mjs"
 
@@ -119,16 +126,34 @@ def _run_pi(request: dict[str, object]) -> Mapping[str, object]:
             check=False,
         )
     except subprocess.TimeoutExpired as error:
+        _record_diagnostic("timed out", error.stderr)
         raise PiAgentError("Pi agent timed out; the drone received no command.") from error
     if completed.returncode != 0:
+        _record_diagnostic(f"exited with status {completed.returncode}", completed.stderr)
         raise PiAgentError("Pi agent is unavailable; the drone received no command.")
     try:
         response = json.loads(completed.stdout)
     except json.JSONDecodeError as error:
+        _record_diagnostic("returned data that is not JSON", completed.stderr)
         raise PiAgentError("Pi agent returned invalid data; the drone received no command.") from error
     if not isinstance(response, dict):
+        _record_diagnostic("returned JSON that is not an object", completed.stderr)
         raise PiAgentError("Pi agent returned invalid data; the drone received no command.")
     return response
+
+
+def _record_diagnostic(what_happened: str, stderr: str | bytes | None) -> None:
+    """Log why the runner failed, without changing what the operator is told.
+
+    The runner writes a deliberately safe one-line cause to stderr; until now
+    nothing read it, so every failure reached the dashboard as the same fixed
+    sentence with the reason discarded. The reply text is unchanged — this only
+    stops the cause from being thrown away.
+    """
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="replace")
+    detail = (stderr or "").strip()[:_MAX_DIAGNOSTIC_CHARS] or "no diagnostic output"
+    _LOGGER.warning("Pi agent runner %s: %s", what_happened, detail)
 
 
 def _pi_environment(source: Mapping[str, str]) -> dict[str, str]:
