@@ -54,7 +54,12 @@ the PX4 checkout with `make px4_sitl gz_x500`. It runs PX4 in daemon mode (`-d`)
 purpose: the interactive `pxh>` prompt used to fill an unread output pipe and stall SITL
 before MAVLink came up.
 
-There is no lint, formatter, or CI config in this repo. `unittest` is the only gate.
+There is no lint or formatter in this repo. `unittest` is the only gate, plus the
+Node suite for the Pi agent memory boundary (`cd apps/pi_agent && node --test`).
+`.github/workflows/tests.yml` runs both on push and pull request. CI runs neither
+PX4 nor Gazebo — a hosted runner has neither — so a green tick proves the safety
+logic, contracts and memory boundaries, never that a flight works. SITL evidence
+stays manual and lives under `simulation/artifacts/`.
 
 ## Non-negotiable safety architecture
 
