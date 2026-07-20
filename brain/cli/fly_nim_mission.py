@@ -15,6 +15,7 @@ from apps.gateway.nim_mission_agent import MissionAgentRequest, NIMMissionAgent
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.cli.artifacts import recorded_execution, write_run_artifact
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
+from brain.memory.recorder import DEFAULT_WORLD_MEMORY_PATH, WorldMemoryRecorder
 from brain.mission.execution import MissionExecution
 from brain.mission_spec.orchestrator import execute_compiled_mission, require_executable_mission
 from brain.mission_spec.validation import (
@@ -55,6 +56,17 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--dashboard-snapshot",
         type=Path,
         default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
+    )
+    parser.add_argument(
+        "--world-memory-file",
+        type=Path,
+        default=DEFAULT_WORLD_MEMORY_PATH,
+        help="Where this run's outcome is remembered as perishable world evidence.",
+    )
+    parser.add_argument(
+        "--no-world-memory",
+        action="store_true",
+        help="Run without remembering the outcome; the mission audit artifact is unaffected.",
     )
     return parser.parse_args(arguments)
 
@@ -158,7 +170,15 @@ async def run(arguments: argparse.Namespace) -> None:
                 outcome,
                 failure_reason,
                 getattr(adapter, "preflight_telemetry", None),
+                world_recorder=_world_recorder(arguments),
             )
+
+
+def _world_recorder(arguments: argparse.Namespace) -> WorldMemoryRecorder | None:
+    """Remember the outcome unless the operator opted out for this run."""
+    if arguments.no_world_memory:
+        return None
+    return WorldMemoryRecorder(arguments.world_memory_file)
 
 
 def _load_approved_plan(

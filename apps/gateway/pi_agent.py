@@ -21,6 +21,9 @@ _MAX_REPLY_CHARS = 2_000
 # The runner's post-turn hook reports one of these words and nothing else.
 # Anything unrecognised is treated as a failed hook rather than rendered.
 _MEMORY_UPDATE_STATES = frozenset({"updated", "skipped", "unavailable"})
+# The briefing is bounded here as well as at the renderer: a runaway world log
+# must not be able to push the conversation's own instructions out of context.
+_MAX_WORLD_CONTEXT_CHARS = 1_200
 _RUNNER_TIMEOUT_S = 60
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _RUNNER_PATH = _PROJECT_ROOT / "apps" / "pi_agent" / "runner.mjs"
@@ -51,11 +54,20 @@ class PiAgentClient:
     def __init__(self, *, runner: RunPi | None = None) -> None:
         self._runner = runner or _run_pi
 
-    def converse(self, session_id: str, text: str) -> PiAgentReply:
+    def converse(self, session_id: str, text: str, world_context: str = "") -> PiAgentReply:
+        """Run one turn, optionally with a read-only briefing of world evidence.
+
+        The briefing is resolved in Python and passed in as text: Pi never gains
+        a way to read the store itself, and it sees nothing the dashboard would
+        not have shown a human.
+        """
         if not session_id.strip() or not text.strip():
             raise PiAgentError("Pi agent request is invalid.")
+        request: dict[str, object] = {"session_id": session_id, "text": text}
+        if world_context.strip():
+            request["world_context"] = world_context[:_MAX_WORLD_CONTEXT_CHARS]
         try:
-            response = self._runner({"session_id": session_id, "text": text})
+            response = self._runner(request)
         except PiAgentError:
             raise
         except Exception as error:

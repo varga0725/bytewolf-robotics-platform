@@ -10,6 +10,7 @@ from brain.mission.artifacts import (
     MissionAuditArtifact,
     MissionTelemetrySnapshot,
 )
+from brain.memory.recorder import WorldMemoryRecorder
 from brain.mission.execution import MissionExecution
 from brain.mission.artifacts import DEFAULT_MISSION_RUNS_DIRECTORY
 from brain.telemetry.ulog import archive_px4_ulog, write_ulog_unavailable_manifest
@@ -56,8 +57,15 @@ def write_run_artifact(
     telemetry: MissionTelemetrySnapshot | None = None,
     run_id: str | None = None,
     px4_ulog: Path | None = None,
+    world_recorder: WorldMemoryRecorder | None = None,
 ) -> Path:
-    """Persist the audit trail collected for this invocation under a safe unique ID."""
+    """Persist the audit trail collected for this invocation under a safe unique ID.
+
+    The audit artifact is the authoritative record and is written first. World
+    memory is a derived, perishable summary of the same run: it is recorded
+    afterwards and only when a recorder is supplied, so a memory-write problem
+    can never cost the run its audit trail.
+    """
     safe_telemetry = telemetry if isinstance(telemetry, MissionTelemetrySnapshot) else None
     artifact = MissionAuditArtifact.from_execution(
         run_id or str(uuid4()),
@@ -73,4 +81,6 @@ def write_run_artifact(
         write_ulog_unavailable_manifest(writer.directory, artifact.run_id, "No PX4 ULog source was supplied.")
     else:
         archive_px4_ulog(px4_ulog, writer.directory, artifact.run_id)
+    if world_recorder is not None:
+        world_recorder.record_mission_outcome(artifact, artifact_path=str(artifact_path))
     return artifact_path

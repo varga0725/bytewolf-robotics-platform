@@ -18,6 +18,7 @@ from apps.api.command_gateway import AgentReply, DashboardCommandGateway, Dashbo
 from apps.dashboard.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.gateway.pi_agent import PiAgentClient
+from brain.memory.briefing import world_briefing
 from brain.memory.graph import knowledge_view
 from brain.memory.world_map import map_view
 from brain.memory.world_memory import load_world_memory
@@ -52,7 +53,9 @@ def create_app(
     app = FastAPI(title="ByteWolf Command Gateway", version="0.1")
     pi_agent = PiAgentClient()
     command_gateway = gateway or DashboardCommandGateway(
-        converse=lambda session_id, text: AgentReply(**pi_agent.converse(session_id, text).__dict__),
+        converse=lambda session_id, text: AgentReply(
+            **pi_agent.converse(session_id, text, _world_briefing(world_memory_path)).__dict__
+        ),
         review=_review_with_cli,
         execute=_execute_with_cli,
     )
@@ -161,6 +164,21 @@ def create_app(
     web_root = Path(__file__).resolve().parents[1] / "dashboard" / "web"
     app.mount("/", StaticFiles(directory=web_root, html=True), name="dashboard")
     return app
+
+
+def _world_briefing(world_memory_path: Path) -> str:
+    """Resolve the world for one turn, exactly as the dashboard would show it.
+
+    A briefing failure must not cost the user their conversation, so an
+    unreadable store means Pi is told it knows nothing rather than the turn
+    being refused.
+    """
+    try:
+        memory = load_world_memory(world_memory_path)
+        now = datetime.now(UTC)
+        return world_briefing(memory.recall(now), memory.disputed(now), now=now)
+    except (OSError, ValueError):
+        return ""
 
 
 def _session(value: str) -> str:

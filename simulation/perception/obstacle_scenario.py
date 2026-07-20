@@ -23,6 +23,8 @@ from pathlib import Path
 import subprocess
 import time
 
+from brain.memory.recorder import DEFAULT_WORLD_MEMORY_PATH, RecordingResult, WorldMemoryRecorder
+from brain.memory.world_map import MapGrid, VehiclePose
 from brain.perception.lidar_obstacle import (
     LidarObstacleError,
     laser_scan_from_gz_json,
@@ -180,6 +182,38 @@ def observations_from_scans(
     return observations
 
 
+def remember_scanned_world(
+    observation_documents: Sequence[dict],
+    recorder: WorldMemoryRecorder,
+    *,
+    pose: VehiclePose,
+    grid: MapGrid,
+    now: datetime,
+    artifact: str | None = None,
+) -> RecordingResult:
+    """Remember the freshest scan of a run, not every scan of it.
+
+    Thirty scans of one wall are one fact about that wall observed thirty
+    times. Writing all of them would bury the log in duplicates that the
+    contradiction rules then have to re-resolve on every read, so only the last
+    scan — the freshest evidence — is recorded.
+    """
+    if not observation_documents:
+        return RecordingResult(0)
+    observation = load_observation(observation_documents[-1])
+    return recorder.record_obstacle_scan(observation, now, pose=pose, grid=grid, artifact=artifact)
+
+
+# The gz `default` world places home here, and the X500 spawns at that point
+# facing world +X, which PX4 maps to north. The obstacle is placed at +X, so a
+# zero-yaw pose at the grid origin is the vehicle's actual state during this
+# scenario — not an assumed one.
+GZ_DEFAULT_HOME_LATITUDE_DEG = 47.397971
+GZ_DEFAULT_HOME_LONGITUDE_DEG = 8.546164
+SCENARIO_POSE = VehiclePose(GZ_DEFAULT_HOME_LATITUDE_DEG, GZ_DEFAULT_HOME_LONGITUDE_DEG, yaw_deg=0.0)
+SCENARIO_GRID = MapGrid(GZ_DEFAULT_HOME_LATITUDE_DEG, GZ_DEFAULT_HOME_LONGITUDE_DEG, cell_size_m=2.0)
+
+
 LIDAR_SCAN_TOPIC = (
     "/world/default/model/x500_lidar_2d_0/link/link/sensor/lidar_2d_v2/scan"
 )
@@ -204,6 +238,7 @@ def run_obstacle_scenario(
     project_root: Path | None = None,
     now: Callable[[], datetime] | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    world_recorder: WorldMemoryRecorder | None = None,
 ) -> Path:
     """Drive a real lidar SITL past a known obstacle and record what it saw."""
     root = project_root or Path(__file__).resolve().parents[2]
@@ -231,7 +266,19 @@ def run_obstacle_scenario(
             launcher.wait(timeout=10.0)
         except subprocess.TimeoutExpired:
             launcher.kill()
-    return write_report(report, output_directory, now=clock)
+    report_path = write_report(report, output_directory, now=clock)
+    if world_recorder is not None:
+        # The artifact is the evidence of record; world memory is the derived,
+        # perishable summary, so it is written after the report is safe on disk.
+        remember_scanned_world(
+            observations,
+            world_recorder,
+            pose=SCENARIO_POSE,
+            grid=SCENARIO_GRID,
+            now=clock(),
+            artifact=str(report_path),
+        )
+    return report_path
 
 
 def _gz_environment() -> dict[str, str]:
@@ -302,8 +349,20 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
         "--output-dir", type=Path, default=Path("simulation/artifacts/perception"),
         help="Where to write the obstacle-scenario artifact.",
     )
+    parser.add_argument(
+        "--world-memory-file", type=Path, default=DEFAULT_WORLD_MEMORY_PATH,
+        help="Where the freshest scan is remembered as perishable world evidence.",
+    )
+    parser.add_argument(
+        "--no-world-memory", action="store_true",
+        help="Score the run without remembering it; the scenario artifact is unaffected.",
+    )
     parsed = parser.parse_args(arguments)
-    report_path = run_obstacle_scenario(parsed.output_dir, scans=parsed.scans)
+    report_path = run_obstacle_scenario(
+        parsed.output_dir,
+        scans=parsed.scans,
+        world_recorder=None if parsed.no_world_memory else WorldMemoryRecorder(parsed.world_memory_file),
+    )
     document = json.loads(report_path.read_text(encoding="utf-8"))
     print(f"Obstacle scenario: {document['verdict']} — {report_path}")
     print(f"  {document['detail']}")

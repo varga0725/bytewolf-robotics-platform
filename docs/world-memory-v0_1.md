@@ -114,6 +114,33 @@ there was *said*, not sensed), the world graph hangs every subject off the
 source that observed it (the only relation the evidence actually records), and
 `GET /api/v1/knowledge` returns both plus the sentence naming the boundary.
 
+## Who writes it
+
+`brain/memory/recorder.py` is the only writer, and it is subordinate to the run
+that produced the evidence: a failed append is *reported*, never raised. Losing
+a claim costs a memory; raising would cost the run and, in flight, the audit
+trail that matters far more. Recording therefore always happens after the
+authoritative file is safe on disk.
+
+- `brain/cli/artifacts.write_run_artifact` takes an optional recorder and writes
+  the `mission_outcome` claim after the audit artifact exists;
+  `brain.cli.fly_nim_mission` enables it by default (`--no-world-memory` opts
+  out, `--world-memory-file` moves the log).
+- `simulation/perception/obstacle_scenario` records the **last** scan of a run,
+  not all thirty: thirty scans of one wall are one fact observed thirty times,
+  and writing them all would bury the log in duplicates the contradiction rules
+  must then re-resolve on every read.
+- A burst is capped per call (`MAX_CLAIMS_PER_CALL`), and the drop is counted
+  rather than silent — a silent cap reads as full coverage.
+
+## Who reads it
+
+`brain/memory/briefing.py` renders the currently believed world for the Pi
+agent as bounded text: freshest first, every line carrying its source,
+confidence and age, and disputed subjects explicitly marked uncertain. Pi never
+reads the store itself, so there is exactly one resolution implementation and
+the agent can be shown nothing the dashboard would not show a human.
+
 ## Dashboard-first API
 
 `GET /api/v1/world-memory` returns `{"claims": [...], "disputed": [...]}` with
