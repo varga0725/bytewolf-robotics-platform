@@ -461,7 +461,8 @@ class MavsdkMissionAdapter:
                 break
             if remaining <= 0:
                 raise MissionPreflightError(
-                    "Preflight rejected: navigation health reports that global position or home is unavailable."
+                    "Preflight rejected: the vehicle did not report itself ready to arm "
+                    "(global position, home, or PX4's own arming checks)."
                 )
 
         home = await self._first_telemetry_sample(self._drone.telemetry.home(), "home")
@@ -513,11 +514,31 @@ class MavsdkMissionAdapter:
 
     @staticmethod
     def _has_required_navigation_health(health: object) -> bool:
-        """Require navigation readiness, but not unrelated GCS health checks."""
+        """Require navigation readiness and PX4's own verdict on arming.
+
+        Position and home alone are not the same question PX4 asks itself. It
+        runs a wider set of checks — calibration, EKF convergence — and until
+        they pass it answers an arm command with COMMAND_DENIED. This code
+        already said so, in the comment above the wait: arming an unhealthy
+        vehicle "would merely turn a clear preflight failure into a
+        COMMAND_DENIED action failure". It then waited on the narrower
+        condition anyway, so a mission launched moments after PX4 booted did
+        exactly that. Two of six scenarios failed that way in the first
+        repetition of `p0-repeatability-20260721T103416Z.json`, and none in the
+        nine repetitions after it.
+
+        `is_armable` is PX4's answer to the question actually being asked. It is
+        a strictly narrower gate than before: a vehicle that would have been
+        armed and refused is now waited for, or rejected before the command.
+        """
         try:
-            return bool(health.is_global_position_ok and health.is_home_position_ok)
+            navigation_ready = bool(health.is_global_position_ok and health.is_home_position_ok)
         except AttributeError as error:
             raise MissionPreflightError("Preflight rejected: health telemetry is unavailable.") from error
+        # Older MAVSDK Health messages have no verdict to offer; their absence
+        # must not be read as "not armable" and stall every flight.
+        armable = getattr(health, "is_armable", True)
+        return navigation_ready and bool(armable)
 
     @staticmethod
     def _require_global_position(position: object, label: str) -> None:

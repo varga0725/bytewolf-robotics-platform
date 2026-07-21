@@ -386,7 +386,7 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
         adapter = MavsdkMissionAdapter(drone)
         mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
 
-        with self.assertRaisesRegex(MissionPreflightError, "navigation health"):
+        with self.assertRaisesRegex(MissionPreflightError, "ready to arm"):
             await adapter.execute(mission)
 
         self.assertEqual(drone.events, [])
@@ -400,7 +400,7 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
         drone.telemetry.health = unhealthy_health
         adapter = MavsdkMissionAdapter(drone)
 
-        with self.assertRaisesRegex(MissionPreflightError, "navigation health"):
+        with self.assertRaisesRegex(MissionPreflightError, "ready to arm"):
             await adapter.verify_preflight()
 
         self.assertEqual(drone.events, [])
@@ -797,3 +797,59 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(drone.events[-1], "land")
         self.assertEqual(drone.events.count("land"), 1)
         self.assertNotIn("return_to_launch", drone.events)
+
+
+class ArmingReadinessTests(unittest.TestCase):
+    """Preflight must ask the question PX4 answers, not a narrower one.
+
+    Position and home alone are not PX4's arming check; it also wants
+    calibration and EKF convergence, and until those pass it answers arm with
+    COMMAND_DENIED. Two of six scenarios failed exactly that way in the first
+    repetition of `p0-repeatability-20260721T103416Z.json`, and none in the nine
+    after it — a vehicle armed before it was ready.
+    """
+
+    def _health(self, **overrides):
+        values = {
+            "is_global_position_ok": True,
+            "is_home_position_ok": True,
+            "is_armable": True,
+        }
+        values.update(overrides)
+        return type("Health", (), values)()
+
+    def test_a_vehicle_px4_will_not_arm_is_not_ready(self) -> None:
+        ready = MavsdkMissionAdapter._has_required_navigation_health(
+            self._health(is_armable=False)
+        )
+
+        self.assertFalse(ready, "arming here is a COMMAND_DENIED waiting to happen")
+
+    def test_a_vehicle_px4_will_arm_is_ready(self) -> None:
+        self.assertTrue(
+            MavsdkMissionAdapter._has_required_navigation_health(self._health())
+        )
+
+    def test_navigation_health_is_still_required_on_top(self) -> None:
+        for field in ("is_global_position_ok", "is_home_position_ok"):
+            with self.subTest(field=field):
+                self.assertFalse(
+                    MavsdkMissionAdapter._has_required_navigation_health(
+                        self._health(**{field: False})
+                    )
+                )
+
+    def test_a_health_message_without_a_verdict_does_not_stall_every_flight(self) -> None:
+        """Absence of the field is not a refusal to arm.
+
+        Older MAVSDK Health messages have no `is_armable`; reading that as
+        "not armable" would wait out every preflight for a field that will
+        never arrive.
+        """
+        legacy = type("Health", (), {"is_global_position_ok": True, "is_home_position_ok": True})()
+
+        self.assertTrue(MavsdkMissionAdapter._has_required_navigation_health(legacy))
+
+    def test_health_without_navigation_fields_is_refused_rather_than_assumed(self) -> None:
+        with self.assertRaises(MissionPreflightError):
+            MavsdkMissionAdapter._has_required_navigation_health(object())
