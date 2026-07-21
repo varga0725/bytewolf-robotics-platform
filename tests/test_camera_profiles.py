@@ -10,6 +10,8 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from simulation.gazebo.camera_profiles import (
+    create_camera_overlay,
+    declared_camera_resolution,
     CameraProfileError,
     create_camera_overlay,
     render_named_camera_model,
@@ -93,3 +95,57 @@ class CreateOverlayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OverlayDriftTests(unittest.TestCase):
+    """The overlay in the repo must be exactly what the renderer produces.
+
+    It is generated output that the launcher rewrites on every run, and it drifted:
+    the tracked copy held 1280x720 while the renderer defaulted to 960x540 and the
+    twin declared 1920x1080 — three resolutions for one camera. Two model
+    directories were also still tracked that nothing generates any more.
+
+    Skipped without PX4's tree, which CI does not have; there it proves nothing
+    and cannot run.
+    """
+
+    SOURCE_MODELS = Path("PX4-Autopilot/Tools/simulation/gz/models")
+    OVERLAY = Path("simulation/artifacts/full-sensors-overlay")
+
+    def setUp(self) -> None:
+        if not (self.SOURCE_MODELS / "mono_cam" / "model.sdf").is_file():
+            self.skipTest("PX4's Gazebo models are not checked out here.")
+
+    def _render(self) -> dict[str, bytes]:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            create_camera_overlay(self.SOURCE_MODELS, root, include_lidar_2d=True)
+            return {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in sorted(root.rglob("*")) if path.is_file()
+            }
+
+    def test_rendering_twice_produces_the_same_bytes(self) -> None:
+        self.assertEqual(self._render(), self._render())
+
+    def test_the_tracked_overlay_matches_a_fresh_render(self) -> None:
+        rendered = self._render()
+        tracked = {
+            path.relative_to(self.OVERLAY).as_posix(): path.read_bytes()
+            for path in sorted(self.OVERLAY.rglob("*")) if path.is_file()
+        }
+
+        self.assertEqual(
+            sorted(tracked), sorted(rendered),
+            "the overlay holds files the renderer does not write, or is missing some",
+        )
+        for name in sorted(rendered):
+            with self.subTest(name=name):
+                self.assertEqual(tracked[name], rendered[name])
+
+    def test_the_overlay_renders_at_the_resolution_the_twin_declares(self) -> None:
+        width, height = declared_camera_resolution()
+        model = (self.OVERLAY / "mono_cam" / "model.sdf").read_text(encoding="utf-8")
+
+        self.assertIn(f"<width>{width}</width>", model)
+        self.assertIn(f"<height>{height}</height>", model)

@@ -19,9 +19,30 @@ from pathlib import Path
 import re
 
 
-# Dashboard preview: smaller raw frames keep the Gazebo → JPEG path interactive.
-DEFAULT_WIDTH = 960
-DEFAULT_HEIGHT = 540
+def declared_camera_resolution(
+    profile_path: Path | str = "shared/config/x500v2/twin.yaml", camera: str = "down_rgb"
+) -> tuple[int, int]:
+    """Read the rendered resolution from the twin, which is the only one there is.
+
+    This module used to carry its own 960x540 default while `twin.yaml` declared
+    1920x1080 and the committed overlay held 1280x720 — three numbers for one
+    camera, and the contract's was the one that was false. Reading it here means
+    changing the twin changes what Gazebo renders, and nothing else has a vote.
+    """
+    import yaml
+
+    document = yaml.safe_load(Path(profile_path).read_text(encoding="utf-8"))
+    try:
+        sensor = document["sensors"]["cameras"][camera]
+        width, height = int(sensor["width"]), int(sensor["height"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise CameraProfileError(
+            f"The twin does not declare a usable resolution for camera '{camera}'."
+        ) from error
+    if width <= 0 or height <= 0:
+        raise CameraProfileError(f"Camera '{camera}' must declare a positive resolution.")
+    return width, height
+
 
 _WIDTH = re.compile(r"<width>\s*(\d+)\s*</width>")
 _HEIGHT = re.compile(r"<height>\s*(\d+)\s*</height>")
@@ -116,11 +137,15 @@ def create_camera_overlay(
     source_models: Path,
     models_root: Path,
     *,
-    width: int = DEFAULT_WIDTH,
-    height: int = DEFAULT_HEIGHT,
+    width: int | None = None,
+    height: int | None = None,
     include_lidar_2d: bool = False,
 ) -> CameraOverlay:
-    """Write a mono_cam overlay at the requested resolution, from PX4's model."""
+    """Write a mono_cam overlay at the twin's resolution, from PX4's model."""
+    if width is None or height is None:
+        declared_width, declared_height = declared_camera_resolution()
+        width = width if width is not None else declared_width
+        height = height if height is not None else declared_height
     source_path = source_models / MONO_CAM_MODEL_NAME / "model.sdf"
     try:
         source = source_path.read_text(encoding="utf-8")
@@ -179,8 +204,8 @@ def main(arguments: tuple[str, ...] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Render a higher-resolution mono_cam overlay from PX4's model.")
     parser.add_argument("--source-models", type=Path, required=True, help="PX4's read-only Gazebo model root.")
     parser.add_argument("--models-root", type=Path, required=True, help="Where the overlay is written.")
-    parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
-    parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
+    parser.add_argument("--width", type=int, default=None, help="Overrides the twin's declared width.")
+    parser.add_argument("--height", type=int, default=None, help="Overrides the twin's declared height.")
     parser.add_argument("--include-lidar-2d", action="store_true", help="Replace the down-camera airframe overlay with a camera + 2D lidar model.")
     parsed = parser.parse_args(arguments)
     overlay = create_camera_overlay(
