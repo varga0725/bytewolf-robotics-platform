@@ -192,8 +192,13 @@ on no MissionSpec route, and `flight_mode`/`landed_state` telemetry died on its 
 sample of every run. The camera renders and streams at the resolution `twin.yaml`
 declares, 30 fps end to end.
 
-**The P0 and P0.v2 matrices have not been re-run since.** The envelope, the camera
-resolution and the execution path all changed, so no earlier 10/10 should be quoted as
-current until `run_p0_nightly.zsh` has passed again. Note also that
+The matrices were re-run on 2026-07-21 after the envelope, camera-resolution, and
+execution-path changes. P0.v1 passed 10/10
+(`simulation/artifacts/headless/p0-repeatability-20260721T105703Z.json`). P0.v2
+passed its 10-run repeatability gate
+(`simulation/artifacts/headless/p0-repeatability-20260721T200455Z.json`, commit
+`af55946`): the low-battery fallback and all three wind scenarios were 10/10; the
+boot/pre-arm check was 9/10, meeting the configured 0.9 nominal threshold. Do not
+describe this as an unconditional 10/10 P0.v2 result. Note also that
 `simulation.gazebo.map_view` injects a camera model into the running world and must not
 be running during any evidence run.
