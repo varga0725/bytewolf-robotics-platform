@@ -13,7 +13,12 @@ from uuid import uuid4
 
 from apps.gateway.nim_mission_agent import MissionAgentRequest, NIMMissionAgent
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
-from brain.cli.artifacts import recorded_execution, write_run_artifact
+from brain.cli.artifacts import (
+    FlightRunRecording,
+    prepare_flight_run_recording,
+    recorded_execution,
+    write_run_artifact,
+)
 from brain.cli.mavsdk_lifecycle import acquire_px4_link, stop_owned_mavsdk_server
 from brain.memory.recorder import DEFAULT_WORLD_MEMORY_PATH, WorldMemoryRecorder
 from brain.mission.execution import MissionExecution
@@ -31,6 +36,7 @@ from brain.mission_spec.validation import (
 )
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
+from brain.telemetry.persistence import TelemetryHistoryStore
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -63,6 +69,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
     )
     parser.add_argument(
+        "--telemetry-history",
+        type=Path,
+        default=None,
+        help="Destination for the append-only JSONL telemetry history used by offline replay.",
+    )
+    parser.add_argument(
         "--world-memory-file",
         type=Path,
         default=DEFAULT_WORLD_MEMORY_PATH,
@@ -86,6 +98,7 @@ async def run(arguments: argparse.Namespace) -> None:
     failure_reason: str | None = None
     relay_stop: asyncio.Event | None = None
     relay_task: asyncio.Task[None] | None = None
+    recording: FlightRunRecording | None = None
     mission_spec: dict[str, object] | None = None
     mission: CompiledMission | None = None
     model = "not-called"
@@ -133,6 +146,10 @@ async def run(arguments: argparse.Namespace) -> None:
         except ModuleNotFoundError as error:
             raise RuntimeError("MAVSDK is not installed. Run: .venv/bin/pip install -r requirements.txt") from error
         profile = load_safety_profile(arguments.safety_profile)
+        # Allocated only once this run is going to fly. The other CLIs prepare
+        # it up front because they always connect; a review-only invocation here
+        # would leave an empty history file behind for a flight that never was.
+        recording = prepare_flight_run_recording(arguments.artifact_dir, arguments.telemetry_history)
         system = System(port=arguments.mavsdk_server_port)
         adapter = MavsdkMissionAdapter(system, safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
         print(f"Connecting to PX4 SITL at {arguments.endpoint}...")
@@ -140,7 +157,15 @@ async def run(arguments: argparse.Namespace) -> None:
         acquire_px4_link("agent-mission")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         relay_stop = asyncio.Event()
-        relay_task = asyncio.create_task(MavsdkTelemetryRelay(system, arguments.dashboard_snapshot).run(relay_stop))
+        # The same relay the hand-written CLIs use, with the same history sink.
+        # It was missing here, so the most convenient way to start a flight —
+        # the dashboard — was the one that left the least evidence behind.
+        history_store = TelemetryHistoryStore(recording.telemetry_history_path, recording.run_id)
+        relay_task = asyncio.create_task(
+            MavsdkTelemetryRelay(
+                system, arguments.dashboard_snapshot, on_event=history_store.append
+            ).run(relay_stop)
+        )
         execution = await execute_compiled_mission(adapter, mission)
         outcome = "completed"
         print("Mission completed: " + " -> ".join(event.phase.value for event in execution.events))
@@ -177,6 +202,10 @@ async def run(arguments: argparse.Namespace) -> None:
                 outcome,
                 failure_reason,
                 getattr(adapter, "preflight_telemetry", None),
+                # The artifact and its telemetry history must carry the same
+                # run id, or the recorded flight and its replay cannot be tied
+                # to each other afterwards.
+                run_id=recording.run_id if recording is not None else None,
                 world_recorder=_world_recorder(arguments),
             )
 
