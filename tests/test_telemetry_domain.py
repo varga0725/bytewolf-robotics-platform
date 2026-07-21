@@ -161,5 +161,53 @@ class TelemetryDomainTests(unittest.TestCase):
             route_mavsdk_telemetry("MAVSDK telemetry.battery", bad_battery)
 
 
+class EnumSourceTests(unittest.TestCase):
+    """Sources that publish one bare enum, read as MAVSDK actually sends them.
+
+    `flight_mode` and `landed_state` died on their first sample of every real
+    run and appear in no recorded telemetry history. The contract names their
+    single field `"value"`, and reading it with `getattr(sample, "value")`
+    looked equivalent — but MAVSDK's FlightMode and LandedState are Python
+    Enums, and an Enum *has* a `.value`: the underlying integer. Both streams
+    resolved to an int and failed the string check.
+
+    Nothing caught it because every fake in this suite passes a plain value.
+    These use the real enums for exactly that reason.
+    """
+
+    def test_a_flight_mode_enum_yields_its_name_not_its_integer(self) -> None:
+        from mavsdk.telemetry import FlightMode
+
+        event = route_mavsdk_telemetry("MAVSDK telemetry.flight_mode", FlightMode.HOLD)
+
+        self.assertEqual(event.payload, (("value", "hold"),))
+
+    def test_a_landed_state_enum_yields_its_name_not_its_integer(self) -> None:
+        from mavsdk.telemetry import LandedState
+
+        event = route_mavsdk_telemetry("MAVSDK telemetry.landed_state", LandedState.IN_AIR)
+
+        self.assertEqual(event.payload, (("value", "in_air"),))
+
+    def test_the_bare_boolean_source_still_reads_as_a_boolean(self) -> None:
+        event = route_mavsdk_telemetry("MAVSDK telemetry.armed", True)
+
+        self.assertEqual(event.payload, (("value", True),))
+
+    def test_an_enum_nested_in_a_sample_is_unaffected(self) -> None:
+        """`gps_info.fix_type` reads a real attribute and always worked."""
+        from mavsdk.telemetry import FixType, GpsInfo
+
+        event = route_mavsdk_telemetry(
+            "MAVSDK telemetry.gps_info", GpsInfo(num_satellites=12, fix_type=FixType.FIX_3D)
+        )
+
+        self.assertEqual(event.payload, (("num_satellites", 12), ("fix_type", "fix_3d")))
+
+    def test_a_bare_integer_is_still_refused_where_a_name_is_required(self) -> None:
+        with self.assertRaisesRegex(TelemetryContractError, "non-empty string"):
+            route_mavsdk_telemetry("MAVSDK telemetry.flight_mode", 3)
+
+
 if __name__ == "__main__":
     unittest.main()

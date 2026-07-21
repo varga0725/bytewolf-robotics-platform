@@ -149,7 +149,15 @@ def _supplemental_event(
         return _position_velocity_ned_event(topic, source, sample, observed_at)
     values: list[tuple[str, bool | float | int | str]] = []
     for field, kind in _SUPPLEMENTAL_FIELDS[source]:
-        raw = getattr(sample, field, sample if field == "value" else None)
+        # `"value"` is not a field on the sample — it is the name this contract
+        # gives a source that publishes one bare value. Reading it with getattr
+        # looked equivalent and was not: MAVSDK's FlightMode and LandedState are
+        # Python Enums, and an Enum *has* a `.value` — the underlying integer.
+        # So both streams resolved to an int, failed the string check, and were
+        # dropped on their first sample of every real run. Neither appears in
+        # any recorded telemetry history; the fakes are plain values, so nothing
+        # caught it.
+        raw = sample if field == "value" else getattr(sample, field, None)
         if kind == "finite":
             values.append((field, _finite_value(raw, field)))
         elif kind == "integer":
