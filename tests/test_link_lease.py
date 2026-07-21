@@ -19,6 +19,7 @@ from brain.telemetry.link_lease import (
     link_is_leased,
     read_lease,
     release_link,
+    release_link_if_mine,
     wait_for_free_link,
 )
 
@@ -108,6 +109,28 @@ class LinkLeaseTests(unittest.TestCase):
         probe.close()
 
         self.assertTrue(wait_for_free_link(port=port, timeout_s=1.0, sleep=lambda _s: None))
+
+    def test_a_reader_that_never_claimed_does_not_release_someone_elses_link(self) -> None:
+        """Release points are shared with processes that never claim anything.
+
+        The telemetry bridge tears its own MAVSDK server down through the same
+        helper a mission does. Releasing unconditionally there would hand a
+        flying mission's link to whoever asked next.
+        """
+        # The parent process is alive and is definitely not this one, so the
+        # lease under test is unambiguously somebody else's.
+        self.path.write_text(json.dumps({"owner": "mission", "pid": os.getppid()}))
+
+        release_link_if_mine(self.path)
+
+        self.assertTrue(link_is_leased(self.path), "another process's lease must survive")
+
+    def test_a_process_gives_back_its_own_link(self) -> None:
+        claim_link("mission", path=self.path)
+
+        release_link_if_mine(self.path)
+
+        self.assertFalse(link_is_leased(self.path))
 
     def test_no_temporary_file_is_left_beside_the_lease(self) -> None:
         claim_link("mission", path=self.path)

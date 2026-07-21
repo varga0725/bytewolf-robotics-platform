@@ -14,7 +14,7 @@ from uuid import uuid4
 from apps.gateway.nim_mission_agent import MissionAgentRequest, NIMMissionAgent
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.cli.artifacts import recorded_execution, write_run_artifact
-from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
+from brain.cli.mavsdk_lifecycle import acquire_px4_link, stop_owned_mavsdk_server
 from brain.memory.recorder import DEFAULT_WORLD_MEMORY_PATH, WorldMemoryRecorder
 from brain.mission.execution import MissionExecution
 from brain.mission_spec.orchestrator import execute_compiled_mission, require_executable_mission
@@ -136,6 +136,8 @@ async def run(arguments: argparse.Namespace) -> None:
         system = System(port=arguments.mavsdk_server_port)
         adapter = MavsdkMissionAdapter(system, safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
         print(f"Connecting to PX4 SITL at {arguments.endpoint}...")
+        # Take the endpoint before MAVSDK binds it; the bridge yields to this.
+        acquire_px4_link("agent-mission")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         relay_stop = asyncio.Event()
         relay_task = asyncio.create_task(MavsdkTelemetryRelay(system, arguments.dashboard_snapshot).run(relay_stop))

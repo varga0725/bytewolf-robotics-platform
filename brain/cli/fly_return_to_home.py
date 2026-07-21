@@ -7,7 +7,7 @@ from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.cli.artifacts import prepare_flight_run_recording, recorded_execution, write_run_artifact
-from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
+from brain.cli.mavsdk_lifecycle import acquire_px4_link, stop_owned_mavsdk_server
 from brain.mission.execution import MissionExecution
 from brain.mission.flight import authorize_takeoff_return_to_home
 from brain.safety.gate import SafetyGate
@@ -91,6 +91,8 @@ async def run(arguments: argparse.Namespace) -> None:
         system = System(port=arguments.mavsdk_server_port)
         adapter = MavsdkMissionAdapter(system, safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
         print(f"Connecting to PX4 at {arguments.endpoint}...")
+        # Take the endpoint before MAVSDK binds it; the bridge yields to this.
+        acquire_px4_link("return-to-home")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         dashboard_stop_event = asyncio.Event()
         history_store = TelemetryHistoryStore(recording.telemetry_history_path, recording.run_id)

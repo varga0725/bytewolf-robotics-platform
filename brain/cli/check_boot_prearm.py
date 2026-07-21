@@ -8,7 +8,7 @@ from pathlib import Path
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.cli.artifacts import write_run_artifact
-from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
+from brain.cli.mavsdk_lifecycle import acquire_px4_link, stop_owned_mavsdk_server
 from brain.mission.artifacts import MissionTelemetrySnapshot
 from brain.mission.execution import MissionExecution
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
@@ -91,6 +91,8 @@ async def run(arguments: argparse.Namespace) -> None:
             preflight_wait_s=arguments.preflight_wait_seconds,
         )
         print(f"Checking PX4 boot and pre-arm telemetry at {arguments.endpoint}...")
+        # Take the endpoint before MAVSDK binds it; the bridge yields to this.
+        acquire_px4_link("boot-prearm-check")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         telemetry = await adapter.verify_preflight()
         safety_decision = "approved"

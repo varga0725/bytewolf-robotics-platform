@@ -105,6 +105,19 @@ def release_link(path: Path = DEFAULT_LEASE_PATH) -> None:
         pass
 
 
+def release_link_if_mine(path: Path = DEFAULT_LEASE_PATH) -> None:
+    """Give back only a lease this process took.
+
+    Release points are shared with readers that never claim anything — the
+    telemetry bridge tears down its MAVSDK server through the same helper a
+    mission does. An unconditional release there would hand a flying mission's
+    link to whoever asked next.
+    """
+    lease = read_lease(path)
+    if lease is not None and lease.get("pid") == os.getpid():
+        release_link(path)
+
+
 def wait_for_free_link(
     *, port: int = DEFAULT_MAVLINK_PORT, timeout_s: float = 15.0, sleep: Callable[[float], None] = time.sleep
 ) -> bool:
