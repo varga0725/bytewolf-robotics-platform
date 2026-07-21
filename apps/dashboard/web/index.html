@@ -231,7 +231,7 @@
   </main>
 </div><script>
 const session=localStorage.bytewolfSession||(localStorage.bytewolfSession=crypto.randomUUID());
-let pending=null;let cameraUrl=null;let cameraSensor='front';let cameraEtag=null;let cameraRefreshing=false;let statusTimer=null;
+let pending=null;let cameraSensor='front';let cameraRetryTimer=null;let statusTimer=null;
 const headers={'Content-Type':'application/json','X-ByteWolf-Session':session};
 const $=id=>document.getElementById(id);
 const svgElement=(name,attributes={})=>{const element=document.createElementNS('http://www.w3.org/2000/svg',name);for(const [key,value] of Object.entries(attributes))element.setAttribute(key,String(value));return element};
@@ -580,19 +580,27 @@ function renderDetections(document_){const overlay=$('detection-overlay');const 
     const label=`${detection.label||'ismeretlen'} ${Math.round(Number(detection.confidence||0)*100)}%`;
     const text=svgElement('text',{x:box.x,y:Math.max(18,box.y-6)});text.textContent=label;overlay.append(text)}}
 async function refreshDetections(){try{const r=await fetch(`/api/v1/cameras/${cameraSensor}/detections`,{cache:'no-store'});if(!r.ok)throw Error();const d=await r.json();renderDetections(d);return d}catch{clearDetections();return null}}
-async function refreshCamera(){if(cameraRefreshing)return;cameraRefreshing=true;
-  try{const r=await fetch(`/api/v1/cameras/${cameraSensor}`,{cache:'no-cache',headers:cameraEtag?{'If-None-Match':cameraEtag}:{}});
-    const detections=await refreshDetections();
-    if(r.status===304){return}if(!r.ok)throw Error();
-    const b=await r.blob();cameraEtag=r.headers.get('etag');if(cameraUrl)URL.revokeObjectURL(cameraUrl);cameraUrl=URL.createObjectURL(b);
-    $('camera').src=cameraUrl;$('camera').hidden=false;
-    const count=detections?.validity==='valid'?(detections.detections||[]).length:0;
-    $('camera-note').textContent=detections?.validity==='valid'?`Élő ${cameraSensor==='front'?'első':'alsó'} kamera · ${count} észlelés`:'Élő kamera · észlelés nem elérhető'}
-  catch{$('camera').hidden=true;clearDetections();$('camera-note').textContent='Kamera streamre várok…'}
-  finally{cameraRefreshing=false}}
-$('camera-select').addEventListener('change',event=>{cameraSensor=event.target.value;cameraEtag=null;clearDetections();refreshCamera()});
+// The picture arrives on one connection the browser decodes itself; polling for
+// it capped the view at four frames a second against a camera producing thirty.
+// Detections keep their own slower poll: they are a separate contract with its
+// own freshness, and they must not be able to stall the view.
+function attachCameraStream(){
+  const image=$('camera');
+  image.onload=()=>{image.hidden=false};
+  image.onerror=()=>{image.hidden=true;$('camera-note').textContent='Kamera streamre várok…';
+    // Retry the connection rather than leave a dead <img>: the producer may
+    // simply not have started yet, or Gazebo may be restarting.
+    clearTimeout(cameraRetryTimer);cameraRetryTimer=setTimeout(attachCameraStream,2000)};
+  image.src=`/api/v1/cameras/${cameraSensor}/stream?t=${Date.now()}`}
+async function refreshCamera(){
+  const detections=await refreshDetections();
+  const count=detections?.validity==='valid'?(detections.detections||[]).length:0;
+  $('camera-note').textContent=detections?.validity==='valid'
+    ?`Élő ${cameraSensor==='front'?'első':'alsó'} kamera · ${count} észlelés`
+    :'Élő kamera · észlelés nem elérhető'}
+$('camera-select').addEventListener('change',event=>{cameraSensor=event.target.value;clearDetections();attachCameraStream();refreshCamera()});
 
 if(location.hash)showPage('page-'+location.hash.replace('#',''));
-refresh();refreshCamera();refreshMemory();refreshWorld();refreshMissionMap();
-setInterval(refresh,1000);setInterval(refreshCamera,250);setInterval(refreshWorld,5000);
+refresh();attachCameraStream();refreshCamera();refreshMemory();refreshWorld();refreshMissionMap();
+setInterval(refresh,1000);setInterval(refreshCamera,500);setInterval(refreshWorld,5000);
 </script></body></html>

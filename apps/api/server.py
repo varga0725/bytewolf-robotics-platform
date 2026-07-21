@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -102,6 +102,25 @@ def create_app(
     @app.get("/api/v1/cameras/{sensor}")
     def selected_camera(sensor: str, if_none_match: str | None = Header(default=None)) -> Response:
         return _camera_response(_sensor_path(camera_path, down_camera_path, sensor), if_none_match=if_none_match)
+
+    @app.get("/api/v1/cameras/{sensor}/stream")
+    def camera_stream(sensor: str) -> StreamingResponse:
+        """Push frames as they are written, instead of being asked for them.
+
+        Polling capped the view at whatever interval the browser chose — 250 ms,
+        so four frames a second against a camera producing thirty. Asking thirty
+        times a second instead would work and would spend most of its effort on
+        round trips. This is the shape browsers already have for a live camera:
+        one connection, one frame after another, decoded natively by an <img>.
+        """
+        path = _sensor_path(camera_path, down_camera_path, sensor)
+        if path is None:
+            raise HTTPException(status_code=404, detail="No camera frame")
+        return StreamingResponse(
+            _multipart_frames(path),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/api/v1/safety-envelope")
     def safety_envelope() -> dict[str, object]:
@@ -365,6 +384,38 @@ def _camera_response(path: Path | None, *, if_none_match: str | None = None) -> 
     if if_none_match == version:
         return Response(status_code=304, headers=headers)
     return Response(body, media_type=media_type, headers=headers)
+
+
+def _multipart_frames(path: Path, *, poll_s: float = 0.004, idle_timeout_s: float = 30.0):
+    """Yield each newly written frame as one multipart part, and nothing twice.
+
+    Keyed on the file's modification time because that is what the producer
+    changes atomically: a rename, so a reader never sees half a frame. A camera
+    that stops publishing ends the response rather than holding a connection
+    open forever on a picture that will not change.
+    """
+    import time
+
+    last_stamp: int | None = None
+    idle_since = time.monotonic()
+    while True:
+        try:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
+            stamp = None
+        if stamp is not None and stamp != last_stamp:
+            last_stamp = stamp
+            try:
+                body = path.read_bytes()
+            except OSError:
+                body = b""
+            if body:
+                idle_since = time.monotonic()
+                yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                yield str(len(body)).encode("ascii") + b"\r\n\r\n" + body + b"\r\n"
+        elif time.monotonic() - idle_since > idle_timeout_s:
+            return
+        time.sleep(poll_s)
 
 
 def _detections_response(path: Path | None) -> Response:
