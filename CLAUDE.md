@@ -180,3 +180,20 @@ condition from the vehicle's hover tilt against Gazebo ground truth
 and the battery fault reads its parameters back from PX4. A measured X500 drag coefficient
 is gated on hardware the project has not bought. P1 locally complete; the Ubuntu 22.04 +
 ROS 2 Humble topic smoke is deferred for lack of an environment.
+
+As of 2026-07-21 (`91745d2`) the dashboard can actually fly: a map-picked point and an
+area survey both reach PX4, because a route may now end at home
+(`TakeoffWaypointsReturnToHomeMission`) and the orchestrator no longer caps waypoints or
+demands a HOLD. A survey flew end to end on SITL and built 49 lidar map cells. The
+envelope widened to a 2 km radius with a ±1200 m fence, which is a simulation envelope
+and not an endurance claim — the twin still has no measured battery. Two things that
+looked like features were absent: the geofence was enforced on the hand-written CLIs and
+on no MissionSpec route, and `flight_mode`/`landed_state` telemetry died on its first
+sample of every run. The camera renders and streams at the resolution `twin.yaml`
+declares, 30 fps end to end.
+
+**The P0 and P0.v2 matrices have not been re-run since.** The envelope, the camera
+resolution and the execution path all changed, so no earlier 10/10 should be quoted as
+current until `run_p0_nightly.zsh` has passed again. Note also that
+`simulation.gazebo.map_view` injects a camera model into the running world and must not
+be running during any evidence run.
