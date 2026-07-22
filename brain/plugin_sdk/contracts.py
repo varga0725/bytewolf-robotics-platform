@@ -44,6 +44,40 @@ PLUGIN_HEALTH_SCHEMA_PATH = _SCHEMA_DIR / "plugin_health_v0_1.schema.json"
 #: there is no actuation class, so a flight-control capability cannot be named.
 ALLOWED_ACCESS_CLASSES = frozenset({"read", "query", "propose", "communicate"})
 
+#: Capability-id namespaces that may never be provided or granted, whatever
+#: access class they claim. The access enum already forbids an actuation class,
+#: but a capability_id is free text, so a plugin could name a 'read' capability
+#: 'flight.arm'. This code-layer denylist closes that gap: the namespace (the
+#: segment before the first separator) is checked at registration and again when
+#: a ToolPolicy is built, so a flight-control-shaped id cannot slip through.
+FORBIDDEN_CAPABILITY_NAMESPACES = frozenset(
+    {
+        "flight",
+        "mavsdk",
+        "mavlink",
+        "px4",
+        "actuate",
+        "control",
+        "arm",
+        "motor",
+        "actuator",
+        "setpoint",
+        "offboard",
+    }
+)
+
+
+def capability_namespace(capability_id: str) -> str:
+    """The leading segment of a capability id, e.g. 'flight' in 'flight.arm'."""
+    for separator in (".", "_", "-"):
+        capability_id = capability_id.replace(separator, ".")
+    return capability_id.split(".", 1)[0]
+
+
+def is_forbidden_capability(capability_id: str) -> bool:
+    """Whether a capability id sits in a namespace that may never be granted."""
+    return capability_namespace(capability_id) in FORBIDDEN_CAPABILITY_NAMESPACES
+
 
 class PluginContractError(ValueError):
     """Raised when a document cannot be read as a Plugin SDK contract."""

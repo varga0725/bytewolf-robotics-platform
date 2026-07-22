@@ -36,6 +36,7 @@ from brain.plugin_sdk.registry import (
     PluginRegistryError,
     version_satisfies,
 )
+from brain.plugin_sdk.policy import build_tool_policy
 
 CONTRACT_VERSION = PLUGIN_SDK_CONTRACT_VERSION
 
@@ -52,6 +53,7 @@ __all__ = [
     "PluginRegistry",
     "PluginRegistryError",
     "ToolPolicy",
+    "build_tool_policy",
     "load_capability",
     "load_plugin_health",
     "load_plugin_manifest",

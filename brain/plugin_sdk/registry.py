@@ -28,7 +28,11 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
-from brain.plugin_sdk.contracts import PluginHealth, PluginManifest
+from brain.plugin_sdk.contracts import (
+    PluginHealth,
+    PluginManifest,
+    is_forbidden_capability,
+)
 
 
 class PluginRegistryError(ValueError):
@@ -81,6 +85,17 @@ class PluginRegistry:
         """Admit a plugin, rejecting duplicates, conflicts and cycles."""
         if manifest.plugin_id in self._plugins:
             raise PluginRegistryError(f"Plugin '{manifest.plugin_id}' is already registered.")
+
+        forbidden = [
+            cap.capability_id
+            for cap in manifest.provides
+            if is_forbidden_capability(cap.capability_id)
+        ]
+        if forbidden:
+            raise PluginRegistryError(
+                f"'{manifest.plugin_id}' provides flight-control-shaped "
+                f"capabilities {sorted(forbidden)}, which may never be registered."
+            )
 
         self._reject_capability_clashes(manifest)
         self._reject_conflicts(manifest)
@@ -215,6 +230,9 @@ class PluginRegistry:
 
     def state(self, plugin_id: str) -> LifecycleState:
         return self._require(plugin_id).state
+
+    def manifest(self, plugin_id: str) -> PluginManifest:
+        return self._require(plugin_id).manifest
 
     def health(self, plugin_id: str, now: datetime | None = None, max_age_s: float = 10.0) -> PluginHealth:
         """Take a health snapshot, probing the plugin's own hook if it has one."""
