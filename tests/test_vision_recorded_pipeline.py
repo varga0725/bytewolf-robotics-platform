@@ -81,6 +81,24 @@ class RecordedPipelineTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(json.loads(report_path.read_text())["processed_frames"], 1)
 
+    def test_recorded_benchmark_can_export_a_hash_bound_manifest(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "frames.jsonl"
+            fixture.write_text(line(1, bytes(JPEG)) + "\n")
+            manifest = root / "benchmark.manifest.json"
+
+            report = run_recorded_pipeline(
+                fixture, root / "status.json", root / "frame.jpg", now=NOW,
+                detector="annotations", benchmark_manifest_path=manifest,
+            )
+
+            document = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(report["benchmark_manifest"], str(manifest))
+            self.assertEqual(document["contract_version"], "vision_benchmark_manifest.v1")
+            self.assertEqual(document["source_sha256"], hashlib.sha256(fixture.read_bytes()).hexdigest())
+            self.assertIsNone(document["model_weights_sha256"])
+
     def test_ground_truth_fixture_reports_quality_kpis(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)

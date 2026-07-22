@@ -74,3 +74,8 @@ before encrypting only the selected pre/post clip. It is observation storage,
 not an automatic recording or flight-control mechanism. Its `enforce_retention`
 method deletes only its tracked encrypted records once the policy deadline is
 reached.
+
+Recorded benchmark runs can add `--benchmark-manifest-path benchmark.json`.
+The manifest hash-binds the fixture, selected model configuration and (for
+YOLO) local weights to the exported KPI report; it contains no frame payload,
+embedding or control data.

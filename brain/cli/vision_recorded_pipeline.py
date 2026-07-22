@@ -9,7 +9,12 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from brain.vision.benchmark import BenchmarkAggregator, BenchmarkSample
+from brain.vision.benchmark import (
+    BenchmarkAggregator,
+    BenchmarkSample,
+    build_benchmark_manifest,
+    write_benchmark_manifest,
+)
 from brain.vision.evaluation import EvaluationFrame, GroundTruthEvaluator, GroundTruthValidationError
 from brain.vision.presentation import VisionArtifactPublisher
 from brain.vision.overlay import render_jpeg_overlay
@@ -17,6 +22,9 @@ from brain.vision.recorded import AnnotatedFixtureDetector, RecordedFixtureError
 from brain.vision.runtime import RuntimeState, TrackerPort, VisionRuntime
 from brain.vision.tracking import IoUAssociationTracker
 from brain.vision.ultralytics import UltralyticsYoloDetector
+
+
+MODEL_CONFIG_PATH = Path(__file__).resolve().parents[2] / "shared/config/vision/models.v1.yaml"
 
 
 class _HashVerifiedRecordedPayloadResolver:
@@ -66,6 +74,7 @@ def run_recorded_pipeline(
     input_path: Path, status_path: Path, frame_path: Path, *, now: datetime,
     detector: str = "yolo", weights_path: Path | None = None,
     tracker: TrackerPort | None = None, metadata_path: Path | None = None,
+    benchmark_manifest_path: Path | None = None,
 ) -> dict[str, object]:
     """Replay a fixture, publishing only verified observation artifacts."""
     source = RecordedJsonlIngest(input_path)
@@ -135,6 +144,17 @@ def run_recorded_pipeline(
             "quality_kpis": "unavailable_without_ground_truth",
             "dropped_frames": benchmark.dropped_frames,
         }
+    if benchmark_manifest_path is not None and benchmark is not None:
+        manifest = build_benchmark_manifest(
+            source_path=input_path,
+            model_id=selected_detector.model_id,
+            model_version=selected_detector.model_version,
+            report=benchmark,
+            generated_at=now,
+            model_config_path=MODEL_CONFIG_PATH,
+            model_weights_path=weights_path if detector == "yolo" else None,
+        )
+        write_benchmark_manifest(benchmark_manifest_path, manifest)
     return {
         "contract_version": "vision_recorded_pipeline.v1",
         "source": str(input_path), "detector": detector,
@@ -143,6 +163,7 @@ def run_recorded_pipeline(
         "processed_frames": processed, "rejected_frames": rejected,
         "unavailable_frames": unavailable,
         "benchmark": benchmark_document,
+        "benchmark_manifest": None if benchmark_manifest_path is None else str(benchmark_manifest_path),
     }
 
 
@@ -152,6 +173,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--status-path", type=Path, required=True)
     parser.add_argument("--frame-path", type=Path, required=True)
     parser.add_argument("--metadata-path", type=Path, help="Optional local append-only Vision metadata JSONL")
+    parser.add_argument("--benchmark-manifest-path", type=Path, help="Optional reproducible benchmark manifest JSON")
     parser.add_argument("--report-path", type=Path)
     parser.add_argument(
         "--detector", choices=("annotations", "yolo"), default="yolo",
@@ -172,6 +194,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         report = run_recorded_pipeline(
             args.input_path, args.status_path, args.frame_path, now=now,
             detector=args.detector, weights_path=args.weights, metadata_path=args.metadata_path,
+            benchmark_manifest_path=args.benchmark_manifest_path,
         )
     except (GroundTruthValidationError, RecordedFixtureError, ValueError) as error:
         raise SystemExit(f"recorded vision fixture rejected: {error}") from error
