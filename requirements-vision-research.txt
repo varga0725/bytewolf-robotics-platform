@@ -1,0 +1,4 @@
+# P0 research-only Vision runtime. Production model/runtime dependencies are
+# selected and licensed in P3; do not add these to the safety-core baseline.
+ultralytics>=8.4,<9
+opencv-python-headless>=4.10,<5

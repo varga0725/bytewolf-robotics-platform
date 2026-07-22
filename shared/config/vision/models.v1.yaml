@@ -1,0 +1,18 @@
+# Vision model registry declarations; model binaries are intentionally excluded.
+# Research entries cannot be selected for a public release. Production entries
+# require an approved licence reference before they may be promoted.
+version: v1
+research_default:
+  model_id: research-yolo11n
+  runtime: ultralytics-yolo
+  weights_filename: yolo11n.pt
+  stage: research
+  local_weights_required: true
+  implicit_downloads_allowed: false
+  license_reference: AGPL-3.0-or-commercial-license-required
+  intended_use: non-public benchmark and development only
+fixture_only:
+  model_id: recorded-annotation
+  runtime: recorded-fixture
+  stage: test
+  intended_use: deterministic tests and fixture replay only

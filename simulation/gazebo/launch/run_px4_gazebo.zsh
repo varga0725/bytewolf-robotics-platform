@@ -11,7 +11,7 @@ WORLD=${PX4_GZ_WORLD:-default}
 
 case "$PROFILE" in
   base) TARGET=gz_x500 ;;
-  vision) TARGET=gz_x500_vision ;;
+  vision) TARGET=gz_x500_mono_cam ;;
   depth) TARGET=gz_x500_depth ;;
   mono-front) TARGET=gz_x500_mono_cam ;;
   mono-down) TARGET=gz_x500_mono_cam_down ;;

@@ -26,7 +26,6 @@ class SimulationConfigurationTests(unittest.TestCase):
         self.assertIn("PX4_ROOT=${PX4_ROOT:A}", launcher)
         for target in (
             "gz_x500",
-            "gz_x500_vision",
             "gz_x500_depth",
             "gz_x500_mono_cam",
             "gz_x500_mono_cam_down",
@@ -35,6 +34,16 @@ class SimulationConfigurationTests(unittest.TestCase):
             "gz_x500_lidar_2d",
         ):
             self.assertIn(target, launcher)
+
+    def test_vision_profile_selects_a_camera_capable_x500_target(self) -> None:
+        """The Vision Core profile must publish image evidence, not just odometry."""
+        twin = (ROOT / "shared/config/x500v2/twin.yaml").read_text()
+        interactive = (ROOT / "simulation/gazebo/launch/run_px4_gazebo.zsh").read_text()
+        headless = (ROOT / "simulation/gazebo/launch/run_px4_gazebo_headless.zsh").read_text()
+
+        self.assertIn("vision: gz_x500_mono_cam", twin)
+        self.assertIn("vision) TARGET=gz_x500_mono_cam", interactive)
+        self.assertIn("vision) TARGET=gz_x500_mono_cam", headless)
 
     def test_validation_script_checks_required_native_dependencies(self) -> None:
         validator = (ROOT / "simulation/gazebo/launch/validate_px4_gazebo.zsh").read_text()
