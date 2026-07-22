@@ -9,7 +9,9 @@ import unittest
 
 import numpy
 
+import brain.vision.arcface_onnx as arcface_module
 from brain.vision.arcface_onnx import ArcFaceOnnxEmbedder
+from unittest.mock import patch
 
 
 class _Input:
@@ -38,9 +40,8 @@ class ArcFaceOnnxEmbedderTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             model, digest = self._model(temporary)
             session = _Session()
-            embedder = ArcFaceOnnxEmbedder(
-                model_id="research-arcface", model_version="r100-v1", model_path=model, expected_sha256=digest, session=session,
-            )
+            with patch.object(arcface_module, "_load_session", return_value=session):
+                embedder = ArcFaceOnnxEmbedder(model_id="research-arcface", model_version="r100-v1", model_path=model, expected_sha256=digest)
             image = numpy.full((112, 112, 3), (10, 20, 30), dtype=numpy.uint8)
 
             result = embedder.embed_aligned_bgr(image)
@@ -61,19 +62,20 @@ class ArcFaceOnnxEmbedderTests(unittest.TestCase):
     def test_rejects_wrong_shape_or_non_image_input(self) -> None:
         with TemporaryDirectory() as temporary:
             model, digest = self._model(temporary)
-            embedder = ArcFaceOnnxEmbedder(model_id="research-arcface", model_version="r100-v1", model_path=model, expected_sha256=digest, session=_Session())
+            with patch.object(arcface_module, "_load_session", return_value=_Session()):
+                embedder = ArcFaceOnnxEmbedder(model_id="research-arcface", model_version="r100-v1", model_path=model, expected_sha256=digest)
             with self.assertRaisesRegex(ValueError, "112x112"):
                 embedder.embed_aligned_bgr(numpy.zeros((32, 32, 3), dtype=numpy.uint8))
             with self.assertRaisesRegex(ValueError, "uint8"):
                 embedder.embed_aligned_bgr(numpy.zeros((112, 112, 3), dtype=numpy.float32))
 
-    def test_rejects_injected_session_when_model_hash_is_missing_or_wrong(self) -> None:
+    def test_rejects_model_hash_before_constructing_any_session(self) -> None:
         with TemporaryDirectory() as temporary:
             model, _digest = self._model(temporary)
             with self.assertRaisesRegex(ValueError, "SHA-256"):
-                ArcFaceOnnxEmbedder(model_id="research-arcface", model_version="r100-v1", model_path=model, session=_Session())
+                ArcFaceOnnxEmbedder(model_id="research-arcface", model_version="r100-v1", model_path=model)
             with self.assertRaisesRegex(ValueError, "hash"):
-                ArcFaceOnnxEmbedder(model_id="research-arcface", model_version="r100-v1", model_path=model, expected_sha256="0" * 64, session=_Session())
+                ArcFaceOnnxEmbedder(model_id="research-arcface", model_version="r100-v1", model_path=model, expected_sha256="0" * 64)
 
 
 if __name__ == "__main__":

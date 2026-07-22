@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import hashlib
 import unittest
 
 from brain.vision.face_alignment import ScrfdFaceCandidate
@@ -16,6 +17,8 @@ from brain.vision.contracts import CAMERA_FRAME_V1, CameraFrame, FrameValidation
 
 NOW = datetime(2026, 7, 22, 15, 0, tzinfo=UTC)
 SUBJECT = "sub_0123456789abcdef0123456789abcdef"
+PAYLOAD = b"validated-frame-payload"
+PAYLOAD_HASH = hashlib.sha256(PAYLOAD).hexdigest()
 
 
 def consent() -> BiometricConsent:
@@ -29,7 +32,7 @@ def embedding() -> PrivateFaceEmbedding:
 def validation(state: ResultState = ResultState.VALID) -> FrameValidation:
     frame = CameraFrame(
         CAMERA_FRAME_V1, "device-a", "front-rgb", "session-a", 1, NOW, NOW,
-        "calibration-v1", "a" * 64, "jpeg", 128, 128, 1.0, 0,
+        "calibration-v1", PAYLOAD_HASH, "jpeg", 128, 128, 1.0, 0,
     )
     return FrameValidation(state, frame, "test")
 
@@ -42,6 +45,14 @@ class _Detector:
     def detect_single_bgr(self, _image: object) -> ScrfdFaceCandidate | None:
         self.calls += 1
         return self.face
+
+
+class _Resolver:
+    def __init__(self, payload: bytes = PAYLOAD) -> None:
+        self.payload = payload
+
+    def resolve(self, _payload_hash: str) -> bytes:
+        return self.payload
 
 
 class _Embedder:
@@ -79,13 +90,13 @@ class FaceVerificationCoordinatorTests(unittest.TestCase):
     def test_runs_private_pipeline_in_required_order_and_returns_only_evidence(self) -> None:
         embedder = _Embedder()
         coordinator = FaceVerificationCoordinator(
-            detector=_Detector(face()), aligner=lambda _image, _face: object(), quality_gate=quality_gate(),
+            detector=_Detector(face()), payload_resolver=_Resolver(), decoder=lambda _payload: object(), aligner=lambda _image, _face: object(), quality_gate=quality_gate(),
             quality_metrics=metrics, liveness=lambda _image, _face: LivenessResult.PASSED,
             embedder=embedder, verifier=PrivateOneToOneVerifier(),
             gate=FaceVerificationGate(acceptance_threshold=0.8, continuation_threshold=0.7, confirmation_frames=1, cooldown=timedelta()),
         )
 
-        result = coordinator.observe(validation=validation(), image=object(), consent=consent(), enrolled=embedding(), observed_at=NOW)
+        result = coordinator.observe(validation=validation(), consent=consent(), enrolled=embedding())
 
         self.assertEqual(result.state, ResultState.VALID)
         self.assertEqual(result.match, MatchResult.MATCHED)
@@ -104,13 +115,13 @@ class FaceVerificationCoordinatorTests(unittest.TestCase):
             return object()
 
         coordinator = FaceVerificationCoordinator(
-            detector=_Detector(face()), aligner=aligner, quality_gate=quality_gate(),
+            detector=_Detector(face()), payload_resolver=_Resolver(), decoder=lambda _payload: object(), aligner=aligner, quality_gate=quality_gate(),
             quality_metrics=lambda _image, _face: FaceQualityMetrics(20, 20, 100.0, 128.0, 0.0, 0.0, 0.0),
             liveness=lambda _image, _face: LivenessResult.PASSED, embedder=embedder,
             verifier=PrivateOneToOneVerifier(), gate=FaceVerificationGate(acceptance_threshold=0.8, continuation_threshold=0.7, confirmation_frames=1, cooldown=timedelta()),
         )
 
-        result = coordinator.observe(validation=validation(), image=object(), consent=consent(), enrolled=embedding(), observed_at=NOW)
+        result = coordinator.observe(validation=validation(), consent=consent(), enrolled=embedding())
 
         self.assertEqual(result.quality, FaceQuality.FAILED)
         self.assertEqual(result.reason_code, "quality_failed")
@@ -119,13 +130,13 @@ class FaceVerificationCoordinatorTests(unittest.TestCase):
 
     def test_missing_or_ambiguous_face_is_model_unavailable(self) -> None:
         coordinator = FaceVerificationCoordinator(
-            detector=_Detector(None), aligner=lambda _image, _face: object(), quality_gate=quality_gate(),
+            detector=_Detector(None), payload_resolver=_Resolver(), decoder=lambda _payload: object(), aligner=lambda _image, _face: object(), quality_gate=quality_gate(),
             quality_metrics=metrics, liveness=lambda _image, _face: LivenessResult.PASSED,
             embedder=_Embedder(), verifier=PrivateOneToOneVerifier(),
             gate=FaceVerificationGate(acceptance_threshold=0.8, continuation_threshold=0.7, confirmation_frames=1, cooldown=timedelta()),
         )
 
-        result = coordinator.observe(validation=validation(), image=object(), consent=consent(), enrolled=embedding(), observed_at=NOW)
+        result = coordinator.observe(validation=validation(), consent=consent(), enrolled=embedding())
 
         self.assertEqual(result.state, ResultState.INVALID)
         self.assertEqual(result.reason_code, "model_unavailable")
@@ -134,13 +145,26 @@ class FaceVerificationCoordinatorTests(unittest.TestCase):
     def test_refuses_unvalidated_or_stale_frame_before_detector_runs(self) -> None:
         detector = _Detector(face())
         coordinator = FaceVerificationCoordinator(
-            detector=detector, aligner=lambda _image, _face: object(), quality_gate=quality_gate(),
+            detector=detector, payload_resolver=_Resolver(), decoder=lambda _payload: object(), aligner=lambda _image, _face: object(), quality_gate=quality_gate(),
             quality_metrics=metrics, liveness=lambda _image, _face: LivenessResult.PASSED,
             embedder=_Embedder(), verifier=PrivateOneToOneVerifier(),
             gate=FaceVerificationGate(acceptance_threshold=0.8, continuation_threshold=0.7, confirmation_frames=1, cooldown=timedelta()),
         )
 
         with self.assertRaisesRegex(ValueError, "validated"):
-            coordinator.observe(validation=validation(ResultState.STALE), image=object(), consent=consent(), enrolled=embedding(), observed_at=NOW)
+            coordinator.observe(validation=validation(ResultState.STALE), consent=consent(), enrolled=embedding())
 
+        self.assertEqual(detector.calls, 0)
+
+    def test_rejects_payload_that_does_not_match_validated_frame_hash(self) -> None:
+        detector = _Detector(face())
+        coordinator = FaceVerificationCoordinator(
+            detector=detector, payload_resolver=_Resolver(b"different"), decoder=lambda _payload: object(), aligner=lambda _image, _face: object(), quality_gate=quality_gate(),
+            quality_metrics=metrics, liveness=lambda _image, _face: LivenessResult.PASSED,
+            embedder=_Embedder(), verifier=PrivateOneToOneVerifier(),
+            gate=FaceVerificationGate(acceptance_threshold=0.8, continuation_threshold=0.7, confirmation_frames=1, cooldown=timedelta()),
+        )
+
+        with self.assertRaisesRegex(ValueError, "payload bytes"):
+            coordinator.observe(validation=validation(), consent=consent(), enrolled=embedding())
         self.assertEqual(detector.calls, 0)

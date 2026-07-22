@@ -8,6 +8,7 @@ embeddings, templates and raw cosine scores remain local to this call.
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 from typing import Any, Callable, Protocol
 
 from .contracts import FrameValidation, ResultState
@@ -29,6 +30,10 @@ class _Embedder(Protocol):
     def embed_aligned_bgr(self, image: object) -> PrivateFaceEmbedding: ...
 
 
+class _PayloadResolver(Protocol):
+    def resolve(self, payload_hash: str) -> bytes: ...
+
+
 class FaceVerificationCoordinator:
     """Fail-closed, private orchestration for an opt-in face observation."""
 
@@ -36,6 +41,7 @@ class FaceVerificationCoordinator:
         self,
         *,
         detector: _Detector,
+        payload_resolver: _PayloadResolver,
         aligner: Callable[[object, ScrfdFaceCandidate], object],
         quality_gate: FaceQualityGate,
         quality_metrics: Callable[[object, ScrfdFaceCandidate], FaceQualityMetrics],
@@ -44,14 +50,16 @@ class FaceVerificationCoordinator:
         verifier: PrivateOneToOneVerifier,
         gate: FaceVerificationGate,
         threshold_version: str = "face-verification-v1",
+        decoder: Callable[[bytes], object] | None = None,
     ) -> None:
-        if not callable(getattr(detector, "detect_single_bgr", None)) or not callable(aligner) or not isinstance(quality_gate, FaceQualityGate):
+        if not callable(getattr(detector, "detect_single_bgr", None)) or not callable(getattr(payload_resolver, "resolve", None)) or not callable(aligner) or not isinstance(quality_gate, FaceQualityGate):
             raise ValueError("Face coordinator requires private detector, aligner and quality gate.")
         if not callable(quality_metrics) or not callable(liveness) or not callable(getattr(embedder, "embed_aligned_bgr", None)):
             raise ValueError("Face coordinator requires private quality, liveness and embedding providers.")
         if not isinstance(verifier, PrivateOneToOneVerifier) or not isinstance(gate, FaceVerificationGate) or not isinstance(threshold_version, str) or not threshold_version.strip():
             raise ValueError("Face coordinator verification policy is invalid.")
         self._detector = detector
+        self._payload_resolver = payload_resolver
         self._aligner = aligner
         self._quality_gate = quality_gate
         self._quality_metrics = quality_metrics
@@ -60,15 +68,14 @@ class FaceVerificationCoordinator:
         self._verifier = verifier
         self._gate = gate
         self._threshold_version = threshold_version
+        self._decoder = decoder or _decode_bgr
 
     def observe(
         self,
         *,
         validation: FrameValidation,
-        image: object,
         consent: BiometricConsent,
         enrolled: PrivateFaceEmbedding,
-        observed_at: datetime,
     ) -> FaceVerification:
         """Process one validated frame without exposing biometric internals."""
         if not isinstance(validation, FrameValidation) or not validation.usable or validation.frame is None:
@@ -76,8 +83,16 @@ class FaceVerificationCoordinator:
         frame = validation.frame
         if not isinstance(consent, BiometricConsent) or not isinstance(enrolled, PrivateFaceEmbedding):
             raise ValueError("Face coordinator requires consent and a private enrolled template.")
+        observed_at = frame.received_at
         if consent.state(observed_at) is not ConsentState.GRANTED:
             return self._emit(consent, frame.stream_session_id, frame.frame_sequence, FaceQuality.UNAVAILABLE, LivenessResult.UNAVAILABLE, None, observed_at)
+        try:
+            payload = self._payload_resolver.resolve(frame.payload_hash)
+            if not isinstance(payload, bytes) or hashlib.sha256(payload).hexdigest() != frame.payload_hash:
+                raise ValueError("resolved payload hash mismatch")
+            image = self._decoder(payload)
+        except Exception as error:
+            raise ValueError("Face coordinator requires payload bytes bound to the validated frame.") from error
         try:
             candidate = self._detector.detect_single_bgr(image)
         except Exception:
@@ -112,3 +127,15 @@ class FaceVerificationCoordinator:
             consent, stream_session_id, frame_sequence, self._embedder.model_id, self._embedder.model_version,
             self._threshold_version, quality, liveness, similarity, observed_at,
         ))
+
+
+def _decode_bgr(payload: bytes) -> object:
+    try:
+        import cv2
+        import numpy
+    except ImportError as error:  # pragma: no cover - deployment guard
+        raise RuntimeError("Face coordinator requires OpenCV and NumPy.") from error
+    image = cv2.imdecode(numpy.frombuffer(payload, dtype=numpy.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("frame payload cannot be decoded as BGR image")
+    return image

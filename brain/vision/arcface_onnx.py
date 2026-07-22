@@ -28,17 +28,11 @@ class ArcFaceOnnxEmbedder:
         model_version: str,
         model_path: Path | None = None,
         expected_sha256: str | None = None,
-        session: Any | None = None,
     ) -> None:
         if not isinstance(model_id, str) or not model_id.strip() or not isinstance(model_version, str) or not model_version.strip():
             raise ValueError("ArcFace ONNX adapter requires model ID and version.")
         _verify_model(model_path, expected_sha256)
-        if session is None:
-            try:
-                import onnxruntime
-            except ImportError as error:  # pragma: no cover - deployment guard
-                raise RuntimeError("ArcFace ONNX adapter requires onnxruntime in the research runtime.") from error
-            session = onnxruntime.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        session = _load_session(model_path)
         get_inputs = getattr(session, "get_inputs", None)
         if not callable(get_inputs):
             raise ValueError("ArcFace ONNX session must expose get_inputs().")
@@ -84,3 +78,11 @@ def _verify_model(path: Path | None, expected_sha256: str | None) -> None:
         raise ValueError("ArcFace ONNX adapter requires a lowercase SHA-256 hash.")
     if sha256(path.read_bytes()).hexdigest() != expected_sha256:
         raise ValueError("ArcFace ONNX local model hash does not match the approved hash.")
+
+
+def _load_session(path: Path) -> Any:
+    try:
+        import onnxruntime
+    except ImportError as error:  # pragma: no cover - deployment guard
+        raise RuntimeError("ArcFace ONNX adapter requires onnxruntime in the research runtime.") from error
+    return onnxruntime.InferenceSession(str(path), providers=["CPUExecutionProvider"])
