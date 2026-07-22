@@ -56,6 +56,20 @@ class VisionPresentationTests(unittest.TestCase):
             self.assertFalse((root / "status.json.tmp").exists())
             self.assertFalse((root / "frame.jpg.tmp").exists())
 
+    def test_publisher_optionally_appends_metadata_only_journal(self) -> None:
+        health = VisionHealth(NOW, "healthy", "healthy", "healthy", 0, 0)
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            publisher = VisionArtifactPublisher(
+                root / "status.json", root / "frame.jpg", root / "metadata.jsonl",
+            )
+            publisher.publish(None, health, now=NOW, render=lambda _result: b"jpeg-overlay")
+
+            metadata = json.loads((root / "metadata.jsonl").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["contract_version"], "vision_metadata.v1")
+            self.assertNotIn("payload", metadata["status"])
+            self.assertEqual(metadata["status"]["state"], "valid")
+
 
 if __name__ == "__main__":
     unittest.main()

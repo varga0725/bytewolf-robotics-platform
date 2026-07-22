@@ -198,6 +198,7 @@ def run_gazebo_pipeline(
     max_iterations: int,
     idle_sleep_seconds: float = 0.05,
     max_reconnects: int = 3,
+    metadata_path: Path | None = None,
 ) -> dict[str, object]:
     """Process bounded Gazebo observations and publish only read-only evidence."""
     if type(max_iterations) is not int or max_iterations <= 0:
@@ -207,7 +208,7 @@ def run_gazebo_pipeline(
     if not isinstance(idle_sleep_seconds, (int, float)) or idle_sleep_seconds < 0:
         raise ValueError("idle_sleep_seconds must be non-negative.")
     runtime = VisionRuntime(detector, tracker=IoUAssociationTracker())
-    publisher = VisionArtifactPublisher(status_path, frame_path)
+    publisher = VisionArtifactPublisher(status_path, frame_path, metadata_path)
     processed = unavailable = idle = reconnects = 0
     samples: list[BenchmarkSample] = []
     previous_source_drops = 0
@@ -290,6 +291,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--weights", type=Path, required=True, help="Existing local YOLO weights; implicit downloads are disabled")
     parser.add_argument("--status-path", type=Path, required=True)
     parser.add_argument("--frame-path", type=Path, required=True)
+    parser.add_argument("--metadata-path", type=Path, help="Optional local append-only Vision metadata JSONL")
     parser.add_argument("--report-path", type=Path)
     parser.add_argument("--idle-sleep", type=float, default=0.05)
     parser.add_argument("--max-iterations", type=int, default=1000)
@@ -321,6 +323,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             source, detector, status_path=args.status_path, frame_path=args.frame_path,
             now=lambda: datetime.now(UTC), sleep=time.sleep, max_iterations=args.max_iterations,
             idle_sleep_seconds=args.idle_sleep, max_reconnects=args.max_reconnects,
+            metadata_path=args.metadata_path,
         )
     finally:
         source.close()

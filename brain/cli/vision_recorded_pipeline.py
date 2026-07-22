@@ -65,14 +65,14 @@ def _detector_for(
 def run_recorded_pipeline(
     input_path: Path, status_path: Path, frame_path: Path, *, now: datetime,
     detector: str = "yolo", weights_path: Path | None = None,
-    tracker: TrackerPort | None = None,
+    tracker: TrackerPort | None = None, metadata_path: Path | None = None,
 ) -> dict[str, object]:
     """Replay a fixture, publishing only verified observation artifacts."""
     source = RecordedJsonlIngest(input_path)
     selected_detector, payload_resolver = _detector_for(detector, source, weights_path)
     active_tracker = tracker if tracker is not None else IoUAssociationTracker()
     runtime = VisionRuntime(selected_detector, tracker=active_tracker)  # type: ignore[arg-type]
-    publisher = VisionArtifactPublisher(status_path, frame_path)
+    publisher = VisionArtifactPublisher(status_path, frame_path, metadata_path)
     samples: list[BenchmarkSample] = []
     evaluation_frames: list[EvaluationFrame] = []
     processed = rejected = unavailable = 0
@@ -151,6 +151,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("input_path", type=Path)
     parser.add_argument("--status-path", type=Path, required=True)
     parser.add_argument("--frame-path", type=Path, required=True)
+    parser.add_argument("--metadata-path", type=Path, help="Optional local append-only Vision metadata JSONL")
     parser.add_argument("--report-path", type=Path)
     parser.add_argument(
         "--detector", choices=("annotations", "yolo"), default="yolo",
@@ -170,7 +171,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         report = run_recorded_pipeline(
             args.input_path, args.status_path, args.frame_path, now=now,
-            detector=args.detector, weights_path=args.weights,
+            detector=args.detector, weights_path=args.weights, metadata_path=args.metadata_path,
         )
     except (GroundTruthValidationError, RecordedFixtureError, ValueError) as error:
         raise SystemExit(f"recorded vision fixture rejected: {error}") from error

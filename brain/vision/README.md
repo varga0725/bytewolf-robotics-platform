@@ -54,3 +54,9 @@ python3 -m apps.dashboard.server \
   --vision-status-file /path/to/vision-status.json \
   --vision-frame-file /path/to/vision-frame.jpg
 ```
+
+Each recorded, GStreamer and Gazebo CLI also accepts `--metadata-path
+/secure/local/vision-metadata.jsonl`. This is a single-runtime, append-only
+local journal of the versioned dashboard read model and writer timestamp. It
+never stores raw frames, payload hashes, evidence locations, face templates or
+embeddings; use a separate P3 datastore for multi-writer operation.

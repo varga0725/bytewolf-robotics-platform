@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 
 from .contracts import DetectionResult, ResultState, VisionHealth
+from .metadata import LocalVisionMetadataStore
 
 
 def vision_status_document(
@@ -63,9 +64,14 @@ def vision_status_document(
 class VisionArtifactPublisher:
     """Atomically publish the local read model; never accepts HTTP input."""
 
-    def __init__(self, status_path: Path, frame_path: Path) -> None:
+    def __init__(
+        self, status_path: Path, frame_path: Path, metadata_path: Path | None = None,
+    ) -> None:
         self._status_path = status_path
         self._frame_path = frame_path
+        self._metadata_store = (
+            LocalVisionMetadataStore(metadata_path) if metadata_path is not None else None
+        )
 
     def publish(
         self,
@@ -82,6 +88,8 @@ class VisionArtifactPublisher:
             raise ValueError("Vision renderer must return non-empty encoded image bytes.")
         _atomic_write(self._status_path, json.dumps(document, separators=(",", ":")).encode("utf-8"))
         _atomic_write(self._frame_path, payload)
+        if self._metadata_store is not None:
+            self._metadata_store.append_dashboard_status(document, written_at=now)
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:
