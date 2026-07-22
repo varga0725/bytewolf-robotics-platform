@@ -36,6 +36,11 @@ from brain.plugin_sdk.contracts import (
 )
 
 
+#: The health values the PluginHealth schema accepts. A probe that returns
+#: anything else is coerced to 'unknown' so a snapshot is always schema-valid.
+_HEALTH_VALUES = frozenset({"ok", "degraded", "unhealthy", "unknown"})
+
+
 class PluginRegistryError(ValueError):
     """Raised when a lifecycle operation would break registry consistency."""
 
@@ -144,28 +149,61 @@ class PluginRegistry:
     # -- lifecycle --------------------------------------------------------
 
     def start(self, plugin_id: str) -> None:
-        """Start a plugin after its dependencies, or refuse and stay put."""
-        self._start(plugin_id, starting=set())
+        """Start a plugin and its dependencies, or start nothing.
 
-    def _start(self, plugin_id: str, starting: set[str]) -> None:
+        The whole transitive dependency graph is validated *before* any start
+        hook runs, so a missing, version-incompatible or circular dependency is
+        caught while everything is still down -- never after some dependency has
+        already been brought up. If a start hook then fails mid-sequence, every
+        plugin this call started is rolled back, so the operation is all-or-none.
+        """
+        self._require(plugin_id)
+        order: list[str] = []
+        self._plan_start(plugin_id, order, visiting=set(), planned=set())
+
+        started_now: list[str] = []
+        for pid in order:
+            record = self._plugins[pid]
+            try:
+                self._call_hook(record, "start")
+            except PluginRegistryError:
+                for done in reversed(started_now):
+                    self._rollback_stop(done)
+                raise
+            record.state = LifecycleState.STARTED
+            started_now.append(pid)
+
+    def _plan_start(
+        self, plugin_id: str, order: list[str], visiting: set[str], planned: set[str]
+    ) -> None:
+        """Build a dependency-first start order, validating every edge first."""
         record = self._require(plugin_id)
-        if record.state is LifecycleState.STARTED:
+        if record.state is LifecycleState.STARTED or plugin_id in planned:
             return
-        if plugin_id in starting:
+        if plugin_id in visiting:
             raise PluginRegistryError(
                 "Circular dependency while starting "
-                + " -> ".join([*starting, plugin_id])
+                + " -> ".join([*visiting, plugin_id])
                 + "."
             )
-        starting.add(plugin_id)
-
+        visiting.add(plugin_id)
         for requirement in record.manifest.requires:
             self._resolve_requirement(plugin_id, requirement)
-            self._start(requirement["plugin_id"], starting)
+            self._plan_start(requirement["plugin_id"], order, visiting, planned)
+        visiting.discard(plugin_id)
+        planned.add(plugin_id)
+        order.append(plugin_id)
 
-        starting.discard(plugin_id)
-        self._call_hook(record, "start")
-        record.state = LifecycleState.STARTED
+    def _rollback_stop(self, plugin_id: str) -> None:
+        """Best-effort stop during a failed start; a stop fault must not mask it."""
+        record = self._plugins[plugin_id]
+        hook = getattr(record.instance, "stop", None)
+        if hook is not None:
+            try:
+                hook()
+            except Exception:  # noqa: BLE001 - never let rollback hide the original failure
+                pass
+        record.state = LifecycleState.STOPPED
 
     def _resolve_requirement(self, plugin_id: str, requirement: dict[str, Any]) -> None:
         dep_id = requirement["plugin_id"]
@@ -280,12 +318,22 @@ class PluginRegistry:
         return handlers().get(capability_id)
 
     def health(self, plugin_id: str, now: datetime | None = None, max_age_s: float = 10.0) -> PluginHealth:
-        """Take a health snapshot, probing the plugin's own hook if it has one."""
+        """Take a health snapshot, probing the plugin's own hook if it has one.
+
+        The probe is fail-closed: a hook that raises reports 'unhealthy', and a
+        hook that returns a value outside the health enum reports 'unknown', so
+        monitoring always receives a schema-valid snapshot rather than an
+        exception or a contract-breaking object.
+        """
         record = self._require(plugin_id)
         checked_at = now if now is not None else datetime.now(UTC)
         health = record.health
         if record.state is not LifecycleState.FAILED and hasattr(record.instance, "health"):
-            health = record.instance.health()
+            try:
+                reported = record.instance.health()
+            except Exception:  # noqa: BLE001 - a probe fault means unhealthy, not a crash
+                reported = "unhealthy"
+            health = reported if reported in _HEALTH_VALUES else "unknown"
         elif record.state is LifecycleState.STARTED and not hasattr(record.instance, "health"):
             health = "ok"
         return PluginHealth(
@@ -378,10 +426,18 @@ def _split_clause(clause: str) -> tuple[str, str]:
 
 
 def _parse_version(text: str) -> tuple[int, int, int]:
+    # Range bounds may be written short -- '1.0' or even '1' -- and are padded to
+    # major.minor.patch, so the contract's own documented '>=1.0,<2.0' shorthand
+    # works. A plugin's own 'version' is still pinned to three components by the
+    # schema. More than three components, or a non-numeric one, is an error, not
+    # a silent pass.
     parts = text.split(".")
-    if len(parts) != 3:
-        raise PluginRegistryError(f"Version '{text}' is not major.minor.patch.")
+    if not 1 <= len(parts) <= 3:
+        raise PluginRegistryError(f"Version '{text}' is not major[.minor[.patch]].")
     try:
-        return (int(parts[0]), int(parts[1]), int(parts[2]))
+        numbers = [int(part) for part in parts]
     except ValueError as error:
         raise PluginRegistryError(f"Version '{text}' is not numeric.") from error
+    while len(numbers) < 3:
+        numbers.append(0)
+    return (numbers[0], numbers[1], numbers[2])

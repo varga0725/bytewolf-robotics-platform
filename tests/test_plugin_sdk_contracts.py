@@ -164,6 +164,21 @@ class HealthFreshnessTests(unittest.TestCase):
         with self.assertRaises(PluginContractError):
             health.age_s(datetime(2026, 7, 22, 9, 0, 0))  # no tzinfo
 
+    def test_space_separated_timestamp_is_refused(self) -> None:
+        # The schema's date-time format requires a 'T'; a space-joined timestamp
+        # that fromisoformat would otherwise accept must be rejected.
+        with self.assertRaises(PluginContractError):
+            load_plugin_health(
+                {
+                    "contract_version": PLUGIN_SDK_CONTRACT_VERSION,
+                    "plugin_id": "telemetry.read",
+                    "lifecycle_state": "started",
+                    "health": "ok",
+                    "checked_at": "2026-07-22 09:00:00+00:00",
+                    "max_age_s": 10,
+                }
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

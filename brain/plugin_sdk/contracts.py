@@ -151,7 +151,10 @@ def _validator(schema_path: Path) -> Any:
         ) from error
     validator_class = jsonschema.validators.validator_for(schema)
     validator_class.check_schema(schema)
-    return validator_class(schema)
+    # With a format checker the schema's `format: date-time` is asserted, not
+    # merely annotated, so a malformed timestamp is rejected at validation rather
+    # than slipping through to the parser.
+    return validator_class(schema, format_checker=validator_class.FORMAT_CHECKER)
 
 
 def _validate(document: object, schema_path: Path, label: str) -> dict[str, Any]:
@@ -222,6 +225,13 @@ def load_plugin_health(document: object) -> PluginHealth:
 
 
 def _parse_timestamp(value: str) -> datetime:
+    # RFC 3339 dates separate date and time with 'T' (or 't'). datetime.fromisoformat
+    # also accepts a space, which the schema's date-time format forbids, so reject
+    # it explicitly rather than rely on an optional format-checker dependency.
+    if "T" not in value and "t" not in value:
+        raise PluginContractError(
+            f"Health timestamp '{value}' is not RFC 3339: date and time must be joined by 'T'."
+        )
     try:
         timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:

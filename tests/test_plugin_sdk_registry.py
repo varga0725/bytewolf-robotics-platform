@@ -159,6 +159,64 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(registry.state("boom"), LifecycleState.FAILED)
 
 
+class PreflightAndRollbackTests(unittest.TestCase):
+    def test_a_later_missing_dependency_starts_nothing(self) -> None:
+        # The whole graph is validated before any start hook runs, so an early,
+        # valid dependency is not left running when a later one is missing.
+        registry = PluginRegistry()
+        good = _Recorder()
+        registry.register(_manifest("good"), good)
+        registry.register(
+            _manifest(
+                "app",
+                requires=[
+                    {"plugin_id": "good", "version_range": ">=1.0.0"},
+                    {"plugin_id": "absent", "version_range": ">=1.0.0"},
+                ],
+            )
+        )
+        with self.assertRaises(PluginRegistryError):
+            registry.start("app")
+        self.assertEqual(registry.state("good"), LifecycleState.REGISTERED)
+        self.assertEqual(good.calls, [])
+
+    def test_a_failing_start_hook_rolls_back_started_dependencies(self) -> None:
+        class Boom:
+            def start(self) -> None:
+                raise RuntimeError("no")
+
+        registry = PluginRegistry()
+        dep = _Recorder()
+        registry.register(_manifest("dep"), dep)
+        registry.register(
+            _manifest("app", requires=[{"plugin_id": "dep", "version_range": ">=1.0.0"}]), Boom()
+        )
+        with self.assertRaises(PluginRegistryError):
+            registry.start("app")
+        self.assertEqual(registry.state("app"), LifecycleState.FAILED)
+        self.assertEqual(registry.state("dep"), LifecycleState.STOPPED)
+        self.assertEqual(dep.calls, ["start", "stop"])
+
+
+class HealthFailClosedTests(unittest.TestCase):
+    def test_a_raising_health_hook_reports_unhealthy(self) -> None:
+        class Sick:
+            def health(self) -> str:
+                raise RuntimeError("probe blew up")
+
+        registry = PluginRegistry()
+        registry.register(_manifest("sick"), Sick())
+        registry.start("sick")
+        self.assertEqual(registry.health("sick").health, "unhealthy")
+
+    def test_an_out_of_enum_health_value_becomes_unknown(self) -> None:
+        registry = PluginRegistry()
+        registry.register(_manifest("typo"), _Recorder(health="healthy"))  # not in the enum
+        registry.start("typo")
+        snapshot = registry.health("typo")
+        self.assertEqual(snapshot.health, "unknown")
+
+
 class ReloadTests(unittest.TestCase):
     def test_reload_requires_reloadable_manifest(self) -> None:
         registry = PluginRegistry()
@@ -213,11 +271,19 @@ class VersionRangeTests(unittest.TestCase):
         self.assertTrue(version_satisfies("1.0.0", "==1.0.0"))
         self.assertFalse(version_satisfies("0.9.0", ">=1.0.0"))
 
+    def test_documented_shorthand_range_is_parseable(self) -> None:
+        # The contract advertises '>=1.0,<2.0'; short bounds pad to major.minor.patch.
+        self.assertTrue(version_satisfies("1.2.0", ">=1.0,<2.0"))
+        self.assertFalse(version_satisfies("2.0.0", ">=1.0,<2.0"))
+        self.assertTrue(version_satisfies("1.0.0", ">=1"))
+
     def test_unparseable_range_raises_rather_than_passing(self) -> None:
         with self.assertRaises(PluginRegistryError):
-            version_satisfies("1.0.0", "~1.0.0")
+            version_satisfies("1.0.0", "~1.0.0")  # unknown comparator
         with self.assertRaises(PluginRegistryError):
-            version_satisfies("1.0", ">=1.0.0")
+            version_satisfies("1.0.0", ">=1.2.3.4")  # too many components
+        with self.assertRaises(PluginRegistryError):
+            version_satisfies("1.0.0", ">=x.y")  # non-numeric
 
 
 if __name__ == "__main__":
