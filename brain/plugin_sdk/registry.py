@@ -31,6 +31,7 @@ from typing import Any, Protocol, runtime_checkable
 from brain.plugin_sdk.contracts import (
     PluginHealth,
     PluginManifest,
+    ToolPolicy,
     is_forbidden_capability,
 )
 
@@ -233,6 +234,50 @@ class PluginRegistry:
 
     def manifest(self, plugin_id: str) -> PluginManifest:
         return self._require(plugin_id).manifest
+
+    def invoke(self, capability_id: str, *, policy: ToolPolicy | None = None, **kwargs: Any) -> Any:
+        """Call a capability on its provider, fail-closed.
+
+        The provider must be registered, started, and expose a handler for the
+        capability. When a ``policy`` is supplied -- the caller consuming another
+        plugin's capability -- the capability must appear in that policy's grants,
+        so the ToolPolicy is the actual enforcement point, not just a record.
+        Resource limits (timeout, rate) are declared on the policy and enforced
+        by the Cognitive Runtime, not here.
+        """
+        provider_id = self._provider_of(capability_id)
+        if provider_id is None:
+            raise PluginRegistryError(f"No registered plugin provides '{capability_id}'.")
+        record = self._plugins[provider_id]
+        if record.state is not LifecycleState.STARTED:
+            raise PluginRegistryError(
+                f"Provider '{provider_id}' of '{capability_id}' is {record.state.value}, not started."
+            )
+        if policy is not None and not any(
+            grant["capability_id"] == capability_id for grant in policy.granted
+        ):
+            raise PluginRegistryError(
+                f"Capability '{capability_id}' is not granted to '{policy.plugin_id}'."
+            )
+        handler = self._capability_handler(record.instance, capability_id)
+        if handler is None:
+            raise PluginRegistryError(
+                f"Provider '{provider_id}' exposes no handler for '{capability_id}'."
+            )
+        return handler(**kwargs)
+
+    def _provider_of(self, capability_id: str) -> str | None:
+        for plugin_id, record in self._plugins.items():
+            if any(cap.capability_id == capability_id for cap in record.manifest.provides):
+                return plugin_id
+        return None
+
+    @staticmethod
+    def _capability_handler(instance: Any, capability_id: str):
+        handlers = getattr(instance, "capabilities", None)
+        if handlers is None:
+            return None
+        return handlers().get(capability_id)
 
     def health(self, plugin_id: str, now: datetime | None = None, max_age_s: float = 10.0) -> PluginHealth:
         """Take a health snapshot, probing the plugin's own hook if it has one."""
