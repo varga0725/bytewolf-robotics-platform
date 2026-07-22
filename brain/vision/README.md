@@ -87,3 +87,10 @@ and `BiometricConsent` evidence. Subject IDs must be pseudonymous, consent is
 explicit and revocable, and a liveness or quality failure cannot be represented
 as a match. This contract stores neither embeddings nor templates, is excluded
 from `vision_dashboard.v1`, and cannot authorize an action or affect flight.
+
+`BiometricTemplateStore` is a private P1 persistence boundary for opt-in
+enrollment only. It requires active matching consent at enrollment and load,
+encrypts templates with a caller-provided Fernet key, uses hashed filenames and
+owner-only files, forbids implicit replacement, and deletes only the matching
+template after effective consent revocation. It is deliberately not exported
+through the Vision package, dashboard, or metadata journal.
