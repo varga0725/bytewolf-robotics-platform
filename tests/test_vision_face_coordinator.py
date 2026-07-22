@@ -84,7 +84,7 @@ def quality_gate() -> FaceQualityGate:
     )
 
 
-def metrics(_image: object, _face: ScrfdFaceCandidate) -> FaceQualityMetrics:
+def metrics(_image: object, _face: ScrfdFaceCandidate, _frame: CameraFrame) -> FaceQualityMetrics:
     return FaceQualityMetrics(80, 90, 100.0, 128.0, 0.0, 0.0, 0.0)
 
 
@@ -118,7 +118,7 @@ class FaceVerificationCoordinatorTests(unittest.TestCase):
 
         coordinator = FaceVerificationCoordinator(
             detector=_Detector(face()), payload_resolver=_Resolver(), decoder=lambda _payload: object(), aligner=aligner, quality_gate=quality_gate(),
-            quality_metrics=lambda _image, _face: FaceQualityMetrics(20, 20, 100.0, 128.0, 0.0, 0.0, 0.0),
+            quality_metrics=lambda _image, _face, _frame: FaceQualityMetrics(20, 20, 100.0, 128.0, 0.0, 0.0, 0.0),
             liveness=lambda _image, _face: LivenessResult.PASSED, embedder=embedder,
             verifier=PrivateOneToOneVerifier(), gate=FaceVerificationGate(acceptance_threshold=0.8, continuation_threshold=0.7, confirmation_frames=1, cooldown=timedelta()),
         )

@@ -11,7 +11,7 @@ from datetime import datetime
 import hashlib
 from typing import Any, Callable, Protocol
 
-from .contracts import FrameValidation, ResultState
+from .contracts import CameraFrame, FrameValidation, ResultState
 from .face_alignment import ScrfdFaceCandidate
 from .face_embedding import PrivateFaceEmbedding, PrivateOneToOneVerifier
 from .face_gate import FaceVerificationGate, FaceVerificationObservation
@@ -44,7 +44,7 @@ class FaceVerificationCoordinator:
         payload_resolver: _PayloadResolver,
         aligner: Callable[[object, ScrfdFaceCandidate], object],
         quality_gate: FaceQualityGate,
-        quality_metrics: Callable[[object, ScrfdFaceCandidate], FaceQualityMetrics],
+        quality_metrics: Callable[[object, ScrfdFaceCandidate, CameraFrame], FaceQualityMetrics],
         liveness: Callable[[object, ScrfdFaceCandidate], LivenessResult],
         embedder: _Embedder,
         verifier: PrivateOneToOneVerifier,
@@ -100,7 +100,7 @@ class FaceVerificationCoordinator:
         if candidate is None:
             return self._emit(consent, frame.stream_session_id, frame.frame_sequence, FaceQuality.UNAVAILABLE, LivenessResult.UNAVAILABLE, None, observed_at)
         try:
-            assessment = self._quality_gate.assess(self._quality_metrics(image, candidate))
+            assessment = self._quality_gate.assess(self._quality_metrics(image, candidate, frame))
         except Exception:
             return self._emit(consent, frame.stream_session_id, frame.frame_sequence, FaceQuality.UNAVAILABLE, LivenessResult.UNAVAILABLE, None, observed_at)
         if assessment.quality is FaceQuality.FAILED:
