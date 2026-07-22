@@ -114,10 +114,10 @@ verification output is model provenance plus one cosine-similarity scalar; no
 embedding or template is added to a public contract.
 
 `ArcFaceOnnxEmbedder` is the explicit-local research adapter for a manually
-provisioned `arcface-r100.onnx`-style 112×112 model. It rejects missing paths,
-does not fetch models, converts one in-memory aligned BGR crop to a private
-embedding, and is deliberately separate from face detection, the dashboard and
-the generic P0 runtime.
+provisioned 112×112 model. It requires both an existing local path and an
+approved SHA-256, does not fetch models, converts one in-memory aligned BGR
+crop to a private embedding, and is deliberately separate from face detection,
+the dashboard and the generic P0 runtime.
 
 `ScrfdFaceCandidate` and `align_five_point_bgr` form the adjacent private
 research seam. A future explicit-local SCRFD adapter must provide exactly five
@@ -138,3 +138,10 @@ record an unavailable result rather than select an arbitrary identity. The
 current research artifact is InsightFace `buffalo_l`'s `det_10g.onnx` and is
 restricted to non-commercial research; it remains outside this repository and
 cannot be promoted to a public or production model without separate licensing.
+
+`FaceVerificationCoordinator` composes only already validated, fresh
+`CameraFrame` evidence. Its order is consent → one SCRFD face → quality →
+liveness → alignment → ArcFace → private 1:1 comparison → multiframe gate.
+Every unavailable or unexpected stage fails closed, and its sole output is a
+`FaceVerification v1` audit record; it is not exported by the Vision package
+and cannot issue an authorization or flight-control decision.

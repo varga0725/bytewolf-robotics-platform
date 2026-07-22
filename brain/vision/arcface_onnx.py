@@ -7,10 +7,15 @@ pixels, or expose embeddings outside the private verification boundary.
 
 from __future__ import annotations
 
+from hashlib import sha256
 from pathlib import Path
+import re
 from typing import Any
 
 from .face_embedding import PrivateFaceEmbedding
+
+
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class ArcFaceOnnxEmbedder:
@@ -22,13 +27,13 @@ class ArcFaceOnnxEmbedder:
         model_id: str,
         model_version: str,
         model_path: Path | None = None,
+        expected_sha256: str | None = None,
         session: Any | None = None,
     ) -> None:
         if not isinstance(model_id, str) or not model_id.strip() or not isinstance(model_version, str) or not model_version.strip():
             raise ValueError("ArcFace ONNX adapter requires model ID and version.")
+        _verify_model(model_path, expected_sha256)
         if session is None:
-            if not isinstance(model_path, Path) or not model_path.is_file():
-                raise ValueError("ArcFace ONNX adapter requires an existing local model_path; downloads are disabled.")
             try:
                 import onnxruntime
             except ImportError as error:  # pragma: no cover - deployment guard
@@ -70,3 +75,12 @@ class ArcFaceOnnxEmbedder:
         except Exception as error:
             raise RuntimeError("ArcFace ONNX inference failed.") from error
         return PrivateFaceEmbedding(self.model_id, self.model_version, values)
+
+
+def _verify_model(path: Path | None, expected_sha256: str | None) -> None:
+    if not isinstance(path, Path) or not path.is_file():
+        raise ValueError("ArcFace ONNX adapter requires an existing local model_path; downloads are disabled.")
+    if not isinstance(expected_sha256, str) or not _SHA256.fullmatch(expected_sha256):
+        raise ValueError("ArcFace ONNX adapter requires a lowercase SHA-256 hash.")
+    if sha256(path.read_bytes()).hexdigest() != expected_sha256:
+        raise ValueError("ArcFace ONNX local model hash does not match the approved hash.")
