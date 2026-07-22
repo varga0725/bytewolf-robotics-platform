@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -10,9 +11,11 @@ import unittest
 from brain.vision.evidence import (
     DEFAULT_EVIDENCE_POLICY_PATH,
     EvidenceClipPlanner,
+    EvidenceEncryptionError,
     EvidenceEvent,
     EvidencePolicyError,
     EvidenceRecord,
+    FernetEvidenceWriter,
     FrameReference,
     LocalEvidenceDirectory,
     load_evidence_policy,
@@ -124,6 +127,44 @@ class LocalEvidenceDirectoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "outside"):
                 store.enforce_retention((expired,), now)
             self.assertTrue(outside.exists())
+
+
+class FernetEvidenceWriterTests(unittest.TestCase):
+    def test_authenticates_and_encrypts_clip_with_an_explicit_key(self) -> None:
+        from cryptography.fernet import Fernet
+
+        key = Fernet.generate_key()
+        with TemporaryDirectory() as directory:
+            target = Path(directory) / "clip.evidence"
+            FernetEvidenceWriter(key).write_encrypted(target, b"sensitive-clip")
+
+            ciphertext = target.read_bytes()
+            self.assertNotEqual(ciphertext, b"sensitive-clip")
+            self.assertEqual(Fernet(key).decrypt(ciphertext), b"sensitive-clip")
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
+    def test_requires_an_explicit_environment_key_without_leaking_it(self) -> None:
+        key_name = "BYTEWOLF_TEST_EVIDENCE_KEY"
+        previous = os.environ.pop(key_name, None)
+        try:
+            with self.assertRaisesRegex(EvidenceEncryptionError, key_name):
+                FernetEvidenceWriter.from_environment(key_name)
+        finally:
+            if previous is not None:
+                os.environ[key_name] = previous
+
+    def test_write_failure_leaves_no_partial_temp_evidence_file(self) -> None:
+        from cryptography.fernet import Fernet
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "existing-directory"
+            target.mkdir()
+
+            with self.assertRaises(EvidenceEncryptionError):
+                FernetEvidenceWriter(Fernet.generate_key()).write_encrypted(target, b"clip")
+
+            self.assertEqual(tuple(root.glob(".existing-directory.*.tmp")), ())
 
 
 if __name__ == "__main__":

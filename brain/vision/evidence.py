@@ -1,16 +1,18 @@
 """Immutable P0 evidence contracts and local retention enforcement.
 
 This module is observation-only.  It intentionally has no video codec,
-encryption, transport, or flight-control dependency: deployments supply an
-``EncryptedEvidenceWriter`` that owns authenticated encryption and key
-management outside this domain.
+transport, or flight-control dependency. Deployments may supply any compliant
+``EncryptedEvidenceWriter``; the optional Fernet writer below is a local P0
+implementation with caller-provisioned key material.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import os
 from pathlib import Path
+import tempfile
 from types import MappingProxyType
 from typing import Mapping, Protocol, Sequence
 
@@ -27,11 +29,82 @@ class EvidencePolicyError(ValueError):
     """Raised when the versioned evidence policy is incomplete or unsafe."""
 
 
+class EvidenceEncryptionError(RuntimeError):
+    """Evidence encryption cannot proceed safely with the local runtime/key."""
+
+
 class EncryptedEvidenceWriter(Protocol):
     """Deployment-provided writer responsible for encrypted payload persistence."""
 
     def write_encrypted(self, target: Path, payload: bytes) -> None:
         """Persist payload at target using the deployment's encryption boundary."""
+
+
+class FernetEvidenceWriter:
+    """Locally encrypt evidence with authenticated Fernet tokens.
+
+    The key must be injected by the deployment; this class never generates,
+    stores, logs, or returns key material. ``cryptography`` is imported only
+    when the writer is requested, keeping non-evidence Vision deployments free
+    of this optional dependency.
+    """
+
+    def __init__(self, key: bytes) -> None:
+        if not isinstance(key, bytes) or not key:
+            raise EvidenceEncryptionError("Evidence encryption requires a non-empty Fernet key.")
+        try:
+            from cryptography.fernet import Fernet
+        except ImportError as error:  # pragma: no cover - deployment guard
+            raise EvidenceEncryptionError(
+                "Fernet evidence encryption requires the approved cryptography runtime."
+            ) from error
+        try:
+            self._fernet = Fernet(key)
+        except (TypeError, ValueError) as error:
+            raise EvidenceEncryptionError("Evidence encryption key is not a valid Fernet key.") from error
+
+    @classmethod
+    def from_environment(cls, variable: str = "BYTEWOLF_VISION_EVIDENCE_KEY") -> FernetEvidenceWriter:
+        """Load an explicitly named deployment secret without printing it."""
+        if not isinstance(variable, str) or not variable:
+            raise EvidenceEncryptionError("Evidence encryption environment variable name is required.")
+        value = os.environ.get(variable)
+        if value is None:
+            raise EvidenceEncryptionError(f"Evidence encryption key is missing from {variable}.")
+        try:
+            encoded = value.encode("ascii")
+        except UnicodeEncodeError as error:
+            raise EvidenceEncryptionError("Evidence encryption key must be ASCII Fernet key material.") from error
+        return cls(encoded)
+
+    def write_encrypted(self, target: Path, payload: bytes) -> None:
+        """Atomically persist an authenticated encrypted payload with mode 0600."""
+        if not isinstance(target, Path) or not target.name:
+            raise EvidenceEncryptionError("Evidence encryption target must be a concrete file path.")
+        if not isinstance(payload, bytes):
+            raise TypeError("Evidence encryption payload must be bytes.")
+        if not target.parent.is_dir():
+            raise EvidenceEncryptionError("Evidence encryption target directory must already exist.")
+        token = self._fernet.encrypt(payload)
+        temporary_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", dir=target.parent, prefix=f".{target.name}.", suffix=".tmp", delete=False,
+            ) as temporary:
+                temporary_name = temporary.name
+                os.chmod(temporary_name, 0o600)
+                temporary.write(token)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.replace(temporary_name, target)
+            os.chmod(target, 0o600)
+        except OSError as error:
+            if temporary_name is not None:
+                try:
+                    Path(temporary_name).unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise EvidenceEncryptionError(f"Cannot persist encrypted evidence: {error}") from error
 
 
 @dataclass(frozen=True)

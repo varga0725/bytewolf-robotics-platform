@@ -60,3 +60,9 @@ Each recorded, GStreamer and Gazebo CLI also accepts `--metadata-path
 local journal of the versioned dashboard read model and writer timestamp. It
 never stores raw frames, payload hashes, evidence locations, face templates or
 embeddings; use a separate P3 datastore for multi-writer operation.
+
+For encrypted local evidence clips, use `FernetEvidenceWriter` with an explicit
+`BYTEWOLF_VISION_EVIDENCE_KEY` Fernet key supplied by the deployment. The key
+is never generated, persisted or logged by Vision. The writer creates
+authenticated encrypted files with owner-only permissions; missing crypto
+runtime or key fails closed.
