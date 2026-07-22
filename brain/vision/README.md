@@ -112,3 +112,9 @@ P1 seam: ArcFace-compatible 128/512-dimensional vectors can be serialized only
 for the encrypted template store and compared only within the process. The
 verification output is model provenance plus one cosine-similarity scalar; no
 embedding or template is added to a public contract.
+
+`ArcFaceOnnxEmbedder` is the explicit-local research adapter for a manually
+provisioned `arcface-r100.onnx`-style 112×112 model. It rejects missing paths,
+does not fetch models, converts one in-memory aligned BGR crop to a private
+embedding, and is deliberately separate from face detection, the dashboard and
+the generic P0 runtime.

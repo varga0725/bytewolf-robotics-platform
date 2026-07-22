@@ -4,3 +4,5 @@ ultralytics>=8.4,<9
 opencv-python-headless>=4.10,<5
 # Optional P0 local evidence writer; key material is supplied only at runtime.
 cryptography>=42,<49
+# Explicit local ONNX research models (e.g. ArcFace) only; no model downloads.
+onnxruntime>=1.18,<2

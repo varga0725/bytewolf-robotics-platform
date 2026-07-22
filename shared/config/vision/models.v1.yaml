@@ -16,3 +16,11 @@ fixture_only:
   runtime: recorded-fixture
   stage: test
   intended_use: deterministic tests and fixture replay only
+face_research_default:
+  model_id: research-arcface
+  runtime: onnxruntime
+  weights_filename: arcface-r100.onnx
+  stage: research
+  local_weights_required: true
+  implicit_downloads_allowed: false
+  intended_use: private opt-in 1:1 verification research only
