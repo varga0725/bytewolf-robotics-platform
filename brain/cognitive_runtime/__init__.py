@@ -23,6 +23,16 @@ from brain.cognitive_runtime.contracts import (
     load_response_envelope,
     load_tool_trace_entry,
 )
+from brain.cognitive_runtime.providers import (
+    AllProvidersFailedError,
+    CircuitBreaker,
+    FallbackProvider,
+    NIMProvider,
+    Provider,
+    ProviderError,
+    ProviderResponse,
+    ToolCall,
+)
 
 CONTRACT_VERSION = COGNITIVE_RUNTIME_CONTRACT_VERSION
 
@@ -30,8 +40,16 @@ __all__ = [
     "CONTRACT_VERSION",
     "COGNITIVE_RUNTIME_CONTRACT_VERSION",
     "ENVELOPE_STATUSES",
+    "AllProvidersFailedError",
+    "CircuitBreaker",
+    "FallbackProvider",
+    "NIMProvider",
+    "Provider",
+    "ProviderError",
+    "ProviderResponse",
     "ResponseEnvelope",
     "ResponseEnvelopeError",
+    "ToolCall",
     "ToolTraceEntry",
     "load_response_envelope",
     "load_tool_trace_entry",
