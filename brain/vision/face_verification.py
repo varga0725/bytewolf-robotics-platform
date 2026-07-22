@@ -22,7 +22,7 @@ _CONSENT_RECORD = re.compile(r"consent-[a-z0-9][a-z0-9_-]{7,127}\Z")
 _REASON_CODES = frozenset({
     "confirmed", "not_matched", "quality_failed", "liveness_failed",
     "multiframe_pending", "consent_required", "consent_revoked", "consent_expired", "model_unavailable",
-    "source_invalid", "threshold_unavailable",
+    "source_invalid", "threshold_unavailable", "cooldown_active",
 })
 
 

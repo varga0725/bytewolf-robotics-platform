@@ -94,3 +94,10 @@ encrypts templates with a caller-provided Fernet key, uses hashed filenames and
 owner-only files, forbids implicit replacement, and deletes only the matching
 template after effective consent revocation. It is deliberately not exported
 through the Vision package, dashboard, or metadata journal.
+
+`FaceVerificationGate` is the private P1 multi-frame confirmation layer. It
+uses an adapter-supplied scalar similarity only, requires configurable repeated
+evidence, applies an acceptance/continuation hysteresis band and cooldown, and
+returns fail-closed quality, liveness, consent or sequence outcomes as
+`FaceVerification v1` evidence. It never accepts raw embeddings or issues an
+authorization/control decision.
