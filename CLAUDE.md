@@ -199,6 +199,9 @@ passed its 10-run repeatability gate
 (`simulation/artifacts/headless/p0-repeatability-20260721T200455Z.json`, commit
 `af55946`): the low-battery fallback and all three wind scenarios were 10/10; the
 boot/pre-arm check was 9/10, meeting the configured 0.9 nominal threshold. Do not
-describe this as an unconditional 10/10 P0.v2 result. Note also that
+describe this as an unconditional 10/10 P0.v2 result. The boot/pre-arm connection
+window was then widened from 15 to 30 seconds (`6b53b9e`), and its isolated 10-run,
+1.0-threshold rerun passed 10/10
+(`simulation/artifacts/headless/p0-repeatability-20260722T090654Z.json`). Note also that
 `simulation.gazebo.map_view` injects a camera model into the running world and must not
 be running during any evidence run.
