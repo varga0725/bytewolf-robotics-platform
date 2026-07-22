@@ -9,7 +9,9 @@ import unittest
 
 import numpy
 
+import brain.vision.scrfd_onnx as scrfd_module
 from brain.vision.scrfd_onnx import ScrfdOnnxDetector
+from unittest.mock import patch
 
 
 class _Input:
@@ -57,35 +59,36 @@ def _write_verified_model(directory: str) -> tuple[Path, str]:
 
 
 class ScrfdOnnxDetectorTests(unittest.TestCase):
+    def _detector(self, model: Path, digest: str, session: _Session) -> ScrfdOnnxDetector:
+        with patch.object(scrfd_module, "_load_session", return_value=session):
+            return ScrfdOnnxDetector(
+                model_id="research-scrfd-10gf", model_version="buffalo-l-v0.7",
+                model_path=model, expected_sha256=digest, input_size=(32, 32),
+            )
+
     def test_requires_hash_verified_existing_local_model(self) -> None:
         with TemporaryDirectory() as temporary:
             model, digest = _write_verified_model(temporary)
 
-            detector = ScrfdOnnxDetector(
-                model_id="research-scrfd-10gf", model_version="buffalo-l-v0.7",
-                model_path=model, expected_sha256=digest, session=_Session(outputs()), input_size=(32, 32),
-            )
+            detector = self._detector(model, digest, _Session(outputs()))
 
             self.assertEqual(detector.model_id, "research-scrfd-10gf")
             with self.assertRaisesRegex(ValueError, "hash"):
                 ScrfdOnnxDetector(
                     model_id="research-scrfd-10gf", model_version="buffalo-l-v0.7",
-                    model_path=model, expected_sha256="0" * 64, session=_Session(outputs()), input_size=(32, 32),
+                    model_path=model, expected_sha256="0" * 64, input_size=(32, 32),
                 )
             with self.assertRaisesRegex(ValueError, "SHA-256"):
                 ScrfdOnnxDetector(
                     model_id="research-scrfd-10gf", model_version="buffalo-l-v0.7",
-                    session=_Session(outputs()), input_size=(32, 32),
+                    input_size=(32, 32),
                 )
 
     def test_returns_exactly_one_valid_candidate_and_preprocesses_bgr(self) -> None:
         with TemporaryDirectory() as temporary:
             model, digest = _write_verified_model(temporary)
             session = _Session(outputs())
-            detector = ScrfdOnnxDetector(
-                model_id="research-scrfd-10gf", model_version="buffalo-l-v0.7",
-                model_path=model, expected_sha256=digest, session=session, input_size=(32, 32),
-            )
+            detector = self._detector(model, digest, session)
 
             face = detector.detect_single_bgr(numpy.full((20, 16, 3), (10, 20, 30), dtype=numpy.uint8))
 
@@ -100,14 +103,8 @@ class ScrfdOnnxDetectorTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             model, digest = _write_verified_model(temporary)
             image = numpy.zeros((32, 32, 3), dtype=numpy.uint8)
-            ambiguous = ScrfdOnnxDetector(
-                model_id="research-scrfd-10gf", model_version="buffalo-l-v0.7",
-                model_path=model, expected_sha256=digest, session=_Session(outputs(scores=(0.9, 0.8))), input_size=(32, 32),
-            )
-            malformed = ScrfdOnnxDetector(
-                model_id="research-scrfd-10gf", model_version="buffalo-l-v0.7",
-                model_path=model, expected_sha256=digest, session=_Session([numpy.zeros((1, 1), dtype=numpy.float32)]), input_size=(32, 32),
-            )
+            ambiguous = self._detector(model, digest, _Session(outputs(scores=(0.9, 0.8))))
+            malformed = self._detector(model, digest, _Session([numpy.zeros((1, 1), dtype=numpy.float32)]))
 
             self.assertIsNone(ambiguous.detect_single_bgr(image))
             self.assertIsNone(malformed.detect_single_bgr(image))

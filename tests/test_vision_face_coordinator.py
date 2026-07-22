@@ -50,8 +50,10 @@ class _Detector:
 class _Resolver:
     def __init__(self, payload: bytes = PAYLOAD) -> None:
         self.payload = payload
+        self.calls: list[str] = []
 
-    def resolve(self, _payload_hash: str) -> bytes:
+    def resolve(self, payload_hash: str) -> bytes:
+        self.calls.append(payload_hash)
         return self.payload
 
 
@@ -167,4 +169,27 @@ class FaceVerificationCoordinatorTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "payload bytes"):
             coordinator.observe(validation=validation(), consent=consent(), enrolled=embedding())
+        self.assertEqual(detector.calls, 0)
+
+    def test_uses_received_at_for_consent_and_resolves_the_validated_hash(self) -> None:
+        resolver = _Resolver()
+        detector = _Detector(face())
+        frame = CameraFrame(
+            CAMERA_FRAME_V1, "device-a", "front-rgb", "session-a", 1,
+            NOW - timedelta(milliseconds=500), NOW, "calibration-v1", PAYLOAD_HASH,
+            "jpeg", 128, 128, 1.0, 0,
+        )
+        coordinator = FaceVerificationCoordinator(
+            detector=detector, payload_resolver=resolver, decoder=lambda _payload: object(), aligner=lambda _image, _face: object(), quality_gate=quality_gate(),
+            quality_metrics=metrics, liveness=lambda _image, _face: LivenessResult.PASSED,
+            embedder=_Embedder(), verifier=PrivateOneToOneVerifier(),
+            gate=FaceVerificationGate(acceptance_threshold=0.8, continuation_threshold=0.7, confirmation_frames=1, cooldown=timedelta()),
+        )
+        expired = BiometricConsent(SUBJECT, "consent-0123456789abcdef", NOW - timedelta(days=1), NOW - timedelta(milliseconds=250))
+
+        result = coordinator.observe(validation=FrameValidation(ResultState.VALID, frame, "test"), consent=expired, enrolled=embedding())
+
+        self.assertEqual(result.reason_code, "consent_expired")
+        self.assertEqual(result.produced_at, frame.received_at)
+        self.assertEqual(resolver.calls, [])
         self.assertEqual(detector.calls, 0)

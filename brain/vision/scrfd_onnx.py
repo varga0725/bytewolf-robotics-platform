@@ -30,7 +30,6 @@ class ScrfdOnnxDetector:
         model_version: str,
         model_path: Path | None = None,
         expected_sha256: str | None = None,
-        session: Any | None = None,
         input_size: tuple[int, int] = (640, 640),
         confidence_threshold: float = 0.5,
         nms_threshold: float = 0.4,
@@ -40,12 +39,7 @@ class ScrfdOnnxDetector:
         if not _dimensions(input_size) or not _unit_score(confidence_threshold) or not _unit_score(nms_threshold):
             raise ValueError("SCRFD input size and thresholds are invalid.")
         _verify_model(model_path, expected_sha256)
-        if session is None:
-            try:
-                import onnxruntime
-            except ImportError as error:  # pragma: no cover - deployment guard
-                raise RuntimeError("SCRFD ONNX adapter requires onnxruntime in the research runtime.") from error
-            session = onnxruntime.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        session = _load_session(model_path)
         inputs = getattr(session, "get_inputs", lambda: None)()
         outputs = getattr(session, "get_outputs", lambda: None)()
         if not isinstance(inputs, (list, tuple)) or len(inputs) != 1 or not isinstance(getattr(inputs[0], "name", None), str):
@@ -87,6 +81,14 @@ def _verify_model(path: Path | None, expected_sha256: str | None) -> None:
     digest = sha256(path.read_bytes()).hexdigest()
     if digest != expected_sha256:
         raise ValueError("SCRFD ONNX local model hash does not match the approved hash.")
+
+
+def _load_session(path: Path) -> Any:
+    try:
+        import onnxruntime
+    except ImportError as error:  # pragma: no cover - deployment guard
+        raise RuntimeError("SCRFD ONNX adapter requires onnxruntime in the research runtime.") from error
+    return onnxruntime.InferenceSession(str(path), providers=["CPUExecutionProvider"])
 
 
 def _prepare(image: Any, input_size: tuple[int, int], cv2: Any, numpy: Any) -> tuple[Any, float]:

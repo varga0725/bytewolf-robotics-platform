@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from enum import Enum
 from math import isfinite
 
+from .face_alignment import ScrfdFaceCandidate
+
 from .face_verification import FaceQuality
 
 
@@ -41,6 +43,44 @@ class FaceQualityMetrics:
         for value in (self.blur_variance, self.mean_luma, self.yaw_degrees, self.pitch_degrees, self.roll_degrees):
             if not isinstance(value, (int, float)) or isinstance(value, bool) or not isfinite(value):
                 raise ValueError("Face quality metrics must be finite numbers.")
+
+
+@dataclass(frozen=True)
+class FacePoseEstimate:
+    """Calibrated pose adapter output; 2D landmarks alone never invent this."""
+
+    yaw_degrees: float
+    pitch_degrees: float
+
+    def __post_init__(self) -> None:
+        if any(not isinstance(value, (int, float)) or isinstance(value, bool) or not isfinite(value) for value in (self.yaw_degrees, self.pitch_degrees)):
+            raise ValueError("Face pose estimate must be finite.")
+
+
+def extract_face_quality_metrics_bgr(image: object, candidate: ScrfdFaceCandidate, *, pose: FacePoseEstimate | None) -> FaceQualityMetrics:
+    """Derive deterministic image metrics; pose must come from a calibrated adapter."""
+    try:
+        import numpy
+    except ImportError as error:  # pragma: no cover
+        raise RuntimeError("Face quality extraction requires NumPy.") from error
+    if pose is None or not isinstance(pose, FacePoseEstimate) or not isinstance(candidate, ScrfdFaceCandidate):
+        raise ValueError("Face quality extraction requires candidate and calibrated pose.")
+    if not isinstance(image, numpy.ndarray) or image.dtype != numpy.uint8 or image.ndim != 3 or image.shape[2] != 3 or not image.size:
+        raise ValueError("Face quality extraction requires non-empty uint8 BGR image.")
+    left, top, right, bottom = candidate.bounds_xyxy
+    x1, y1, x2, y2 = int(numpy.ceil(left)), int(numpy.ceil(top)), int(numpy.floor(right)), int(numpy.floor(bottom))
+    if x1 < 0 or y1 < 0 or x2 > image.shape[1] or y2 > image.shape[0] or x2 - x1 < 3 or y2 - y1 < 3:
+        raise ValueError("Face quality ROI is invalid.")
+    roi = image[y1:y2, x1:x2].astype(numpy.int32)
+    luma = ((29 * roi[:, :, 0] + 150 * roi[:, :, 1] + 77 * roi[:, :, 2] + 128) >> 8).astype(numpy.float64)
+    laplace = -4 * luma[1:-1, 1:-1] + luma[:-2, 1:-1] + luma[2:, 1:-1] + luma[1:-1, :-2] + luma[1:-1, 2:]
+    left_eye, right_eye = candidate.landmarks_xy[:2]
+    dx, dy = right_eye[0] - left_eye[0], right_eye[1] - left_eye[1]
+    if dx == 0 and dy == 0:
+        raise ValueError("Face eye landmarks are degenerate.")
+    import math
+    roll = math.degrees(math.atan2(dy, dx))
+    return FaceQualityMetrics(x2 - x1, y2 - y1, float(laplace.var()), float(luma.mean()), pose.yaw_degrees, pose.pitch_degrees, roll)
 
 
 @dataclass(frozen=True)
