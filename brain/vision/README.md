@@ -79,3 +79,11 @@ Recorded benchmark runs can add `--benchmark-manifest-path benchmark.json`.
 The manifest hash-binds the fixture, selected model configuration and (for
 YOLO) local weights to the exported KPI report; it contains no frame payload,
 embedding or control data.
+
+## P1 foundation: opt-in face verification
+
+`face_verification.py` currently defines only immutable `FaceVerification v1`
+and `BiometricConsent` evidence. Subject IDs must be pseudonymous, consent is
+explicit and revocable, and a liveness or quality failure cannot be represented
+as a match. This contract stores neither embeddings nor templates, is excluded
+from `vision_dashboard.v1`, and cannot authorize an action or affect flight.

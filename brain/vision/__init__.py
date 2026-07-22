@@ -14,6 +14,16 @@ from brain.vision.contracts import (
     VisionContractError,
     VisionHealth,
 )
+from brain.vision.face_verification import (
+    FACE_VERIFICATION_V1,
+    BiometricConsent,
+    ConsentState,
+    FaceQuality,
+    FaceVerification,
+    FaceVerificationError,
+    LivenessResult,
+    MatchResult,
+)
 
 __all__ = (
     "CAMERA_FRAME_V1",
@@ -28,4 +38,12 @@ __all__ = (
     "ResultState",
     "VisionContractError",
     "VisionHealth",
+    "FACE_VERIFICATION_V1",
+    "BiometricConsent",
+    "ConsentState",
+    "FaceQuality",
+    "FaceVerification",
+    "FaceVerificationError",
+    "LivenessResult",
+    "MatchResult",
 )
