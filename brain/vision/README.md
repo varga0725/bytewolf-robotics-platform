@@ -101,3 +101,8 @@ evidence, applies an acceptance/continuation hysteresis band and cooldown, and
 returns fail-closed quality, liveness, consent or sequence outcomes as
 `FaceVerification v1` evidence. It never accepts raw embeddings or issues an
 authorization/control decision.
+
+`FaceQualityGate` is the first P1 quality-gate implementation from the Vision
+plan: a deterministic, versioned face-size, blur, lighting and pose check. It
+consumes scalar adapter metrics rather than face pixels and returns an explicit
+fail-closed reason before any private 1:1 similarity evaluation.
