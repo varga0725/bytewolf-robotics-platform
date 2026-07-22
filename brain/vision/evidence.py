@@ -8,8 +8,11 @@ implementation with caller-provisioned key material.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import hashlib
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -17,6 +20,8 @@ from types import MappingProxyType
 from typing import Mapping, Protocol, Sequence
 
 import yaml
+
+from .contracts import CameraFrame
 
 
 DEFAULT_EVIDENCE_POLICY_PATH = (
@@ -31,6 +36,10 @@ class EvidencePolicyError(ValueError):
 
 class EvidenceEncryptionError(RuntimeError):
     """Evidence encryption cannot proceed safely with the local runtime/key."""
+
+
+class EvidenceCaptureError(ValueError):
+    """An explicit evidence clip request cannot safely be fulfilled."""
 
 
 class EncryptedEvidenceWriter(Protocol):
@@ -180,6 +189,14 @@ class EvidenceRecord:
 
 
 @dataclass(frozen=True)
+class CapturedEvidence:
+    """Metadata-only handle to one explicitly requested encrypted clip."""
+
+    record: EvidenceRecord
+    frame_sequences: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class EvidenceClipPlanner:
     """Builds a bounded event clip plan from one in-memory frame ring buffer."""
 
@@ -261,6 +278,153 @@ class LocalEvidenceDirectory:
             candidate.relative_to(root)
         except ValueError as error:
             raise ValueError("Evidence path is outside the configured directory.") from error
+
+
+@dataclass(frozen=True)
+class _BufferedFrame:
+    frame: CameraFrame
+    payload: bytes
+
+
+class EvidenceCaptureBuffer:
+    """Bounded in-memory frame ring for explicit, event-only evidence clips.
+
+    Recording a frame only retains it in this process memory. Disk writes occur
+    solely after ``request`` and a later ``finalize`` once the policy's
+    post-event window has elapsed. The serialized clip is handed to the
+    configured encrypted evidence directory; this class never writes plaintext.
+    """
+
+    def __init__(
+        self,
+        policy: EvidencePolicy,
+        directory: LocalEvidenceDirectory,
+        *,
+        max_frames: int,
+        max_payload_bytes: int,
+    ) -> None:
+        if not isinstance(policy, EvidencePolicy):
+            raise EvidenceCaptureError("Evidence capture requires an EvidencePolicy.")
+        if not isinstance(directory, LocalEvidenceDirectory):
+            raise EvidenceCaptureError("Evidence capture requires a LocalEvidenceDirectory.")
+        if type(max_frames) is not int or max_frames <= 0:
+            raise EvidenceCaptureError("Evidence capture max_frames must be a positive integer.")
+        if type(max_payload_bytes) is not int or max_payload_bytes <= 0:
+            raise EvidenceCaptureError("Evidence capture max_payload_bytes must be a positive integer.")
+        self._policy = policy
+        self._directory = directory
+        self._max_frames = max_frames
+        self._max_payload_bytes = max_payload_bytes
+        self._frames: tuple[_BufferedFrame, ...] = ()
+        self._pending: dict[str, EvidenceEvent] = {}
+        self._records: tuple[EvidenceRecord, ...] = ()
+
+    def record(self, frame: CameraFrame, payload: bytes) -> None:
+        """Retain one validated frame in memory only, evicting oldest evidence."""
+        if not isinstance(frame, CameraFrame):
+            raise EvidenceCaptureError("Evidence capture requires a CameraFrame.")
+        if not isinstance(payload, bytes) or not payload:
+            raise EvidenceCaptureError("Evidence capture payload must be non-empty bytes.")
+        if len(payload) > self._max_payload_bytes:
+            raise EvidenceCaptureError("Evidence capture payload exceeds the configured memory bound.")
+        if hashlib.sha256(payload).hexdigest() != frame.payload_hash:
+            raise EvidenceCaptureError("Evidence capture payload hash does not match its CameraFrame.")
+        replacement = _BufferedFrame(frame, payload)
+        retained = tuple(item for item in self._frames if not _same_frame(item.frame, frame)) + (replacement,)
+        self._frames = retained[-self._max_frames:]
+
+    def request(self, event: EvidenceEvent) -> None:
+        """Queue a caller-approved event; this does not write a file yet."""
+        if not isinstance(event, EvidenceEvent):
+            raise EvidenceCaptureError("Evidence capture requires an EvidenceEvent.")
+        if event.event_id in self._pending or any(record.event_id == event.event_id for record in self._records):
+            raise EvidenceCaptureError("Evidence event ID is already recorded or pending.")
+        if not any(item.frame.stream_session_id == event.stream_session_id for item in self._frames):
+            raise EvidenceCaptureError("Evidence event stream session is not present in the memory buffer.")
+        self._pending = {**self._pending, event.event_id: event}
+
+    def finalize(self, event_id: str, *, finalized_at: datetime) -> CapturedEvidence:
+        """Encrypt the selected clip only after its full post-event period ends."""
+        if not isinstance(event_id, str) or not event_id:
+            raise EvidenceCaptureError("Evidence event ID is required.")
+        _require_aware(finalized_at, "finalized_at")
+        try:
+            event = self._pending[event_id]
+        except KeyError as error:
+            raise EvidenceCaptureError("Evidence event is not pending.") from error
+        if finalized_at < event.occurred_at + timedelta(seconds=self._policy.post_event_seconds):
+            raise EvidenceCaptureError("Evidence post-event window has not elapsed.")
+        session_frames = tuple(
+            item for item in self._frames if item.frame.stream_session_id == event.stream_session_id
+        )
+        if not any(
+            item.frame.captured_at >= event.occurred_at + timedelta(seconds=self._policy.post_event_seconds)
+            for item in session_frames
+        ):
+            raise EvidenceCaptureError("Evidence buffer does not contain complete post-event coverage.")
+        plan = EvidenceClipPlanner(self._policy).plan(
+            event,
+            tuple(FrameReference(item.frame.frame_sequence, item.frame.captured_at, item.frame.stream_session_id) for item in session_frames),
+        )
+        selected = tuple(item for item in session_frames if item.frame.frame_sequence in plan.frame_sequences)
+        plaintext = _clip_document(event, selected)
+        record = self._directory.write_clip(event.event_id, plaintext, finalized_at, plan.retention_deadline)
+        self._pending = {key: value for key, value in self._pending.items() if key != event_id}
+        self._records = self._records + (record,)
+        return CapturedEvidence(record, plan.frame_sequences)
+
+    def enforce_retention(self, now: datetime) -> tuple[str, ...]:
+        """Remove expired encrypted clips tracked by this capture buffer."""
+        expired = self._directory.enforce_retention(self._records, now)
+        if expired:
+            removed = frozenset(expired)
+            self._records = tuple(record for record in self._records if record.event_id not in removed)
+        return expired
+
+
+def _same_frame(left: CameraFrame, right: CameraFrame) -> bool:
+    return (
+        left.device_id, left.camera_id, left.stream_session_id, left.frame_sequence
+    ) == (
+        right.device_id, right.camera_id, right.stream_session_id, right.frame_sequence
+    )
+
+
+def _clip_document(event: EvidenceEvent, frames: Sequence[_BufferedFrame]) -> bytes:
+    document = {
+        "contract_version": "vision_evidence_clip.v1",
+        "event_id": event.event_id,
+        "occurred_at": event.occurred_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "stream_session_id": event.stream_session_id,
+        "metadata": _thaw_mapping(event.metadata),
+        "frames": [
+            {
+                "frame_sequence": item.frame.frame_sequence,
+                "captured_at": item.frame.captured_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                "payload_hash": item.frame.payload_hash,
+                "encoding": item.frame.encoding,
+                "width_px": item.frame.width_px,
+                "height_px": item.frame.height_px,
+                "payload_base64": base64.b64encode(item.payload).decode("ascii"),
+            }
+            for item in frames
+        ],
+    }
+    try:
+        return json.dumps(document, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise EvidenceCaptureError("Evidence event metadata must be JSON-compatible.") from error
+
+
+def _thaw_mapping(value: Mapping[str, object]) -> dict[str, object]:
+    def thaw(item: object) -> object:
+        if isinstance(item, Mapping):
+            return {str(key): thaw(child) for key, child in item.items()}
+        if isinstance(item, tuple):
+            return [thaw(child) for child in item]
+        return item
+
+    return {str(key): thaw(item) for key, item in value.items()}
 
 
 def load_evidence_policy(path: Path = DEFAULT_EVIDENCE_POLICY_PATH) -> EvidencePolicy:

@@ -66,3 +66,11 @@ For encrypted local evidence clips, use `FernetEvidenceWriter` with an explicit
 is never generated, persisted or logged by Vision. The writer creates
 authenticated encrypted files with owner-only permissions; missing crypto
 runtime or key fails closed.
+
+`EvidenceCaptureBuffer` is the bounded in-memory bridge between hash-verified
+frames and that writer. It writes no disk data until a caller explicitly
+requests an `EvidenceEvent`, then waits for the configured post-event window
+before encrypting only the selected pre/post clip. It is observation storage,
+not an automatic recording or flight-control mechanism. Its `enforce_retention`
+method deletes only its tracked encrypted records once the policy deadline is
+reached.
