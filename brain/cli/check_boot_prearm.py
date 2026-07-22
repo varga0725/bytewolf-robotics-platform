@@ -43,7 +43,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--connection-timeout",
         type=float,
-        default=15.0,
+        default=30.0,
         help="Maximum seconds to wait for PX4 vehicle discovery.",
     )
     parser.add_argument(
