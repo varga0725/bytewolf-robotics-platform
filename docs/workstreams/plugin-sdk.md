@@ -60,3 +60,34 @@ A meglévő minta követendő (`shared/schemas/observation/observation_v0_1.sche
 4. Dependency resolution: hiányzó vagy körkörös függőség a betöltést blokkolja.
 5. Statikus teszt bizonyítja, hogy `brain/plugin_sdk/**` nem importál MAVSDK/PX4
    modult.
+
+## Állapot (v0.1 mag kész)
+
+A mag három csomagban elkészült; mind az öt elfogadási kritérium teljesült.
+
+| Csomag | Modul | Commit |
+| --- | --- | --- |
+| 1 — contractok | `brain/plugin_sdk/contracts.py` + 4 séma + 12 fixture | `a04250d` |
+| 2 — registry + lifecycle | `brain/plugin_sdk/registry.py` | `0e88afc` |
+| 3 — ToolPolicy-engine | `brain/plugin_sdk/policy.py` | `9e12257` |
+
+- [x] 1. PluginManifest v0.1 séma + valid/invalid fixture; jövőbeli verzió elutasítva.
+- [x] 2. Registry teljes lifecycle (`register/start/stop/reload/health`); duplikált
+  capability és verzió-conflict determinisztikus elutasítás; nem részlegesen indul.
+- [x] 3. ToolPolicy fail-closed (`requests ∩ allowlist → grant/deny`); flight-control
+  capability sem nem regisztrálható, sem nem grantelhető.
+- [x] 4. Dependency resolution: hiányzó/körkörös függőség blokkol.
+- [x] 5. Statikus teszt: `brain/plugin_sdk/**` nem importál MAVSDK/PX4-et.
+
+Safety-réteg háromszorosan drótozva: (1) az `access` enumban nincs aktuációs érték
+→ séma szinten kizárt; (2) `FORBIDDEN_CAPABILITY_NAMESPACES` denylist regisztrációnál
+és grantnál; (3) statikus no-import teszt. 56 új teszt, teljes suite zöld.
+
+### A teljes DoD-ből a Cognitive Runtime-ra átnyúló rész
+
+Ezek szándékosan a fogyasztó rétegnél záródnak, mert a plugin-sdk csak *deklarál*:
+
+- **Limitek kikényszerítése** (timeout/rate/concurrency) — a ToolPolicy `limits`-ként
+  deklarálja; a végrehajtás a Cognitive Runtime (workstream B) feladata.
+- **Strukturált audit + cross-runtime integráció** — amikor a Runtime ténylegesen
+  fogyasztja a plugin-sdk-t.
