@@ -1,0 +1,9 @@
+{
+  "contract_version": "v0.1",
+  "plugin_id": "system.health",
+  "version": "0.1.0",
+  "name": "System Health",
+  "provides": [
+    {"capability_id": "system.health.read", "version": "v0.1", "access": "read"}
+  ]
+}

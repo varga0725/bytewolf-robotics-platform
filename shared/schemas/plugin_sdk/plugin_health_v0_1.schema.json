@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.local/schemas/plugin_sdk/plugin_health_v0_1",
+  "title": "ByteWolf Plugin Health v0.1",
+  "description": "A runtime snapshot of one registered plugin: where it is in its lifecycle and whether it is healthy. Like an observation, a health snapshot carries its own freshness (max_age_s from checked_at) so a consumer does not read a long-stopped reading as current. See docs/workstreams/plugin-sdk.md.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["contract_version", "plugin_id", "lifecycle_state", "health", "checked_at", "max_age_s"],
+  "properties": {
+    "contract_version": {
+      "const": "v0.1",
+      "description": "Pins the meaning of every field below."
+    },
+    "plugin_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "lifecycle_state": {
+      "enum": ["registered", "started", "reloading", "stopped", "failed"],
+      "description": "Where the plugin is in register -> start -> (reload) -> stop, or 'failed' if a transition threw. 'reloading' is transient and only reachable for a reloadable plugin."
+    },
+    "health": {
+      "enum": ["ok", "degraded", "unhealthy", "unknown"],
+      "description": "The plugin's self-reported health at checked_at. 'unknown' is a legitimate answer when no probe has run; it is safe to state, a false 'ok' is not."
+    },
+    "checked_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, UTC, with an explicit offset. When this snapshot was taken; freshness is measured from here."
+    },
+    "max_age_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "How long this snapshot stays usable after checked_at. Past it the health is stale and must not be treated as current."
+    },
+    "detail": {
+      "type": "string",
+      "description": "Free text for audit, e.g. the reason for 'failed'. Never parsed for dispatch."
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"lifecycle_state": {"const": "failed"}}, "required": ["lifecycle_state"]},
+      "then": {
+        "properties": {"health": {"enum": ["degraded", "unhealthy", "unknown"]}},
+        "description": "A failed plugin cannot be reported healthy: 'ok' with lifecycle_state 'failed' is a contradiction the schema rejects."
+      }
+    }
+  ]
+}

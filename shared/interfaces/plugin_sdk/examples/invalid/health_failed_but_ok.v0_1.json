@@ -1,0 +1,9 @@
+{
+  "contract_version": "v0.1",
+  "plugin_id": "telemetry.read",
+  "lifecycle_state": "failed",
+  "health": "ok",
+  "checked_at": "2026-07-22T09:00:00+00:00",
+  "max_age_s": 10,
+  "detail": "A failed plugin reported as 'ok' is a contradiction the schema rejects."
+}
