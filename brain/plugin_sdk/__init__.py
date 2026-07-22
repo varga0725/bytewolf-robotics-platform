@@ -29,6 +29,13 @@ from brain.plugin_sdk.contracts import (
     load_plugin_manifest,
     load_tool_policy,
 )
+from brain.plugin_sdk.registry import (
+    LifecycleState,
+    Plugin,
+    PluginRegistry,
+    PluginRegistryError,
+    version_satisfies,
+)
 
 CONTRACT_VERSION = PLUGIN_SDK_CONTRACT_VERSION
 
@@ -37,12 +44,17 @@ __all__ = [
     "CONTRACT_VERSION",
     "PLUGIN_SDK_CONTRACT_VERSION",
     "Capability",
+    "LifecycleState",
+    "Plugin",
     "PluginContractError",
     "PluginHealth",
     "PluginManifest",
+    "PluginRegistry",
+    "PluginRegistryError",
     "ToolPolicy",
     "load_capability",
     "load_plugin_health",
     "load_plugin_manifest",
     "load_tool_policy",
+    "version_satisfies",
 ]
