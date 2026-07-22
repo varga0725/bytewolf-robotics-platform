@@ -1,0 +1,6 @@
+{
+  "capability_id": "flight.arm",
+  "version": "v0.1",
+  "access": "actuate",
+  "description": "A flight-control capability. There is no 'actuate' value in the access enum, so the schema rejects this before any registry or allowlist runs."
+}
