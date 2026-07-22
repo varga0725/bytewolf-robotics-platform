@@ -73,6 +73,28 @@ class FaceVerificationGateTests(unittest.TestCase):
         self.assertEqual(replay.state, ResultState.INVALID)
         self.assertEqual(replay.reason_code, "source_invalid")
 
+    def test_rejected_frame_clears_pending_confirmation_evidence(self) -> None:
+        gate = FaceVerificationGate(acceptance_threshold=0.8, continuation_threshold=0.7, confirmation_frames=2, cooldown=timedelta())
+
+        gate.observe(observation(1, 0.9))
+        rejected = gate.observe(observation(2, 0.9, quality=FaceQuality.FAILED))
+        next_result = gate.observe(observation(3, 0.9))
+
+        self.assertEqual(rejected.reason_code, "quality_failed")
+        self.assertEqual(next_result.state, ResultState.MISSING)
+        self.assertEqual(next_result.frame_sequences, (3,))
+
+    def test_rejected_frame_during_cooldown_does_not_clear_the_rate_limit(self) -> None:
+        gate = FaceVerificationGate(acceptance_threshold=0.8, continuation_threshold=0.7, confirmation_frames=1, cooldown=timedelta(seconds=5))
+
+        gate.observe(observation(1, 0.9))
+        rejected = gate.observe(observation(2, 0.9, liveness=LivenessResult.FAILED))
+        cooling = gate.observe(observation(3, 0.9))
+
+        self.assertEqual(rejected.reason_code, "liveness_failed")
+        self.assertEqual(cooling.state, ResultState.MISSING)
+        self.assertEqual(cooling.reason_code, "cooldown_active")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,3 +24,11 @@ face_research_default:
   local_weights_required: true
   implicit_downloads_allowed: false
   intended_use: private opt-in 1:1 verification research only
+face_detector_research_default:
+  model_id: research-scrfd-10gf
+  runtime: onnxruntime
+  weights_filename: scrfd-10gf.onnx
+  stage: research
+  local_weights_required: true
+  implicit_downloads_allowed: false
+  intended_use: private five-landmark face detection research only

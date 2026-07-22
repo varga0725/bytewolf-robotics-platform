@@ -118,3 +118,13 @@ provisioned `arcface-r100.onnx`-style 112×112 model. It rejects missing paths,
 does not fetch models, converts one in-memory aligned BGR crop to a private
 embedding, and is deliberately separate from face detection, the dashboard and
 the generic P0 runtime.
+
+`ScrfdFaceCandidate` and `align_five_point_bgr` form the adjacent private
+research seam. A future explicit-local SCRFD adapter must provide exactly five
+ordered landmarks (left eye, right eye, nose, left mouth, right mouth); the
+utility validates them, rejects out-of-image or degenerate data, and makes only
+an in-memory 112×112 BGR ArcFace crop. It neither selects an identity from a
+multi-face result nor stores boxes, landmarks or crops. `SimilarityResult`
+keeps the raw cosine value private to the process and exposes an explicit
+`normalized_similarity` when constructing the confirmation gate's `[0, 1]`
+observation.

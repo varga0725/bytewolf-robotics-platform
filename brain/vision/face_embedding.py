@@ -77,6 +77,11 @@ class SimilarityResult:
     model_version: str
     similarity: float
 
+    @property
+    def normalized_similarity(self) -> float:
+        """Map cosine similarity ``[-1, 1]`` to the gate's ``[0, 1]`` score."""
+        return (self.similarity + 1.0) / 2.0
+
 
 class PrivateOneToOneVerifier:
     """Compare same-model private vectors and expose only cosine similarity."""

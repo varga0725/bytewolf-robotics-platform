@@ -93,13 +93,17 @@ class FaceVerificationGate:
         baseline = _GateState(observation.frame_sequence, (), None) if state is None else _GateState(observation.frame_sequence, state.candidates, state.cooldown_until)
         self._states[key] = baseline
         if consent_state is not ConsentState.GRANTED:
+            self._states[key] = _GateState(observation.frame_sequence, (), baseline.cooldown_until)
             reason = "consent_revoked" if consent_state is ConsentState.REVOKED else "consent_expired"
             return self._result(observation, consent_state, (), ResultState.INVALID, reason, MatchResult.UNAVAILABLE, None)
         if observation.quality is FaceQuality.FAILED:
+            self._states[key] = _GateState(observation.frame_sequence, (), baseline.cooldown_until)
             return self._result(observation, consent_state, (), ResultState.INVALID, "quality_failed", MatchResult.UNAVAILABLE, None, liveness=LivenessResult.UNAVAILABLE)
         if observation.liveness is LivenessResult.FAILED:
+            self._states[key] = _GateState(observation.frame_sequence, (), baseline.cooldown_until)
             return self._result(observation, consent_state, (), ResultState.INVALID, "liveness_failed", MatchResult.UNAVAILABLE, None)
         if observation.quality is FaceQuality.UNAVAILABLE or observation.liveness is LivenessResult.UNAVAILABLE or observation.similarity is None:
+            self._states[key] = _GateState(observation.frame_sequence, (), baseline.cooldown_until)
             return self._result(observation, consent_state, (), ResultState.INVALID, "model_unavailable", MatchResult.UNAVAILABLE, None)
         if baseline.cooldown_until is not None and observation.observed_at < baseline.cooldown_until:
             return self._result(observation, consent_state, baseline.candidates, ResultState.MISSING, "cooldown_active", MatchResult.UNAVAILABLE, None)

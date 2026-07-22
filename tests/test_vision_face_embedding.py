@@ -31,6 +31,13 @@ class PrivateFaceEmbeddingTests(unittest.TestCase):
         self.assertEqual(result.model_id, "research-arcface")
         self.assertEqual(result.model_version, "r100-v1")
         self.assertEqual(result.similarity, 1.0)
+        self.assertEqual(result.normalized_similarity, 1.0)
+
+    def test_exposes_explicit_unit_interval_score_for_the_confirmation_gate(self) -> None:
+        result = PrivateOneToOneVerifier().compare(embedding(1.0), embedding(-1.0))
+
+        self.assertEqual(result.similarity, -1.0)
+        self.assertEqual(result.normalized_similarity, 0.0)
 
     def test_rejects_mismatched_model_or_zero_vector(self) -> None:
         verifier = PrivateOneToOneVerifier()
