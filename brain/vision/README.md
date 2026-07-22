@@ -106,3 +106,9 @@ authorization/control decision.
 plan: a deterministic, versioned face-size, blur, lighting and pose check. It
 consumes scalar adapter metrics rather than face pixels and returns an explicit
 fail-closed reason before any private 1:1 similarity evaluation.
+
+`PrivateFaceEmbedding` and `PrivateOneToOneVerifier` provide the next private
+P1 seam: ArcFace-compatible 128/512-dimensional vectors can be serialized only
+for the encrypted template store and compared only within the process. The
+verification output is model provenance plus one cosine-similarity scalar; no
+embedding or template is added to a public contract.

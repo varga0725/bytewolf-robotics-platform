@@ -13,6 +13,7 @@ from brain.vision.biometric_store import (
     BiometricTemplateStore,
     TemplateStoreError,
 )
+from brain.vision.face_embedding import PrivateFaceEmbedding, PrivateOneToOneVerifier
 from brain.vision.face_verification import BiometricConsent
 
 
@@ -48,6 +49,18 @@ class BiometricTemplateStoreTests(unittest.TestCase):
             encrypted = next(root.iterdir()).read_bytes()
             self.assertNotIn(b"private-template", encrypted)
             self.assertEqual(next(root.iterdir()).stat().st_mode & 0o777, 0o600)
+
+    def test_encrypted_template_can_feed_private_scalar_1_to_1_verification(self) -> None:
+        with TemporaryDirectory() as temporary:
+            store = BiometricTemplateStore(Path(temporary), Fernet.generate_key())
+            enrolled = PrivateFaceEmbedding("research-arcface", "r100-v1", (1.0,) + (0.0,) * 511)
+            store.enroll(
+                consent(), model_id=enrolled.model_id, model_version=enrolled.model_version,
+                template=enrolled.serialize(), enrolled_at=NOW,
+            )
+            restored = PrivateFaceEmbedding.deserialize(store.load_for_verification(consent(), now=NOW).template)
+
+            self.assertEqual(PrivateOneToOneVerifier().compare(enrolled, restored).similarity, 1.0)
 
     def test_refuses_enrollment_or_load_when_consent_is_not_active(self) -> None:
         revoked = consent(revoked_at=NOW - timedelta(seconds=1))
