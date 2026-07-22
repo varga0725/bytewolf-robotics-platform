@@ -14,6 +14,25 @@ See ``docs/workstreams/cognitive-runtime.md`` for the versioned-contract plan,
 the Definition of Done and the acceptance criteria.
 """
 
-CONTRACT_VERSION = "v0.1"
+from brain.cognitive_runtime.contracts import (
+    COGNITIVE_RUNTIME_CONTRACT_VERSION,
+    ENVELOPE_STATUSES,
+    ResponseEnvelope,
+    ResponseEnvelopeError,
+    ToolTraceEntry,
+    load_response_envelope,
+    load_tool_trace_entry,
+)
 
-__all__ = ["CONTRACT_VERSION"]
+CONTRACT_VERSION = COGNITIVE_RUNTIME_CONTRACT_VERSION
+
+__all__ = [
+    "CONTRACT_VERSION",
+    "COGNITIVE_RUNTIME_CONTRACT_VERSION",
+    "ENVELOPE_STATUSES",
+    "ResponseEnvelope",
+    "ResponseEnvelopeError",
+    "ToolTraceEntry",
+    "load_response_envelope",
+    "load_tool_trace_entry",
+]

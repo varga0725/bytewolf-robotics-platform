@@ -1,0 +1,12 @@
+{
+  "contract_version": "v0.1",
+  "session_id": "browser-abc",
+  "turn_id": "turn-005",
+  "status": "error",
+  "model": "nvidia/llama-3.3-nemotron",
+  "prompt_version": "cognitive-runtime.v0_1",
+  "reply": "this should not be here on an error",
+  "latency_ms": 100.0,
+  "tool_trace": [],
+  "safety_verdict": {"reached_actuation": false, "flight_drafted": false}
+}

@@ -1,0 +1,7 @@
+{
+  "call_id": "c9",
+  "capability_id": "mission.replay",
+  "status": "denied",
+  "latency_ms": 0.2,
+  "detail": "not granted by ToolPolicy"
+}

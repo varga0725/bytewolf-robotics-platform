@@ -1,0 +1,16 @@
+{
+  "contract_version": "v0.1",
+  "session_id": "browser-abc",
+  "turn_id": "turn-001",
+  "status": "completed",
+  "model": "nvidia/llama-3.3-nemotron",
+  "provider": "nim-primary",
+  "prompt_version": "cognitive-runtime.v0_1",
+  "reply": "Az udvaron egy piros jelzőt látok, körülbelül 8 méterre.",
+  "latency_ms": 742.0,
+  "token_usage": {"input_tokens": 512, "output_tokens": 48, "total_tokens": 560},
+  "tool_trace": [
+    {"call_id": "c1", "capability_id": "telemetry.read", "status": "ok", "latency_ms": 3.1, "args_ref": "sha256:0e1f"}
+  ],
+  "safety_verdict": {"reached_actuation": false, "flight_drafted": false}
+}
