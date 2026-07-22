@@ -27,8 +27,10 @@ face_research_default:
 face_detector_research_default:
   model_id: research-scrfd-10gf
   runtime: onnxruntime
-  weights_filename: scrfd-10gf.onnx
+  weights_filename: det_10g.onnx
+  weights_sha256: 5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91
   stage: research
   local_weights_required: true
   implicit_downloads_allowed: false
+  license_reference: InsightFace-pretrained-models-non-commercial-research-only
   intended_use: private five-landmark face detection research only

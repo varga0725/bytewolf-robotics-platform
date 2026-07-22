@@ -128,3 +128,13 @@ multi-face result nor stores boxes, landmarks or crops. `SimilarityResult`
 keeps the raw cosine value private to the process and exposes an explicit
 `normalized_similarity` when constructing the confirmation gate's `[0, 1]`
 observation.
+
+`ScrfdOnnxDetector` now decodes the three-stride, nine-output SCRFD-10GF
+layout directly through ONNX Runtime. It requires an explicit local model path
+and an approved SHA-256 at construction; it never downloads or retains image
+data. Only exactly one post-NMS, in-frame five-landmark candidate is returned.
+Zero, malformed or multiple faces return `None`, so a future coordinator must
+record an unavailable result rather than select an arbitrary identity. The
+current research artifact is InsightFace `buffalo_l`'s `det_10g.onnx` and is
+restricted to non-commercial research; it remains outside this repository and
+cannot be promoted to a public or production model without separate licensing.
