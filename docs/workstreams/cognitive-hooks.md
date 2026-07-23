@@ -54,3 +54,25 @@ referencia-implementációja — általánosítva proposal-alapú runtime-má.
 5. Admission audit: minden proposal döntése naplózott (`accepted`/`rejected` + ok),
    input refs + modell + promptverzió mellett.
 6. Statikus teszt: `brain/cognitive_hooks/**` nem importál MAVSDK/PX4 modult.
+
+## Állapot (v0.1 mag kész, Pi-hook átvezetés hátravan)
+
+| Modul | Tartalom | Commit |
+| --- | --- | --- |
+| `contracts.py` + `proposal_v0_1` séma + fixture-ök | Proposal contract, fail-closed loader | `6c7bc7c` |
+| `admission.py` | Determinisztikus admission (caps, érzékeny-adat, dedup, forget-előbb) | `6c7bc7c` |
+| `runtime.py` | `HookRuntime.submit` + `ProposalStore` (kanonikus store + audit) | `6c7bc7c` |
+
+- [x] 1. `proposal → schema validation → policy/admission → canonical store` út.
+- [x] 2. `proposal v0.1` verziózott séma valid/invalid fixture-párokkal.
+- [x] 4. Fail-closed: malformed/hibás dokumentum semmit nem ír, `unavailable`.
+- [x] 5. Admission audit: minden döntés naplózott (`accepted`/`rejected` + ok); a proposal
+  hordozza az `input_refs`/modell/promptverzió provenance-t.
+- [x] 6. Statikus no-MAVSDK/PX4 teszt.
+
+**Hátravan (Pi-hook átvezetés):**
+
+- [ ] 3. A meglévő `post_turn_memory_hook` (Node) az új runtime-on fut regresszió nélkül —
+  `apps/pi_agent/post_turn.test.mjs` + `tests/test_pi_memory_hook.py` átvezetve/zöld.
+
+10 új teszt, teljes suite 798 zöld (ezen az ágon).
