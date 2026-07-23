@@ -62,3 +62,33 @@ A response envelope kötelező mezői (deterministic, verziózott):
    (golden-turn teszt a meglévő `apps/pi_agent` viselkedésre).
 6. Safety boundary regresszió: egy „take off now" típusú briefing- vagy tool-válasz
    sem indít repülést; a meglévő `prompt.test.mjs` / gateway-tesztek zöldek maradnak.
+
+## Állapot (v0.1 runtime-mag kész, Pi-paritás hátravan)
+
+Architektúra: **A** — Python-mag, NIM közvetlenül (OpenAI-kompatibilis), a tool-loop
+tool-jai plugin-sdk capabilityk `registry.invoke` + ToolPolicy alatt. Az ág a friss
+`codex/v1`-re rebase-elve, így eléri a mergelt plugin-sdk-t.
+
+| Csomag | Modul | Commit |
+| --- | --- | --- |
+| 1 — contractok | `brain/cognitive_runtime/contracts.py` + 2 séma + fixture-ök | `a3a2cdc` |
+| 2 — providerek | `brain/cognitive_runtime/providers.py` (NIM, fallback, circuit breaker) | `ce0b3ea` |
+| 3 — session + tool-loop | `brain/cognitive_runtime/session.py` | `1632c2a` |
+| 4 — limit-kikényszerítés | `brain/cognitive_runtime/limits.py` | `c5df9e7` |
+
+- [x] 1. Minden turn `response_envelope v0.1`; jövőbeli verzió elutasítva.
+- [x] 2. Timeout és cancellation determinisztikus envelope-ban; per-tool `timeout_ms`.
+- [x] 3. Provider fallback + circuit breaker; all-failed → fail-closed error envelope.
+- [x] 4. Structured tool trace: arg-referencia (sha256 hash), latency, státusz; nyers arg soha.
+- [x] Mindhárom „nehéz" rész: fallback/circuit-breaker · token/latency metrikák · teljes
+  ToolPolicy-limit (timeout + rate + concurrency) élő kikényszerítése.
+- [x] `safety_verdict.reached_actuation` séma-szinten `const false`; statikus no-MAVSDK/PX4 teszt.
+
+**Hátravan (Pi-paritás mérföldkő):**
+
+- [ ] 5. A Node Pi Agent tényleges bekötése a runtime adaptereként, funkcionális
+  regresszió nélkül (golden-turn a meglévő `apps/pi_agent` viselkedésre).
+- [ ] 6. A `prompt.test.mjs` / gateway-safety regresszió a runtime-on átvezetve.
+- [ ] Strukturált audit-artefakt perzisztálása (a `MissionExecution` v0.2 mintájára).
+
+29 új teszt (4 csomag), teljes suite 811 zöld.
