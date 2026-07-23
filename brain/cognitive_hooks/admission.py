@@ -57,23 +57,36 @@ def admit(proposal: Proposal, known: frozenset[tuple[str, str]] = frozenset()) -
     operations = proposal.payload["operations"]
     accepted: list[dict[str, str]] = []
     rejected: list[dict[str, str]] = []
-    seen = set(known)
 
     for operation in list(operations)[MAX_OPERATIONS:]:
         rejected.append({**operation, "reason": f"dropped: over operation cap ({MAX_OPERATIONS})"})
 
-    within_cap = list(operations)[:MAX_OPERATIONS]
-    # Forgets are applied before upserts, so a supersede within one batch works.
-    for operation in sorted(within_cap, key=lambda op: 0 if op["op"] == "forget" else 1):
+    # Phase 1: filter each operation (sensitive/empty/too-long) and collapse it.
+    valid: list[tuple[str, str, str, tuple[str, str]]] = []
+    for operation in list(operations)[:MAX_OPERATIONS]:
         value = _collapse(operation["value"])
         reason = _rejection_reason(value)
-        key = (operation["category"], value.lower())
         if reason is not None:
             rejected.append({**operation, "reason": reason})
-        elif operation["op"] == "upsert" and key in seen:
-            rejected.append({**operation, "reason": "duplicate"})
+            continue
+        key = (operation["category"], value.lower())
+        valid.append((operation["op"], operation["category"], value, key))
+
+    # Phase 2: apply all forgets first, then upserts, mirroring the Node merge. A
+    # forget clears its key from the duplicate set, so a forget-then-upsert of the
+    # same (category, value) supersedes instead of self-cancelling.
+    forgotten = {key for op, _cat, _value, key in valid if op == "forget"}
+    seen = set(known) - forgotten
+    for op, category, value, _key in valid:
+        if op == "forget":
+            accepted.append({"op": "forget", "category": category, "value": value})
+    for op, category, value, key in valid:
+        if op != "upsert":
+            continue
+        if key in seen:
+            rejected.append({"op": op, "category": category, "value": value, "reason": "duplicate"})
         else:
-            accepted.append({"op": operation["op"], "category": operation["category"], "value": value})
+            accepted.append({"op": "upsert", "category": category, "value": value})
             seen.add(key)
 
     return AdmissionResult(

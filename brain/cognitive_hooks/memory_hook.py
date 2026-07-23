@@ -9,6 +9,13 @@ The mapping matches the Node hook: an extractor fault is ``unavailable``; a
 malformed or empty delta is ``skipped`` (not a failure); an admitted fact is
 ``updated``. The hook cannot suppress a reply, change a flight decision, or leak
 conversation text -- it only proposes durable memory through admission.
+
+Scope: this ports the hook onto the new runtime and proves parity with the Node
+hook (see ``tests/test_cognitive_hooks_memory_hook.py``). The current live
+dashboard path still runs the Node ``runPostTurnMemoryHook`` in
+``apps/pi_agent/runner.mjs``; routing production memory updates through this
+runtime is the Node-Pi retirement cutover, a follow-up shared with the Cognitive
+Runtime workstream, not part of this v0.1 port.
 """
 
 from __future__ import annotations

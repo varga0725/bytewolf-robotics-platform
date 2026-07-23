@@ -111,6 +111,30 @@ class RuntimeTests(unittest.TestCase):
         runtime.submit("s1", _proposal([_op("a régi hangár", op="forget", category="place_label")], proposal_id="p2"))
         self.assertEqual(runtime.store.facts("s1"), ())
 
+    def test_forget_then_upsert_supersedes_not_self_cancels(self) -> None:
+        runtime = HookRuntime()
+        runtime.submit("s1", _proposal([_op("kék", category="preference")], proposal_id="p1"))
+        # A forget and an upsert of the same key in one batch must leave it present.
+        runtime.submit("s1", _proposal(
+            [_op("kék", op="forget", category="preference"), _op("kék", op="upsert", category="preference")],
+            proposal_id="p2",
+        ))
+        self.assertIn("kék", [f["value"] for f in runtime.store.facts("s1")])
+
+    def test_audit_record_keeps_proposal_provenance(self) -> None:
+        runtime = HookRuntime()
+        record = runtime.submit("s1", _proposal([_op("A Baylands")], proposal_id="p1"))
+        self.assertEqual(record.source["job"], "post_turn_memory")
+        self.assertEqual(record.source["model"], "m")
+        self.assertIsNotNone(record.created_at)
+
+    def test_returned_facts_cannot_mutate_the_store(self) -> None:
+        runtime = HookRuntime()
+        runtime.submit("s1", _proposal([_op("A Baylands")]))
+        facts = runtime.store.facts("s1")
+        facts[0]["value"] = "hacked"
+        self.assertNotEqual(runtime.store.facts("s1")[0]["value"], "hacked")
+
 
 class SafetyTests(unittest.TestCase):
     def test_cognitive_hooks_never_imports_flight_control(self) -> None:

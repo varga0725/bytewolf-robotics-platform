@@ -21,13 +21,15 @@ from brain.cognitive_hooks.contracts import ProposalContractError, load_proposal
 
 @dataclass(frozen=True)
 class AdmissionRecord:
-    """The audited result of one submission."""
+    """The audited result of one submission, with the proposal's provenance."""
 
     proposal_id: str | None
     outcome: str  # "updated" | "skipped" | "unavailable"
     accepted: tuple[dict[str, str], ...] = field(default_factory=tuple)
     rejected: tuple[dict[str, str], ...] = field(default_factory=tuple)
     detail: str | None = None
+    source: dict[str, Any] | None = None
+    created_at: str | None = None
 
 
 #: The most durable facts a session keeps, matching the Node hook's cap.
@@ -47,7 +49,9 @@ class ProposalStore:
         self._audit: dict[str, list[AdmissionRecord]] = {}
 
     def facts(self, session_id: str) -> tuple[dict[str, str], ...]:
-        return tuple(self._facts.get(session_id, []))
+        # Return copies: a caller holding the public store must not be able to
+        # mutate canonical memory in place, bypassing admission.
+        return tuple(dict(fact) for fact in self._facts.get(session_id, []))
 
     def audit(self, session_id: str) -> tuple[AdmissionRecord, ...]:
         return tuple(self._audit.get(session_id, []))
@@ -105,6 +109,8 @@ class HookRuntime:
             outcome=result.outcome,
             accepted=result.accepted,
             rejected=result.rejected,
+            source=dict(proposal.source),
+            created_at=proposal.created_at.isoformat(),
         )
         self._store.record(session_id, record)
         return record
