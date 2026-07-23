@@ -33,6 +33,7 @@ from brain.cognitive_runtime.providers import (
     ProviderResponse,
     ToolCall,
 )
+from brain.cognitive_runtime.limits import LimitEnforcer
 from brain.cognitive_runtime.session import (
     CognitiveRuntime,
     Session,
@@ -49,6 +50,7 @@ __all__ = [
     "CircuitBreaker",
     "CognitiveRuntime",
     "FallbackProvider",
+    "LimitEnforcer",
     "NIMProvider",
     "Provider",
     "ProviderError",

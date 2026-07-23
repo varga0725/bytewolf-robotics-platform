@@ -31,6 +31,7 @@ import time
 from typing import Any
 
 from brain.cognitive_runtime.contracts import ResponseEnvelope, load_response_envelope
+from brain.cognitive_runtime.limits import LimitEnforcer, limits_of
 from brain.cognitive_runtime.providers import Provider, ProviderError, ToolCall
 from brain.plugin_sdk import PluginRegistry, PluginRegistryError, ToolPolicy
 
@@ -86,6 +87,7 @@ class CognitiveRuntime:
         self._max_iterations = max_iterations
         self._turn_deadline_s = turn_deadline_s
         self._executor = ThreadPoolExecutor(max_workers=1)
+        self._limiters: dict[str, LimitEnforcer] = {}
 
     # -- public API -------------------------------------------------------
 
@@ -177,6 +179,12 @@ class CognitiveRuntime:
                     "detail": "not granted by ToolPolicy"}
             return entry, _tool_result(call, {"error": "denied: not granted by ToolPolicy"})
 
+        limiter = self._limiter_for(call.capability_id, tool_policy)
+        rejection = limiter.acquire()
+        if rejection is not None:
+            entry = {**base, "status": "denied", "latency_ms": 0.0, "detail": rejection}
+            return entry, _tool_result(call, {"error": f"denied: {rejection}"})
+
         timeout_s = _timeout_s(tool_policy)
         started = self._clock()
         future = self._executor.submit(
@@ -193,9 +201,19 @@ class CognitiveRuntime:
             latency = (self._clock() - started) * 1000
             entry = {**base, "status": "error", "latency_ms": latency, "detail": str(error)}
             return entry, _tool_result(call, {"error": str(error)})
+        finally:
+            limiter.release()
         latency = (self._clock() - started) * 1000
         entry = {**base, "status": "ok", "latency_ms": latency}
         return entry, _tool_result(call, {"result": result})
+
+    def _limiter_for(self, capability_id: str, tool_policy: ToolPolicy) -> LimitEnforcer:
+        limiter = self._limiters.get(capability_id)
+        if limiter is None:
+            rate, concurrent = limits_of(tool_policy.limits)
+            limiter = LimitEnforcer(rate_per_min=rate, max_concurrent=concurrent, clock=self._clock)
+            self._limiters[capability_id] = limiter
+        return limiter
 
     def _finish(
         self, session: Session, turn_id: str, started: float, status: str, reply: str | None,
