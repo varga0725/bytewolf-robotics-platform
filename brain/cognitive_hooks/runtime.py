@@ -30,8 +30,17 @@ class AdmissionRecord:
     detail: str | None = None
 
 
+#: The most durable facts a session keeps, matching the Node hook's cap.
+MAX_MEMORY_ITEMS = 40
+
+
 class ProposalStore:
-    """Per-session canonical memory plus an admission audit trail."""
+    """Per-session canonical memory plus an admission audit trail.
+
+    Merge semantics mirror the Node hook's ``mergeMemory``: dedup by
+    ``(category, value)``, a new ``name`` supersedes any earlier name, and the
+    store keeps at most the most recent ``MAX_MEMORY_ITEMS`` facts.
+    """
 
     def __init__(self) -> None:
         self._facts: dict[str, list[dict[str, str]]] = {}
@@ -43,18 +52,28 @@ class ProposalStore:
     def audit(self, session_id: str) -> tuple[AdmissionRecord, ...]:
         return tuple(self._audit.get(session_id, []))
 
-    def known_values(self, session_id: str) -> frozenset[str]:
-        return frozenset(_normalize(fact["value"]) for fact in self._facts.get(session_id, []))
+    def known_keys(self, session_id: str) -> frozenset[tuple[str, str]]:
+        return frozenset(
+            (fact["category"], _normalize(fact["value"]))
+            for fact in self._facts.get(session_id, [])
+        )
 
     def apply(self, session_id: str, result: AdmissionResult) -> None:
         facts = self._facts.setdefault(session_id, [])
         for operation in result.accepted:
+            key = (operation["category"], _normalize(operation["value"]))
             if operation["op"] == "forget":
-                target = _normalize(operation["value"])
-                facts[:] = [f for f in facts if _normalize(f["value"]) != target]
-            else:  # upsert
-                if all(_normalize(f["value"]) != _normalize(operation["value"]) for f in facts):
-                    facts.append({"category": operation["category"], "value": operation["value"]})
+                facts[:] = [f for f in facts if (f["category"], _normalize(f["value"])) != key]
+                continue
+            # upsert
+            if any((f["category"], _normalize(f["value"])) == key for f in facts):
+                continue
+            if operation["category"] == "name":
+                facts[:] = [f for f in facts if f["category"] != "name"]
+            facts.append({"category": operation["category"], "value": operation["value"]})
+        # Keep only the most recent facts, as the Node hook does.
+        if len(facts) > MAX_MEMORY_ITEMS:
+            del facts[:-MAX_MEMORY_ITEMS]
 
     def record(self, session_id: str, record: AdmissionRecord) -> None:
         self._audit.setdefault(session_id, []).append(record)
@@ -79,7 +98,7 @@ class HookRuntime:
             self._store.record(session_id, record)
             return record
 
-        result = admit(proposal, known=self._store.known_values(session_id))
+        result = admit(proposal, known=self._store.known_keys(session_id))
         self._store.apply(session_id, result)
         record = AdmissionRecord(
             proposal_id=proposal.proposal_id,

@@ -26,9 +26,14 @@ from brain.cognitive_hooks.contracts import (
     load_proposal,
 )
 from brain.cognitive_hooks.runtime import (
+    MAX_MEMORY_ITEMS,
     AdmissionRecord,
     HookRuntime,
     ProposalStore,
+)
+from brain.cognitive_hooks.memory_hook import (
+    MEMORY_UPDATE_STATES,
+    run_post_turn_memory,
 )
 
 CONTRACT_VERSION = COGNITIVE_HOOKS_CONTRACT_VERSION
@@ -36,8 +41,10 @@ CONTRACT_VERSION = COGNITIVE_HOOKS_CONTRACT_VERSION
 __all__ = [
     "CONTRACT_VERSION",
     "COGNITIVE_HOOKS_CONTRACT_VERSION",
+    "MAX_MEMORY_ITEMS",
     "MAX_OPERATIONS",
     "MAX_VALUE_LENGTH",
+    "MEMORY_UPDATE_STATES",
     "AdmissionRecord",
     "AdmissionResult",
     "HookRuntime",
@@ -46,4 +53,5 @@ __all__ = [
     "ProposalStore",
     "admit",
     "load_proposal",
+    "run_post_turn_memory",
 ]

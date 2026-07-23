@@ -63,15 +63,16 @@ class AdmissionTests(unittest.TestCase):
                 self.assertEqual(result.outcome, "skipped")
                 self.assertEqual(len(result.rejected), 1)
 
-    def test_over_budget_batch_stores_nothing(self) -> None:
-        ops = [_op(f"tény {i}") for i in range(MAX_OPERATIONS + 1)]
+    def test_over_budget_batch_is_truncated_to_the_cap(self) -> None:
+        # Matches the Node hook: keep the first MAX_OPERATIONS, drop the rest.
+        ops = [_op(f"tény {i}") for i in range(MAX_OPERATIONS + 2)]
         result = admit(load_proposal(_proposal(ops)))
-        self.assertEqual(result.outcome, "skipped")
-        self.assertEqual(result.accepted, ())
+        self.assertEqual(result.outcome, "updated")
+        self.assertEqual(len(result.accepted), MAX_OPERATIONS)
 
-    def test_duplicate_is_dropped_against_known_values(self) -> None:
+    def test_duplicate_is_dropped_against_known_keys(self) -> None:
         proposal = load_proposal(_proposal([_op("A Baylands világ")]))
-        result = admit(proposal, known=frozenset({"a baylands világ"}))
+        result = admit(proposal, known=frozenset({("preference", "a baylands világ")}))
         self.assertEqual(result.outcome, "skipped")
         self.assertEqual(result.rejected[0]["reason"], "duplicate")
 
