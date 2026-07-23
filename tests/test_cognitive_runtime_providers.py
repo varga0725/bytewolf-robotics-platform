@@ -129,6 +129,43 @@ class FallbackTests(unittest.TestCase):
         self.assertEqual(fallback.served_by, "secondary")
 
 
+class RetryTests(unittest.TestCase):
+    def test_retries_a_transient_failure_then_succeeds(self) -> None:
+        from brain.cognitive_runtime import RetryingProvider
+
+        class _Flaky:
+            name = "flaky"
+
+            def __init__(self):
+                self.calls = 0
+
+            def complete(self, messages, tools):
+                self.calls += 1
+                if self.calls < 2:
+                    raise ProviderError("transient")
+                return ProviderResponse(content="ok", tool_calls=(), model="flaky",
+                                        input_tokens=1, output_tokens=1)
+
+        flaky = _Flaky()
+        provider = RetryingProvider(flaky, attempts=3, sleep=lambda _s: None)
+        response = provider.complete([], [])
+        self.assertEqual(response.content, "ok")
+        self.assertEqual(flaky.calls, 2)
+
+    def test_gives_up_after_attempts_and_raises(self) -> None:
+        from brain.cognitive_runtime import RetryingProvider
+
+        class _Dead:
+            name = "dead"
+
+            def complete(self, messages, tools):
+                raise ProviderError("down")
+
+        provider = RetryingProvider(_Dead(), attempts=2, sleep=lambda _s: None)
+        with self.assertRaises(ProviderError):
+            provider.complete([], [])
+
+
 class CircuitBreakerTests(unittest.TestCase):
     def test_opens_after_threshold_and_recovers_after_cooldown(self) -> None:
         now = [0.0]

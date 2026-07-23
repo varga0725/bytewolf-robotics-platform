@@ -179,6 +179,42 @@ class CircuitBreaker:
 
 
 @dataclass
+class RetryingProvider:
+    """Retries a single provider on transient failure before giving up.
+
+    Retry is for a flaky call to one backend; failover to a different backend is
+    the FallbackProvider's job. Compose them: fall back over retrying providers.
+    The sleep function is injected so tests do not actually wait.
+    """
+
+    provider: Provider
+    attempts: int = 2
+    sleep: Callable[[float], None] = time.sleep
+    backoff_s: float = 0.5
+
+    @property
+    def name(self) -> str:
+        return self.provider.name
+
+    @property
+    def served_by(self) -> str | None:
+        return getattr(self.provider, "served_by", None)
+
+    def complete(
+        self, messages: Sequence[dict[str, Any]], tools: Sequence[dict[str, Any]]
+    ) -> ProviderResponse:
+        last: ProviderError | None = None
+        for attempt in range(max(1, self.attempts)):
+            try:
+                return self.provider.complete(messages, tools)
+            except ProviderError as error:
+                last = error
+                if attempt + 1 < self.attempts:
+                    self.sleep(self.backoff_s * (attempt + 1))
+        raise last if last is not None else ProviderError("no attempts made")
+
+
+@dataclass
 class _Backend:
     provider: Provider
     breaker: CircuitBreaker

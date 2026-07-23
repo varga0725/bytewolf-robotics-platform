@@ -31,13 +31,20 @@ from brain.cognitive_runtime.providers import (
     Provider,
     ProviderError,
     ProviderResponse,
+    RetryingProvider,
     ToolCall,
 )
 from brain.cognitive_runtime.limits import LimitEnforcer
 from brain.cognitive_runtime.session import (
+    DRAFT_FLIGHT_TOOL,
     CognitiveRuntime,
     Session,
     SessionManager,
+)
+from brain.cognitive_runtime.artifacts import (
+    ARTIFACT_VERSION,
+    envelope_to_dict,
+    persist_envelope,
 )
 
 CONTRACT_VERSION = COGNITIVE_RUNTIME_CONTRACT_VERSION
@@ -46,6 +53,8 @@ __all__ = [
     "CONTRACT_VERSION",
     "COGNITIVE_RUNTIME_CONTRACT_VERSION",
     "ENVELOPE_STATUSES",
+    "ARTIFACT_VERSION",
+    "DRAFT_FLIGHT_TOOL",
     "AllProvidersFailedError",
     "CircuitBreaker",
     "CognitiveRuntime",
@@ -57,10 +66,13 @@ __all__ = [
     "ProviderResponse",
     "ResponseEnvelope",
     "ResponseEnvelopeError",
+    "RetryingProvider",
     "Session",
     "SessionManager",
     "ToolCall",
     "ToolTraceEntry",
+    "envelope_to_dict",
     "load_response_envelope",
     "load_tool_trace_entry",
+    "persist_envelope",
 ]

@@ -162,5 +162,66 @@ class TurnLoopTests(unittest.TestCase):
         self.assertEqual(envelope.tool_trace[0].status, "timeout")
 
 
+class DraftFlightSafetyTests(unittest.TestCase):
+    """The reserved draft-flight tool drafts for review; it never actuates."""
+
+    def _runtime(self, provider, handler):
+        registry = PluginRegistry()
+        return CognitiveRuntime(
+            provider, registry, prompt_version="test.v0_1", flight_request_handler=handler
+        )
+
+    def test_a_drafted_flight_is_marked_and_never_actuates(self) -> None:
+        drafted = []
+
+        def handler(arguments):
+            # A real handler routes to reviewed MissionSpec -> SafetyGate -> approval.
+            # It returns a pending descriptor; it cannot and does not fly.
+            drafted.append(arguments)
+            return {"status": "pending_review", "request": arguments}
+
+        provider = _ScriptedProvider([
+            ProviderResponse(
+                content=None,
+                tool_calls=(ToolCall("c1", "draft_flight_request", {"altitude_m": 15}),),
+                model="m", input_tokens=2, output_tokens=1,
+            ),
+            ProviderResponse(content="Elkészítettem a repülési kérést jóváhagyásra.",
+                            tool_calls=(), model="m", input_tokens=1, output_tokens=1),
+        ])
+        from brain.plugin_sdk import ToolPolicy
+        policy = ToolPolicy(plugin_id="agent", granted=(), denied=(), limits=None)
+        runtime = self._runtime(provider, handler)
+
+        envelope = runtime.run_turn("s1", "Szállj fel most 15 méterre!", policy)
+        self.assertEqual(envelope.status, "completed")
+        self.assertTrue(envelope.safety_verdict["flight_drafted"])
+        self.assertFalse(envelope.safety_verdict["reached_actuation"])
+        self.assertEqual(envelope.tool_trace[0].capability_id, "draft_flight_request")
+        self.assertEqual(envelope.tool_trace[0].status, "ok")
+        self.assertEqual(drafted, [{"altitude_m": 15}])  # the handler saw a draft, nothing flew
+
+    def test_without_a_handler_the_flight_tool_is_denied(self) -> None:
+        # With no handler the tool is not offered; a model that calls it anyway is
+        # treated as an ungranted capability and denied -- never actuated.
+        provider = _ScriptedProvider([
+            ProviderResponse(
+                content=None,
+                tool_calls=(ToolCall("c1", "draft_flight_request", {}),),
+                model="m", input_tokens=1, output_tokens=1,
+            ),
+            ProviderResponse(content="nem tudok repülést kérni", tool_calls=(), model="m",
+                            input_tokens=1, output_tokens=1),
+        ])
+        registry = PluginRegistry()
+        runtime = CognitiveRuntime(provider, registry, prompt_version="test.v0_1")
+        from brain.plugin_sdk import ToolPolicy
+        policy = ToolPolicy(plugin_id="agent", granted=(), denied=(), limits=None)
+        envelope = runtime.run_turn("s2", "Szállj fel!", policy)
+        self.assertEqual(envelope.tool_trace[0].status, "denied")
+        self.assertFalse(envelope.safety_verdict["flight_drafted"])
+        self.assertFalse(envelope.safety_verdict["reached_actuation"])
+
+
 if __name__ == "__main__":
     unittest.main()

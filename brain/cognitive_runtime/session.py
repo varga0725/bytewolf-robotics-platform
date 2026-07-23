@@ -40,6 +40,10 @@ DEFAULT_TOOL_TIMEOUT_MS = 5000
 DEFAULT_MAX_ITERATIONS = 6
 DEFAULT_TURN_DEADLINE_S = 60.0
 
+#: The one reserved tool that is not a plugin capability. It drafts a flight
+#: request for review; it never runs through the registry and never actuates.
+DRAFT_FLIGHT_TOOL = "draft_flight_request"
+
 
 @dataclass
 class Session:
@@ -77,6 +81,7 @@ class CognitiveRuntime:
         clock: Callable[[], float] = time.monotonic,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         turn_deadline_s: float = DEFAULT_TURN_DEADLINE_S,
+        flight_request_handler: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -88,6 +93,11 @@ class CognitiveRuntime:
         self._turn_deadline_s = turn_deadline_s
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._limiters: dict[str, LimitEnforcer] = {}
+        # The one reserved tool that is not a plugin capability: it never runs
+        # through the registry and never reaches actuation. The handler routes a
+        # drafted request to the reviewed MissionSpec -> SafetyGate -> approval
+        # path; a turn can draft a flight, it can never fly one.
+        self._flight_request_handler = flight_request_handler
 
     # -- public API -------------------------------------------------------
 
@@ -109,6 +119,8 @@ class CognitiveRuntime:
 
         granted = {grant["capability_id"] for grant in tool_policy.granted}
         tool_specs = list(tools) if tools is not None else _tool_specs(granted)
+        if tools is None and self._flight_request_handler is not None:
+            tool_specs.append(_flight_request_spec())
         history = self._seed_history(session, user_message)
         trace: list[dict[str, Any]] = []
         tokens_in = tokens_out = 0
@@ -143,7 +155,10 @@ class CognitiveRuntime:
 
             history.append(_assistant_tool_message(response.tool_calls))
             for call in response.tool_calls:
-                entry, tool_message = self._dispatch(call, tool_policy, granted, deadline)
+                if call.capability_id == DRAFT_FLIGHT_TOOL and self._flight_request_handler is not None:
+                    entry, tool_message = self._draft_flight(call)
+                else:
+                    entry, tool_message = self._dispatch(call, tool_policy, granted, deadline)
                 trace.append(entry)
                 history.append(tool_message)
 
@@ -207,6 +222,22 @@ class CognitiveRuntime:
         entry = {**base, "status": "ok", "latency_ms": latency}
         return entry, _tool_result(call, {"result": result})
 
+    def _draft_flight(self, call: ToolCall) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Handle the reserved draft-flight tool: draft only, never actuate."""
+        base = {"call_id": call.call_id or "call", "capability_id": DRAFT_FLIGHT_TOOL,
+                "args_ref": _args_ref(call.arguments)}
+        started = self._clock()
+        try:
+            outcome = self._flight_request_handler(call.arguments)  # type: ignore[misc]
+        except Exception as error:  # noqa: BLE001 - a handler fault is a refused draft, not a crash
+            latency = (self._clock() - started) * 1000
+            entry = {**base, "status": "error", "latency_ms": latency, "detail": str(error)}
+            return entry, _tool_result(call, {"error": "flight request could not be drafted"})
+        latency = (self._clock() - started) * 1000
+        entry = {**base, "status": "ok", "latency_ms": latency}
+        # The handler returns a pending-review descriptor, never an execution.
+        return entry, _tool_result(call, {"result": outcome})
+
     def _limiter_for(self, capability_id: str, tool_policy: ToolPolicy) -> LimitEnforcer:
         limiter = self._limiters.get(capability_id)
         if limiter is None:
@@ -232,7 +263,12 @@ class CognitiveRuntime:
             "token_usage": {"input_tokens": tokens_in, "output_tokens": tokens_out,
                             "total_tokens": tokens_in + tokens_out},
             "tool_trace": trace,
-            "safety_verdict": {"reached_actuation": False, "flight_drafted": False},
+            "safety_verdict": {
+                "reached_actuation": False,
+                "flight_drafted": any(
+                    e["capability_id"] == DRAFT_FLIGHT_TOOL and e["status"] == "ok" for e in trace
+                ),
+            },
         }
         if provider is not None:
             document["provider"] = provider
@@ -249,6 +285,21 @@ def _tool_specs(granted: set[str]) -> list[dict[str, Any]]:
          "function": {"name": capability_id, "parameters": {"type": "object"}}}
         for capability_id in sorted(granted)
     ]
+
+
+def _flight_request_spec() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": DRAFT_FLIGHT_TOOL,
+            "description": (
+                "Draft a flight request for human review. This does NOT fly the "
+                "drone: the draft goes to reviewed MissionSpec, the SafetyGate and "
+                "an explicit approval before anything can execute."
+            ),
+            "parameters": {"type": "object"},
+        },
+    }
 
 
 def _assistant_tool_message(tool_calls: Sequence[ToolCall]) -> dict[str, Any]:
