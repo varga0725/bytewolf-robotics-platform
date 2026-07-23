@@ -13,6 +13,10 @@ def _fresh(observed_at: datetime, now: datetime, ttl: timedelta) -> ResultState:
     return ResultState.STALE if now.astimezone() - observed_at.astimezone() > ttl else ResultState.VALID
 
 
+def _source_box(frame: CameraFrame, box: BoundingBox) -> bool:
+    return isinstance(frame, CameraFrame) and box.x_px + box.width_px <= frame.width_px and box.y_px + box.height_px <= frame.height_px
+
+
 @dataclass(frozen=True)
 class VideoArtifactRef:
     contract_version: str
@@ -33,7 +37,7 @@ class VideoArtifactRef:
 class DetectionEvent:
     contract_version: str; event_id: str; source_frame: CameraFrame; model_id: str; model_version: str; label: str; confidence: float; bounding_box: BoundingBox; observed_at: datetime; ttl: timedelta; artifact: VideoArtifactRef | None = None
     def __post_init__(self) -> None:
-        if self.contract_version != "detection_event.v1" or not all(isinstance(v, str) and v.strip() for v in (self.event_id, self.model_id, self.model_version, self.label)) or not _unit_interval(self.confidence) or not isinstance(self.bounding_box, BoundingBox) or not _positive_duration(self.ttl) or (self.artifact is not None and not isinstance(self.artifact, VideoArtifactRef)):
+        if self.contract_version != "detection_event.v1" or not all(isinstance(v, str) and v.strip() for v in (self.event_id, self.model_id, self.model_version, self.label)) or not _unit_interval(self.confidence) or not isinstance(self.bounding_box, BoundingBox) or not _source_box(self.source_frame, self.bounding_box) or not _positive_duration(self.ttl) or (self.artifact is not None and not isinstance(self.artifact, VideoArtifactRef)):
             raise VisionContractError("Invalid detection event.")
         if self.artifact is not None and self.artifact.source_frame != self.source_frame:
             raise VisionContractError("Detection event artifact must reference the source frame.")
@@ -45,7 +49,7 @@ class DetectionEvent:
 class TrackedObject:
     contract_version: str; source_frame: CameraFrame; tracker_id: str; model_id: str; model_version: str; label: str; confidence: float; bounding_box: BoundingBox; observed_at: datetime; ttl: timedelta; artifact: VideoArtifactRef | None = None
     def __post_init__(self) -> None:
-        if self.contract_version != "tracked_object.v1" or not all(isinstance(v, str) and v.strip() for v in (self.tracker_id, self.model_id, self.model_version, self.label)) or not _unit_interval(self.confidence) or not isinstance(self.bounding_box, BoundingBox) or not _positive_duration(self.ttl): raise VisionContractError("Invalid tracked object.")
+        if self.contract_version != "tracked_object.v1" or not all(isinstance(v, str) and v.strip() for v in (self.tracker_id, self.model_id, self.model_version, self.label)) or not _unit_interval(self.confidence) or not isinstance(self.bounding_box, BoundingBox) or not _source_box(self.source_frame, self.bounding_box) or not _positive_duration(self.ttl): raise VisionContractError("Invalid tracked object.")
         _require_aware(self.observed_at, "observed_at")
         if self.artifact is not None and self.artifact.source_frame != self.source_frame:
             raise VisionContractError("Tracked object artifact must reference the source frame.")

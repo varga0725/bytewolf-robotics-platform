@@ -21,3 +21,7 @@ class VisionEventTests(unittest.TestCase):
   now=datetime(2026,7,23,tzinfo=UTC); frame=CameraFrame(CAMERA_FRAME_V1,"d","c","s",1,now,now,"cal","a"*64,"jpeg",10,10,0,0); other=CameraFrame(CAMERA_FRAME_V1,"d","c","s",2,now,now,"cal","b"*64,"jpeg",10,10,0,0)
   artifact=VideoArtifactRef("video_artifact_ref.v1","clip",other,"jpeg","b"*64,now,timedelta(seconds=1))
   with self.assertRaises(ValueError): DetectionEvent("detection_event.v1","event",frame,"m","v","person",.9,BoundingBox(1,1,2,2),now,timedelta(seconds=1),artifact)
+
+ def test_event_rejects_box_outside_source_frame(self):
+  now=datetime(2026,7,23,tzinfo=UTC); frame=CameraFrame(CAMERA_FRAME_V1,"d","c","s",1,now,now,"cal","a"*64,"jpeg",10,10,0,0)
+  with self.assertRaises(ValueError): DetectionEvent("detection_event.v1","event",frame,"m","v","person",.9,BoundingBox(9,9,2,2),now,timedelta(seconds=1))
