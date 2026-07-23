@@ -93,9 +93,11 @@ class PiAdapterTests(unittest.TestCase):
         envelope = runtime.run_turn("s2", "Repülj egy kört!", policy)
         self.assertTrue(envelope.safety_verdict["flight_drafted"])
         self.assertFalse(envelope.safety_verdict["reached_actuation"])
-        # A pending reviewed plan was written; nothing executed.
-        plans = list(self.pending.glob("*.plan.json"))
+        # A pending plan was written, but WITHOUT an approval record, so the
+        # executor would refuse to fly it. This is the whole safety point.
+        plans = list(self.pending.glob("*.mission-spec.json"))
         self.assertEqual(len(plans), 1)
+        self.assertEqual(list(self.pending.glob("*.approval.json")), [])
 
         # The audit artifact round-trips through the versioned contract.
         with tempfile.TemporaryDirectory() as adir:
@@ -112,7 +114,10 @@ class PiAdapterTests(unittest.TestCase):
         ])
         envelope = runtime.run_turn("s3", "Szállj 999 méterre!", policy)
         self.assertFalse(envelope.safety_verdict["reached_actuation"])
-        self.assertFalse(self.pending.exists() and list(self.pending.glob("*.plan.json")))
+        # A rejected draft is recorded as denied, not drafted, and files nothing.
+        self.assertEqual(envelope.tool_trace[0].status, "denied")
+        self.assertFalse(envelope.safety_verdict["flight_drafted"])
+        self.assertFalse(self.pending.exists() and list(self.pending.glob("*.mission-spec.json")))
 
 
 if __name__ == "__main__":

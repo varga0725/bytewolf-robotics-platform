@@ -91,8 +91,10 @@ class CognitiveRuntime:
         self._clock = clock
         self._max_iterations = max_iterations
         self._turn_deadline_s = turn_deadline_s
-        self._executor = ThreadPoolExecutor(max_workers=1)
-        self._limiters: dict[str, LimitEnforcer] = {}
+        # More than one worker so an abandoned (timed-out) tool thread cannot
+        # block the next provider or tool call behind it.
+        self._executor = ThreadPoolExecutor(max_workers=4)
+        self._limiters: dict[tuple, LimitEnforcer] = {}
         # The one reserved tool that is not a plugin capability: it never runs
         # through the registry and never reaches actuation. The handler routes a
         # drafted request to the reviewed MissionSpec -> SafetyGate -> approval
@@ -136,8 +138,20 @@ class CognitiveRuntime:
                 return self._finish(session, turn_id, started, "timeout", None, trace,
                                     tokens_in, tokens_out, model, provider_name,
                                     error=("turn_timeout", "The turn exceeded its deadline."))
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                return self._finish(session, turn_id, started, "timeout", None, trace,
+                                    tokens_in, tokens_out, model, provider_name,
+                                    error=("turn_timeout", "The turn exceeded its deadline."))
+            provider_future = self._executor.submit(self._provider.complete, history, tool_specs)
             try:
-                response = self._provider.complete(history, tool_specs)
+                # Bound the (possibly retry/fallback) provider call by the turn
+                # budget: a slow chain cannot overrun the deadline and still return.
+                response = provider_future.result(timeout=remaining)
+            except FutureTimeout:
+                return self._finish(session, turn_id, started, "timeout", None, trace,
+                                    tokens_in, tokens_out, model, provider_name,
+                                    error=("turn_timeout", "A provider call exceeded the turn deadline."))
             except ProviderError as error:
                 return self._finish(session, turn_id, started, "error", None, trace,
                                     tokens_in, tokens_out, model, provider_name,
@@ -205,19 +219,21 @@ class CognitiveRuntime:
         future = self._executor.submit(
             self._registry.invoke, call.capability_id, policy=tool_policy, **call.arguments
         )
+        # Release the concurrency slot when the work actually terminates, not when
+        # we give up waiting: a timed-out call keeps running, and freeing its slot
+        # early would let a new call breach max_concurrent while it is still live.
+        future.add_done_callback(lambda _f, l=limiter: l.release())
         try:
             result = future.result(timeout=timeout_s)
         except FutureTimeout:
             latency = (self._clock() - started) * 1000
             entry = {**base, "status": "timeout", "latency_ms": latency,
-                    "detail": f"exceeded {timeout_s * 1000:.0f} ms"}
+                    "detail": f"exceeded {timeout_s * 1000:.0f} ms; call abandoned but still counted until it ends"}
             return entry, _tool_result(call, {"error": "timeout"})
         except PluginRegistryError as error:
             latency = (self._clock() - started) * 1000
             entry = {**base, "status": "error", "latency_ms": latency, "detail": str(error)}
             return entry, _tool_result(call, {"error": str(error)})
-        finally:
-            limiter.release()
         latency = (self._clock() - started) * 1000
         entry = {**base, "status": "ok", "latency_ms": latency}
         return entry, _tool_result(call, {"result": result})
@@ -234,16 +250,26 @@ class CognitiveRuntime:
             entry = {**base, "status": "error", "latency_ms": latency, "detail": str(error)}
             return entry, _tool_result(call, {"error": "flight request could not be drafted"})
         latency = (self._clock() - started) * 1000
-        entry = {**base, "status": "ok", "latency_ms": latency}
-        # The handler returns a pending-review descriptor, never an execution.
+        # A rejected draft is not a draft: record it as denied so flight_drafted
+        # stays false and the safety audit is not corrupted. Only a filed,
+        # pending-review draft counts as ok.
+        if isinstance(outcome, dict) and outcome.get("status") == "rejected":
+            entry = {**base, "status": "denied", "latency_ms": latency,
+                    "detail": "flight request rejected by MissionSpec validation"}
+        else:
+            entry = {**base, "status": "ok", "latency_ms": latency}
+        # The handler returns a pending-review or rejected descriptor, never an execution.
         return entry, _tool_result(call, {"result": outcome})
 
     def _limiter_for(self, capability_id: str, tool_policy: ToolPolicy) -> LimitEnforcer:
-        limiter = self._limiters.get(capability_id)
+        rate, concurrent = limits_of(tool_policy.limits)
+        # Key on the limits too: a stricter policy for the same capability must
+        # get its own enforcer, not silently reuse a looser one cached earlier.
+        key = (capability_id, rate, concurrent)
+        limiter = self._limiters.get(key)
         if limiter is None:
-            rate, concurrent = limits_of(tool_policy.limits)
             limiter = LimitEnforcer(rate_per_min=rate, max_concurrent=concurrent, clock=self._clock)
-            self._limiters[capability_id] = limiter
+            self._limiters[key] = limiter
         return limiter
 
     def _finish(

@@ -19,9 +19,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import json
+
 from apps.plugins.telemetry_read import register as register_telemetry
 from brain.cognitive_runtime import CognitiveRuntime, Provider
-from brain.mission_spec.reviewed_plan import write_reviewed_plan
+from brain.mission_spec.reviewed_plan import approval_path
 from brain.mission_spec.validation import (
     load_mission_safety_profile,
     validate_and_compile_mission_spec,
@@ -48,8 +50,11 @@ def build_flight_request_handler(
 
     The model passes a MissionSpec under ``mission_spec``. The handler runs it
     through the same validation the flight CLIs use. A rejected mission returns
-    its issues and writes nothing; an accepted mission is written as a pending
-    reviewed plan awaiting explicit approval. Neither path executes anything.
+    its issues and writes nothing; an accepted mission is written as an
+    *unapproved* plan artifact awaiting explicit human approval. Neither path
+    executes anything, and crucially the handler never writes an approval record:
+    the executor refuses a plan without a matching approval, so a model-drafted
+    plan cannot fly until a human review produces that approval separately.
     """
     profile = load_mission_safety_profile(twin_path)
     pending = Path(pending_dir)
@@ -65,9 +70,17 @@ def build_flight_request_handler(
                 "issues": [f"{'/'.join(str(p) for p in i.path)}: {i.message}" for i in report.issues],
             }
         pending.mkdir(parents=True, exist_ok=True)
-        plan_path = pending / f"{mission_spec.get('mission_id', 'pending')}.plan.json"
-        write_reviewed_plan(plan_path, mission_spec, PI_MODEL_LABEL)
-        return {"status": "pending_review", "plan_path": str(plan_path)}
+        plan_path = pending / f"{mission_spec.get('mission_id', 'pending')}.mission-spec.json"
+        # Write the plan only -- never an approval record. A pending plan with no
+        # approval is exactly what the executor refuses to fly.
+        plan_path.write_text(
+            json.dumps(mission_spec, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+        )
+        return {
+            "status": "pending_review",
+            "plan_path": str(plan_path),
+            "awaiting_approval_at": str(approval_path(plan_path)),
+        }
 
     return handler
 

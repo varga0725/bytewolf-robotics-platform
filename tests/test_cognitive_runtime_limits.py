@@ -92,5 +92,36 @@ class RateLimitInLoopTests(unittest.TestCase):
         self.assertIn("rate limit", envelope.tool_trace[1].detail)
 
 
+class PerPolicyLimiterTests(unittest.TestCase):
+    def test_a_strict_policy_is_not_bypassed_by_an_earlier_loose_one(self) -> None:
+        # A loose policy for a capability must not permanently determine its
+        # limiter: a later strict policy for the same capability still applies.
+        def one_call_then_reply():
+            return [
+                ProviderResponse(content=None, tool_calls=(ToolCall("c", "telemetry.read", {}),),
+                                model="m", input_tokens=1, output_tokens=1),
+                ProviderResponse(content="ok", tool_calls=(), model="m", input_tokens=1, output_tokens=1),
+            ]
+
+        provider = _ScriptedProvider(
+            one_call_then_reply() + one_call_then_reply() + one_call_then_reply()
+        )
+        registry = PluginRegistry()
+        registry.register(_manifest("tools", ["telemetry.read"]), _Plugin())
+        registry.start("tools")
+        runtime = CognitiveRuntime(provider, registry, prompt_version="t", clock=lambda: 1000.0)
+
+        loose = build_tool_policy(_consumer(["telemetry.read"]), registry, allowlist={"telemetry.read"})
+        strict = build_tool_policy(
+            _consumer(["telemetry.read"]), registry, allowlist={"telemetry.read"},
+            limits={"rate_per_min": 1},
+        )
+        # A loose turn establishes a limiter for the unlimited policy.
+        self.assertEqual(runtime.run_turn("s", "a", loose).tool_trace[0].status, "ok")
+        # Two strict turns: the second must be rate-denied, not silently allowed.
+        self.assertEqual(runtime.run_turn("s", "b", strict).tool_trace[0].status, "ok")
+        self.assertEqual(runtime.run_turn("s", "c", strict).tool_trace[0].status, "denied")
+
+
 if __name__ == "__main__":
     unittest.main()
