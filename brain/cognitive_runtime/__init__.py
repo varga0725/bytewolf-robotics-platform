@@ -33,6 +33,11 @@ from brain.cognitive_runtime.providers import (
     ProviderResponse,
     ToolCall,
 )
+from brain.cognitive_runtime.session import (
+    CognitiveRuntime,
+    Session,
+    SessionManager,
+)
 
 CONTRACT_VERSION = COGNITIVE_RUNTIME_CONTRACT_VERSION
 
@@ -42,6 +47,7 @@ __all__ = [
     "ENVELOPE_STATUSES",
     "AllProvidersFailedError",
     "CircuitBreaker",
+    "CognitiveRuntime",
     "FallbackProvider",
     "NIMProvider",
     "Provider",
@@ -49,6 +55,8 @@ __all__ = [
     "ProviderResponse",
     "ResponseEnvelope",
     "ResponseEnvelopeError",
+    "Session",
+    "SessionManager",
     "ToolCall",
     "ToolTraceEntry",
     "load_response_envelope",
