@@ -70,9 +70,14 @@ referencia-implementációja — általánosítva proposal-alapú runtime-má.
   hordozza az `input_refs`/modell/promptverzió provenance-t.
 - [x] 6. Statikus no-MAVSDK/PX4 teszt.
 
-**Hátravan (Pi-hook átvezetés):**
+**Pi-hook átvezetés (kész):**
 
-- [ ] 3. A meglévő `post_turn_memory_hook` (Node) az új runtime-on fut regresszió nélkül —
-  `apps/pi_agent/post_turn.test.mjs` + `tests/test_pi_memory_hook.py` átvezetve/zöld.
+- [x] 3. A meglévő `post_turn_memory_hook` (Node) átvezetve a Python runtime-ra
+  regresszió nélkül: `brain/cognitive_hooks/memory_hook.py` (`run_post_turn_memory`)
+  tükrözi a Node szerződését. Az admission és a store-merge a `memory.mjs`-hez
+  igazítva (6 op / 240 karakter / truncate / name-supersede / store-cap 40 /
+  azonos érzékeny-minta). Node-gated **cross-runtime parity teszt** bizonyítja,
+  hogy a Node és a Python hook azonos státuszszót ad 7 esetre.
+- [x] A Node suite 24/24 zöld, a `tests/test_pi_memory_hook.py` érintetlenül zöld.
 
-10 új teszt, teljes suite 798 zöld (ezen az ágon).
+24 új/érintett teszt (mag + memory-hook port), teljes Python suite 837 zöld.
