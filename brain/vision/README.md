@@ -145,3 +145,14 @@ liveness → alignment → ArcFace → private 1:1 comparison → multiframe gat
 Every unavailable or unexpected stage fails closed, and its sole output is a
 `FaceVerification v1` audit record; it is not exported by the Vision package
 and cannot issue an authorization or flight-control decision.
+
+## Cognitive Runtime boundary
+
+The Vision domain is a perception capability producer. `DetectionEvent`,
+`TrackedObject`, `VideoArtifactRef` and `VisionSummary` are immutable,
+TTL-bound, observation-only contracts for a future read-only Cognitive Runtime
+plugin. `canonical_from_detection_result()` is deliberately pure: it neither
+publishes to the dashboard nor writes memory, sends an event, makes a proposal,
+or reaches a Mission/PX4/MAVSDK interface. A Cognitive Hook may turn these
+evidence records into a proposal only through its own schema-validation,
+admission and policy path.
