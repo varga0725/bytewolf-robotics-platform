@@ -24,6 +24,13 @@ from brain.vision.face_verification import (
     LivenessResult,
     MatchResult,
 )
+from brain.vision.events import (
+    DetectionEvent,
+    TrackedObject,
+    VideoArtifactRef,
+    VisionSummary,
+    canonical_from_detection_result,
+)
 
 __all__ = (
     "CAMERA_FRAME_V1",
@@ -46,4 +53,9 @@ __all__ = (
     "FaceVerificationError",
     "LivenessResult",
     "MatchResult",
+    "DetectionEvent",
+    "TrackedObject",
+    "VideoArtifactRef",
+    "VisionSummary",
+    "canonical_from_detection_result",
 )
