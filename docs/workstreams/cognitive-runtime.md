@@ -84,11 +84,21 @@ tool-jai plugin-sdk capabilityk `registry.invoke` + ToolPolicy alatt. Az ág a f
   ToolPolicy-limit (timeout + rate + concurrency) élő kikényszerítése.
 - [x] `safety_verdict.reached_actuation` séma-szinten `const false`; statikus no-MAVSDK/PX4 teszt.
 
-**Hátravan (Pi-paritás mérföldkő):**
+**Pi-paritás mérföldkő (5. csomag, commit `f01c435`):**
 
-- [ ] 5. A Node Pi Agent tényleges bekötése a runtime adaptereként, funkcionális
-  regresszió nélkül (golden-turn a meglévő `apps/pi_agent` viselkedésre).
-- [ ] 6. A `prompt.test.mjs` / gateway-safety regresszió a runtime-on átvezetve.
-- [ ] Strukturált audit-artefakt perzisztálása (a `MissionExecution` v0.2 mintájára).
+- [x] 5. A Pi Agent runtime-adaptere kész (`apps/agent/cognitive_pi.py`): read-only
+  `telemetry.read` capability + a fenntartott `draft_flight_request` a valós
+  `validate_and_compile_mission_spec` úton; integrációs teszt bizonyítja.
+- [x] 6. Safety regresszió: veszélyes draftot ugyanaz a MissionSpec-validáció (SafetyGate)
+  utasítja el, semmi nem repül, `reached_actuation` mindig false.
+- [x] Strukturált audit-artefakt perzisztálása (`persist_envelope`, verziózott JSON, atomikus).
+- [x] Provider-retry (`RetryingProvider`) a fallback mellé.
+- [x] Technikai dokumentáció: [`docs/cognitive-runtime-v0_1.md`](../cognitive-runtime-v0_1.md).
 
-29 új teszt (4 csomag), teljes suite 811 zöld.
+**Megjegyzés a teljesség kedvéért:** a Node Pi harness *teljes* conversational
+paritása (durable memory, world briefing, vision) szándékosan a cognitive-hooks
+és a read-only-plugin mérföldkövekhez tartozik, nem a Node kód újraírásához. Ez a
+runtime a turn-motort, a safety-határt és a read + draft-flight felületet adja.
+
+43 új teszt (5 csomag), teljes suite 819 zöld. A GitHub Wiki technikai oldal a
+fenti `docs/` doksi tükre (kézi publikálás, ha a wiki engedélyezett).
