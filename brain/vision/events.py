@@ -56,6 +56,9 @@ class VisionSummary:
         if self.contract_version != "vision_summary.v1" or not all(isinstance(v, str) and v.strip() for v in (self.model_id, self.model_version)) or not isinstance(self.state_value, ResultState) or not isinstance(self.events, tuple) or not isinstance(self.tracks, tuple) or not _positive_duration(self.ttl): raise VisionContractError("Invalid vision summary.")
         _require_aware(self.observed_at, "observed_at")
 
+    def state(self, now: datetime) -> ResultState:
+        return self.state_value if self.state_value is not ResultState.VALID else _fresh(self.observed_at, now, self.ttl)
+
 
 def canonical_from_detection_result(result: DetectionResult, *, ttl: timedelta) -> VisionSummary:
     if not isinstance(result, DetectionResult) or not _positive_duration(ttl): raise VisionContractError("Canonical adapter requires DetectionResult and positive TTL.")

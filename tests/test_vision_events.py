@@ -9,3 +9,4 @@ class VisionEventTests(unittest.TestCase):
   result=DetectionResult("detection_result.v1",frame,"m","v",now,(Detection("person",.9,BoundingBox(1,1,2,2),"t"),Detection("car",.8,BoundingBox(4,4,2,2))))
   summary=canonical_from_detection_result(result,ttl=timedelta(seconds=1))
   self.assertEqual(len(summary.events),2); self.assertEqual(len(summary.tracks),1); self.assertEqual(summary.events[0].source_frame,frame)
+  self.assertEqual(summary.state(now+timedelta(seconds=2)).value,"stale")
