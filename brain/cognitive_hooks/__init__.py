@@ -13,6 +13,37 @@ See ``docs/workstreams/cognitive-hooks.md`` for the versioned-contract plan, the
 Definition of Done and the acceptance criteria.
 """
 
-CONTRACT_VERSION = "v0.1"
+from brain.cognitive_hooks.admission import (
+    MAX_OPERATIONS,
+    MAX_VALUE_LENGTH,
+    AdmissionResult,
+    admit,
+)
+from brain.cognitive_hooks.contracts import (
+    COGNITIVE_HOOKS_CONTRACT_VERSION,
+    Proposal,
+    ProposalContractError,
+    load_proposal,
+)
+from brain.cognitive_hooks.runtime import (
+    AdmissionRecord,
+    HookRuntime,
+    ProposalStore,
+)
 
-__all__ = ["CONTRACT_VERSION"]
+CONTRACT_VERSION = COGNITIVE_HOOKS_CONTRACT_VERSION
+
+__all__ = [
+    "CONTRACT_VERSION",
+    "COGNITIVE_HOOKS_CONTRACT_VERSION",
+    "MAX_OPERATIONS",
+    "MAX_VALUE_LENGTH",
+    "AdmissionRecord",
+    "AdmissionResult",
+    "HookRuntime",
+    "Proposal",
+    "ProposalContractError",
+    "ProposalStore",
+    "admit",
+    "load_proposal",
+]

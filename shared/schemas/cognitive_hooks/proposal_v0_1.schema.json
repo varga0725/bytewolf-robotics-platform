@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.local/schemas/cognitive_hooks/proposal_v0_1",
+  "title": "ByteWolf Cognitive Hook Proposal v0.1",
+  "description": "A typed candidate emitted by a background LLM job. A proposal is a suggestion, never a committed fact: it flows proposal -> schema validation -> policy/admission -> canonical store, and deterministic admission code decides what, if anything, is kept. Generalises the post-turn memory hook's memory_delta. See docs/workstreams/cognitive-hooks.md.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["contract_version", "proposal_id", "kind", "source", "created_at", "payload"],
+  "properties": {
+    "contract_version": {
+      "const": "v0.1",
+      "description": "Pins the meaning of every field below. A consumer that does not know this version rejects the proposal rather than guess."
+    },
+    "proposal_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique id for this proposal, for correlation with the admission decision and audit."
+    },
+    "kind": {
+      "enum": ["memory_delta"],
+      "description": "Which family this proposal belongs to. v0.1 admits only memory_delta; a new kind is a new contract version, not a silent extension."
+    },
+    "source": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["job", "model", "prompt_version"],
+      "description": "Provenance for audit: which background job produced it, with which model and prompt version, over which inputs.",
+      "properties": {
+        "job": {"type": "string", "minLength": 1, "description": "The background job that emitted the proposal, e.g. 'post_turn_memory'."},
+        "model": {"type": "string", "minLength": 1},
+        "prompt_version": {"type": "string", "minLength": 1},
+        "input_refs": {
+          "type": "array",
+          "description": "Opaque references to the inputs the job saw (e.g. turn ids or content hashes), never the raw inputs.",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, UTC, with an explicit offset. When the proposal was produced."
+    },
+    "payload": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"const": "memory_delta"}}, "required": ["kind"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/memory_delta"}}}
+    }
+  ],
+  "$defs": {
+    "memory_delta": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["operations"],
+      "description": "A set of durable-memory operations. Deliberately narrow in v0.1: only stable user facts, never mission commands or transient status.",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "description": "At least one operation; an empty delta is no proposal at all.",
+          "items": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": ["op", "category", "value"],
+            "properties": {
+              "op": {
+                "enum": ["upsert", "forget"],
+                "description": "'upsert' records or supersedes a fact; 'forget' removes one. Forgets are applied before upserts by the admission code."
+              },
+              "category": {
+                "enum": ["name", "preference", "place_label", "relationship"],
+                "description": "The narrow set of durable categories v0.1 admits. Anything else is rejected, not stored."
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The fact to record or forget. Admission code caps its length and rejects sensitive data (credentials, tokens, e-mail, phone, precise address)."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
