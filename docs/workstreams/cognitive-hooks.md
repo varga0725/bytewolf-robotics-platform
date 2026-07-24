@@ -80,4 +80,12 @@ referencia-implementációja — általánosítva proposal-alapú runtime-má.
   hogy a Node és a Python hook azonos státuszszót ad 7 esetre.
 - [x] A Node suite 24/24 zöld, a `tests/test_pi_memory_hook.py` érintetlenül zöld.
 
-24 új/érintett teszt (mag + memory-hook port), teljes Python suite 837 zöld.
+**Production cutover (Codex P1 megoldva):** a live dashboard-út is az új runtime-on
+fut. A Node `runner.mjs` már csak *extractor* (a nyers deltát adja vissza); a Python
+`apps/agent/pi_memory.py::PiMemoryHook` validál (`load_proposal`) + admittál (`admit`)
++ a **megosztott kanonikus store**-ba ír (a dashboard memory-API formátumában, a
+`memory_store` helpereit újrahasználva). `PiAgentClient` opcionális `memory_hook`-ot
+kap, a `server.py` élesben bekötve. A briefing-olvasás változatlan (közös formátum).
+
+Teljes Python suite 847 zöld, Node suite 24/24. A Codex review 3×P2-je is javítva
+(forget-majd-upsert supersede, immutable facts, audit-provenance).
