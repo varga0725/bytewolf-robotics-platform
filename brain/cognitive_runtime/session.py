@@ -111,8 +111,14 @@ class CognitiveRuntime:
         *,
         tools: Sequence[dict[str, Any]] | None = None,
         cancelled: Callable[[], bool] = lambda: False,
+        system_prompt: str | None = None,
     ) -> ResponseEnvelope:
-        """Run one turn and return exactly one deterministic envelope."""
+        """Run one turn and return exactly one deterministic envelope.
+
+        ``system_prompt`` overrides the runtime's default for this turn, so a
+        caller with per-turn briefings can refresh the framing while the session
+        keeps its prior user/assistant history.
+        """
         session = self._sessions.get(session_id)
         session.turns += 1
         turn_id = f"{session_id}-{session.turns}"
@@ -123,7 +129,7 @@ class CognitiveRuntime:
         tool_specs = list(tools) if tools is not None else _tool_specs(granted)
         if tools is None and self._flight_request_handler is not None:
             tool_specs.append(_flight_request_spec())
-        history = self._seed_history(session, user_message)
+        history = self._seed_history(session, user_message, system_prompt)
         trace: list[dict[str, Any]] = []
         tokens_in = tokens_out = 0
         provider_name: str | None = None
@@ -182,10 +188,16 @@ class CognitiveRuntime:
 
     # -- internals --------------------------------------------------------
 
-    def _seed_history(self, session: Session, user_message: str) -> list[dict[str, Any]]:
-        history = list(session.messages)
-        if self._system_prompt and not any(m.get("role") == "system" for m in history):
-            history.insert(0, {"role": "system", "content": self._system_prompt})
+    def _seed_history(
+        self, session: Session, user_message: str, system_prompt: str | None
+    ) -> list[dict[str, Any]]:
+        prompt = system_prompt if system_prompt is not None else self._system_prompt
+        # Drop any earlier system message and re-insert the current one, so a
+        # per-turn prompt (with fresh briefings) replaces a stale one while the
+        # user/assistant history is kept.
+        history = [message for message in session.messages if message.get("role") != "system"]
+        if prompt:
+            history.insert(0, {"role": "system", "content": prompt})
         history.append({"role": "user", "content": user_message})
         return history
 

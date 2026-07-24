@@ -18,8 +18,9 @@ from apps.api.command_gateway import AgentReply, DashboardCommandGateway, Dashbo
 from apps.dashboard.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.api.point_mission import PointMissionError, review_point_mission, review_survey_mission
-from apps.agent.pi_memory import PiMemoryHook
-from apps.gateway.pi_agent import PiAgentClient
+from apps.agent.pi_conversation import PiConversation
+from apps.agent.pi_memory_extractor import extract_memory_delta
+from brain.cognitive_runtime import NIMProvider, ProviderError
 from brain.memory.briefing import capability_briefing, world_briefing
 from brain.memory.graph import knowledge_view
 from brain.memory.world_map import map_view
@@ -74,21 +75,21 @@ def create_app(
     gateway: DashboardCommandGateway | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ByteWolf Command Gateway", version="0.1")
-    # The Node runner extracts a memory delta; the cognitive-hooks runtime
-    # validates, admits and stores it into the same canonical memory the
-    # dashboard API reads. This is the live cutover onto the new runtime.
-    pi_agent = PiAgentClient(
-        memory_hook=PiMemoryHook(memory_dir, model=os.environ.get("NIM_MEMORY_MODEL", "unknown"))
-    )
-    # The envelope is read once: it is the same file the SafetyGate loads, and
-    # a profile that cannot be read leaves the agent saying it does not know
-    # its limits rather than inventing one.
+    # The conversational turn runs on the Python Cognitive Runtime: NIM directly,
+    # the read-only plugins as tools, the reserved draft-flight path, and the
+    # cognitive-hooks memory pipeline. The Node runner is no longer on the live
+    # path. The provider is built lazily so a credential-less process (tests,
+    # a dev box with no key) still serves every other endpoint.
     capabilities = _capability_briefing(safety_profile_path)
     command_gateway = gateway or DashboardCommandGateway(
-        converse=lambda session_id, text: AgentReply(
-            **pi_agent.converse(
-                session_id, text, _world_briefing(world_memory_path), capabilities
-            ).__dict__
+        converse=_build_live_converse(
+            telemetry_path,
+            detections_path or Path("simulation/artifacts/dashboard/detections.json"),
+            safety_profile_path,
+            world_memory_path,
+            agent_artifact_dir,
+            memory_dir,
+            capabilities,
         ),
         review=_review_with_cli,
         execute=_execute_with_cli,
@@ -340,6 +341,62 @@ def _world_briefing(world_memory_path: Path) -> str:
         return world_briefing(memory.recall(now), memory.disputed(now), now=now)
     except (OSError, ValueError):
         return ""
+
+
+def _build_live_converse(
+    telemetry_path: Path,
+    detections_path: Path,
+    twin_path: Path,
+    world_memory_path: Path,
+    pending_dir: Path,
+    memory_dir: Path,
+    capabilities: str,
+):
+    """A converse closure that lazily builds the Python conversation.
+
+    The NIM provider is only constructed on the first real chat turn, so a
+    process without credentials still serves telemetry, camera and memory
+    endpoints; a missing key makes chat report 'unavailable', never crash.
+    """
+    state: dict[str, object] = {"conversation": None, "unavailable": False}
+
+    def converse(session_id: str, text: str) -> AgentReply:
+        if state["conversation"] is None and not state["unavailable"]:
+            try:
+                provider = NIMProvider.from_env(dict(os.environ))
+            except ProviderError:
+                state["unavailable"] = True
+            else:
+                state["conversation"] = PiConversation(
+                    provider,
+                    telemetry_path=telemetry_path,
+                    detections_path=detections_path,
+                    twin_path=twin_path,
+                    world_memory_path=world_memory_path,
+                    pending_dir=pending_dir,
+                    memory_dir=memory_dir,
+                    extractor=_env_memory_extractor(),
+                )
+        conversation = state["conversation"]
+        if conversation is None:
+            return AgentReply("Elnézést, most nem tudok biztonságosan válaszolni.", False, "unavailable")
+        reply = conversation.converse(session_id, text, _world_briefing(world_memory_path), capabilities)
+        return AgentReply(reply.text, reply.requests_drone_action, reply.memory_update)
+
+    return converse
+
+
+def _env_memory_extractor():
+    """A memory extractor bound to the NIM configuration in the environment."""
+    def extractor(user_message: str, assistant_reply: str):
+        return extract_memory_delta(
+            user_message=user_message,
+            assistant_reply=assistant_reply,
+            model=os.environ.get("NIM_MEMORY_MODEL") or os.environ.get("NIM_MISSION_MODEL", ""),
+            api_key=os.environ.get("NVIDIA_API_KEY", ""),
+            base_url=os.environ.get("NIM_BASE_URL", "").strip() or "https://integrate.api.nvidia.com/v1",
+        )
+    return extractor
 
 
 def _session(value: str) -> str:
