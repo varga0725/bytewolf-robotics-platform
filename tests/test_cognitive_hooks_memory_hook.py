@@ -1,24 +1,19 @@
-"""The post-turn memory hook, ported onto the cognitive-hooks runtime.
+"""The post-turn memory hook on the cognitive-hooks runtime.
 
-Two things are proven here: the Python hook maps outcomes exactly as the Node
-hook's contract requires (extractor fault -> unavailable, malformed/empty ->
-skipped, admitted -> updated), and -- where Node is available -- the Python
-runtime and the Node hook return the *same* status word for the same input, so
-the port carries no functional regression.
+The Python hook maps outcomes as the retired Node hook's contract required: an
+extractor fault -> unavailable, a malformed or empty delta -> skipped, an
+admitted fact -> updated. (The cross-runtime parity check against the Node hook
+was retired with the Node runner; the parity it proved is now the Python
+behaviour these tests assert.)
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-import shutil
-import subprocess
 import unittest
 
 from brain.cognitive_hooks import HookRuntime, run_post_turn_memory
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-POST_TURN = PROJECT_ROOT / "apps" / "pi_agent" / "post_turn.mjs"
 NOW = "2026-07-23T10:00:00+00:00"
 
 
@@ -61,54 +56,6 @@ class MemoryHookMappingTests(unittest.TestCase):
 
     def test_empty_operations_is_skipped(self) -> None:
         self.assertEqual(_run_python({"kind": "memory_delta", "operations": []}), "skipped")
-
-
-# Each case: a Node extractor expression and the equivalent Python delta.
-_CASES = [
-    ("throws", "async () => { throw new Error('boom'); }", (None, True)),
-    ("name", "async () => ({kind:'memory_delta',operations:[{op:'upsert',category:'name',value:'Ferenc'}]})",
-     ({"kind": "memory_delta", "operations": [{"op": "upsert", "category": "name", "value": "Ferenc"}]}, False)),
-    ("sensitive", "async () => ({kind:'memory_delta',operations:[{op:'upsert',category:'preference',value:'a jelszavam titkos123'}]})",
-     ({"kind": "memory_delta", "operations": [{"op": "upsert", "category": "preference", "value": "a jelszavam titkos123"}]}, False)),
-    ("wrong_kind", "async () => ({kind:'other'})", ({"kind": "other"}, False)),
-    ("empty", "async () => ({kind:'memory_delta',operations:[]})",
-     ({"kind": "memory_delta", "operations": []}, False)),
-    ("bad_category", "async () => ({kind:'memory_delta',operations:[{op:'upsert',category:'credentials',value:'x'}]})",
-     ({"kind": "memory_delta", "operations": [{"op": "upsert", "category": "credentials", "value": "x"}]}, False)),
-    ("street", "async () => ({kind:'memory_delta',operations:[{op:'upsert',category:'place_label',value:'a Kossuth utca'}]})",
-     ({"kind": "memory_delta", "operations": [{"op": "upsert", "category": "place_label", "value": "a Kossuth utca"}]}, False)),
-]
-
-
-@unittest.skipUnless(shutil.which("node"), "Node is required for the cross-runtime parity check.")
-class MemoryHookParityTests(unittest.TestCase):
-    def _run_node(self, extractor: str) -> str:
-        script = (
-            f"import {{ runPostTurnMemoryHook, safeMemoryUpdate }} from '{POST_TURN}';\n"
-            "const status = await runPostTurnMemoryHook({\n"
-            f"  extract: {extractor},\n"
-            "  loadFacts: async () => [], saveFacts: async () => {},\n"
-            "  now: () => '2026-07-23T10:00:00Z',\n"
-            "  sessionId: 'session', turnId: 'turn-1',\n"
-            "  userMessage: 'A nevem Ferenc.', assistantReply: 'Örülök, Ferenc.',\n"
-            "});\n"
-            "process.stdout.write(safeMemoryUpdate(status));\n"
-        )
-        completed = subprocess.run(
-            [shutil.which("node"), "--input-type=module", "-e", script],
-            capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=30, check=True,
-        )
-        return completed.stdout.strip()
-
-    def test_node_and_python_agree_on_every_case(self) -> None:
-        for label, extractor_js, (delta, raise_it) in _CASES:
-            with self.subTest(case=label):
-                node_status = self._run_node(extractor_js)
-                python_status = _run_python(delta, raise_it=raise_it)
-                self.assertEqual(
-                    node_status, python_status,
-                    f"case '{label}': node={node_status} python={python_status}",
-                )
 
 
 if __name__ == "__main__":

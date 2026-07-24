@@ -17,9 +17,9 @@ from typing import Any
 
 ALLOWED_CATEGORIES = frozenset({"name", "preference", "place_label", "relationship"})
 MAX_FACT_CHARS = 240
-# Kept deliberately in sync with `apps/pi_agent/memory.mjs`: a fact the hook
-# refuses must stay refused when a user types it into the dashboard by hand.
-# Hungarian inflects, so these stems are open-ended (`jelszavam`, `titkos`).
+# Kept deliberately in sync with `brain/cognitive_hooks/admission.py`: a fact the
+# post-turn hook refuses must stay refused when a user types it into the dashboard
+# by hand. Hungarian inflects, so these stems are open-ended (`jelszavam`, `titkos`).
 _SENSITIVE = re.compile(
     r"\b(api\s*key|api[-_ ]?kulcs\w*|token|jelsz[oóa]\w*|password|secret|tit[ok]k?\w*|"
     r"bankk[aá]rty\w*|credit\s*card|e-?mail\w*|telefonsz[aá]m\w*|phone)\b|"

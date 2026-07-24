@@ -11,7 +11,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import unittest
 
-from apps.gateway.pi_agent import PiAgentClient
 from brain.memory.briefing import world_briefing
 from brain.memory.world_memory import WorldMemory, load_world_claim
 
@@ -87,48 +86,6 @@ class BriefingContentTests(unittest.TestCase):
 
         self.assertLessEqual(len(text), 260)
         self.assertIn("hosszkorlát", text)
-
-
-class BriefingBoundaryTests(unittest.TestCase):
-    """Pi receives the briefing as text; it never gains a way to read the store."""
-
-    def test_the_briefing_reaches_the_runner_as_bounded_request_data(self) -> None:
-        seen: list[dict[str, object]] = []
-        client = PiAgentClient(
-            runner=lambda request: seen.append(request) or {
-                "text": "Rendben.", "requests_drone_action": False, "memory_update": "skipped"
-            }
-        )
-
-        client.converse(SESSION, "mit láttál?", world_briefing([_claim()], now=NOW))
-
-        self.assertIn("world_context", seen[0])
-        self.assertIn("A piros jel a padlón van.", str(seen[0]["world_context"]))
-        self.assertIn("bizonyosság", str(seen[0]["world_context"]))
-
-    def test_an_oversized_briefing_is_truncated_before_it_reaches_pi(self) -> None:
-        seen: list[dict[str, object]] = []
-        client = PiAgentClient(
-            runner=lambda request: seen.append(request) or {
-                "text": "Rendben.", "requests_drone_action": False, "memory_update": "skipped"
-            }
-        )
-
-        client.converse(SESSION, "mit láttál?", "x" * 5_000)
-
-        self.assertLessEqual(len(str(seen[0]["world_context"])), 1_200)
-
-    def test_a_turn_without_a_briefing_carries_no_world_field_at_all(self) -> None:
-        seen: list[dict[str, object]] = []
-        client = PiAgentClient(
-            runner=lambda request: seen.append(request) or {
-                "text": "Szia!", "requests_drone_action": False, "memory_update": "skipped"
-            }
-        )
-
-        client.converse(SESSION, "szia")
-
-        self.assertNotIn("world_context", seen[0])
 
 
 class MissionFeedbackLoopTests(unittest.TestCase):
@@ -236,21 +193,6 @@ class CapabilityBriefingTests(unittest.TestCase):
         tightened = replace(self._profile(), max_altitude_m=7.5)
 
         self.assertIn("7.5 m", capability_briefing(tightened))
-
-    def test_the_envelope_reaches_pi_as_its_own_bounded_field(self) -> None:
-        from brain.memory.briefing import capability_briefing
-
-        seen: list[dict[str, object]] = []
-        client = PiAgentClient(
-            runner=lambda request: seen.append(request) or {
-                "text": "Rendben.", "requests_drone_action": False, "memory_update": "skipped"
-            }
-        )
-
-        client.converse(SESSION, "milyen magasra tudsz menni?", "", capability_briefing(self._profile()))
-
-        self.assertIn("capability_context", seen[0])
-        self.assertNotIn("world_context", seen[0], "an empty world is not sent as an empty section")
 
 
 if __name__ == "__main__":
