@@ -18,6 +18,7 @@ from apps.api.command_gateway import AgentReply, DashboardCommandGateway, Dashbo
 from apps.dashboard.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.api.point_mission import PointMissionError, review_point_mission, review_survey_mission
+from apps.agent.pi_memory import PiMemoryHook
 from apps.gateway.pi_agent import PiAgentClient
 from brain.memory.briefing import capability_briefing, world_briefing
 from brain.memory.graph import knowledge_view
@@ -73,7 +74,12 @@ def create_app(
     gateway: DashboardCommandGateway | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ByteWolf Command Gateway", version="0.1")
-    pi_agent = PiAgentClient()
+    # The Node runner extracts a memory delta; the cognitive-hooks runtime
+    # validates, admits and stores it into the same canonical memory the
+    # dashboard API reads. This is the live cutover onto the new runtime.
+    pi_agent = PiAgentClient(
+        memory_hook=PiMemoryHook(memory_dir, model=os.environ.get("NIM_MEMORY_MODEL", "unknown"))
+    )
     # The envelope is read once: it is the same file the SafetyGate loads, and
     # a profile that cannot be read leaves the agent saying it does not know
     # its limits rather than inventing one.

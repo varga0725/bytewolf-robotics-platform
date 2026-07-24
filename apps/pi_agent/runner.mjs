@@ -10,7 +10,7 @@
  * reviewed MissionSpec → SafetyGate → executor path.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -24,7 +24,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { extractMemoryDelta } from "./memory.mjs";
-import { diagnosticFailureMessage, runPostTurnMemoryHook, safeMemoryUpdate } from "./post_turn.mjs";
+import { diagnosticFailureMessage } from "./post_turn.mjs";
 import { systemPrompt } from "./prompt.mjs";
 import { telemetryLine } from "./telemetry_view.mjs";
 
@@ -66,22 +66,15 @@ async function memoryFor(sessionId) {
     .slice(-40);
 }
 
-async function postTurnMemory(request, assistantReply) {
-  return runPostTurnMemoryHook({
-    extract: ({ userMessage, assistantReply: reply }) => extractMemoryDelta({
-      fetchImpl: fetch,
-      baseUrl: process.env.NIM_BASE_URL || "https://integrate.api.nvidia.com/v1",
-      apiKey: process.env.NVIDIA_API_KEY,
-      model: process.env.NIM_MEMORY_MODEL || process.env.NIM_MISSION_MODEL,
-      userMessage,
-      assistantReply: reply,
-    }),
-    loadFacts: memoryFor,
-    saveFacts: (sessionId, facts) =>
-      writeFile(path.join(MEMORY_DIR, `${sessionId}.json`), JSON.stringify({ facts }, null, 2), "utf8"),
-    now: () => new Date().toISOString(),
-    sessionId: request.session_id,
-    turnId: `${request.session_id}:${Date.now()}`,
+// The Node side is now only the extractor. Admission and the canonical store
+// moved to the Python cognitive-hooks runtime, so this returns the raw proposed
+// delta (or null on any extractor failure) and lets Python decide what is kept.
+async function extractDeltaForTurn(request, assistantReply) {
+  return extractMemoryDelta({
+    fetchImpl: fetch,
+    baseUrl: process.env.NIM_BASE_URL || "https://integrate.api.nvidia.com/v1",
+    apiKey: process.env.NVIDIA_API_KEY,
+    model: process.env.NIM_MEMORY_MODEL || process.env.NIM_MISSION_MODEL,
     userMessage: request.text,
     assistantReply,
   });
@@ -229,8 +222,9 @@ async function main() {
     }
     // Memory extraction is isolated from the conversational turn. Its failure
     // must never suppress an otherwise safe chat reply or alter flight intent.
-    const memoryUpdate = safeMemoryUpdate(await postTurnMemory(request, finalReply));
-    process.stdout.write(JSON.stringify({ text: finalReply, requests_drone_action: requestedFlight, memory_update: memoryUpdate }));
+    // The raw delta crosses to Python, which validates, admits and stores it.
+    const memoryDelta = await extractDeltaForTurn(request, finalReply);
+    process.stdout.write(JSON.stringify({ text: finalReply, requests_drone_action: requestedFlight, memory_delta: memoryDelta }));
   } finally {
     session.dispose();
   }
