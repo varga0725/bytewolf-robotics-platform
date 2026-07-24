@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.local/schemas/perception/camera_calibration_v0_1.schema.json",
+  "title": "ByteWolf Camera Calibration v0.1",
+  "description": "The measured intrinsics and lens distortion of a physical camera. It is a measurement, so it always carries measured provenance -- naming the method, when it was captured, and its reprojection error. It never carries a vendor spec or a guessed value; an uncalibrated camera has no document, not a document full of nulls. Loaded by brain/perception/camera_calibration.py, which is the only sanctioned path from a bench measurement into the twin.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "camera_id", "projection_model", "image_size", "intrinsics", "distortion", "reprojection_error_px", "provenance"],
+  "properties": {
+    "contract_version": {"const": "v0.1"},
+    "camera_id": {
+      "enum": ["front_rgb", "down_rgb"],
+      "description": "The twin camera this calibration is for, matching sensors.cameras in twin.yaml."
+    },
+    "device": {"type": "string", "minLength": 1, "description": "The physical camera, e.g. 'Hawkeye 4K Split V5'."},
+    "projection_model": {
+      "enum": ["pinhole", "fisheye"],
+      "description": "'fisheye' for a wide lens like the Hawkeye's 160-degree optic; a fisheye must be undistorted before any pinhole projection (target_estimator) consumes it."
+    },
+    "image_size": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "description": "The resolution the calibration was measured at. Intrinsics are only valid at this size; they scale with resolution.",
+      "properties": {
+        "width": {"type": "integer", "exclusiveMinimum": 0},
+        "height": {"type": "integer", "exclusiveMinimum": 0}
+      }
+    },
+    "intrinsics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fx", "fy", "cx", "cy"],
+      "description": "The pinhole camera matrix in pixels. For a fisheye, these are the fisheye model's fx/fy/cx/cy, valid only with the distortion coefficients below.",
+      "properties": {
+        "fx": {"type": "number", "exclusiveMinimum": 0},
+        "fy": {"type": "number", "exclusiveMinimum": 0},
+        "cx": {"type": "number", "minimum": 0},
+        "cy": {"type": "number", "minimum": 0}
+      }
+    },
+    "distortion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "coefficients"],
+      "properties": {
+        "model": {
+          "enum": ["kannala_brandt", "rational_polynomial", "plumb_bob", "none"],
+          "description": "'kannala_brandt' is OpenCV's fisheye model (4 coefficients). 'plumb_bob'/'rational_polynomial' are pinhole models. 'none' only for an ideal, distortion-free render."
+        },
+        "coefficients": {
+          "type": "array",
+          "items": {"type": "number"},
+          "description": "Distortion coefficients in the model's order; empty only for model 'none'."
+        }
+      }
+    },
+    "reprojection_error_px": {
+      "type": "number",
+      "minimum": 0,
+      "description": "RMS reprojection error of the calibration, in pixels. A high value means the calibration is untrustworthy; the loader is where a project-chosen threshold is enforced."
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "method", "captured_at"],
+      "description": "A calibration is always a measurement; this records how and when.",
+      "properties": {
+        "status": {"const": "measured"},
+        "method": {"type": "string", "minLength": 1, "description": "e.g. 'OpenCV fisheye checkerboard, 9x6, 25mm squares, 20 poses'."},
+        "captured_at": {"type": "string", "format": "date-time", "description": "RFC 3339, UTC, with an explicit offset."},
+        "target": {"type": "string", "minLength": 1, "description": "The calibration target used, e.g. a checkerboard spec."}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"distortion": {"properties": {"model": {"const": "none"}}}}, "required": ["distortion"]},
+      "then": {"properties": {"distortion": {"properties": {"coefficients": {"maxItems": 0}}}}, "description": "Model 'none' means no distortion, so it carries no coefficients."},
+      "else": {"properties": {"distortion": {"properties": {"coefficients": {"minItems": 1}}}}, "description": "Any real distortion model must carry at least one coefficient."}
+    }
+  ]
+}

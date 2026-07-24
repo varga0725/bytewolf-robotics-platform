@@ -36,6 +36,87 @@ payload:
     - custom_payload
     - cellular_modem
 
+# Physically acquired hardware, recorded because these are bought devices, not
+# simulator settings. This section describes what is on the bench today; it never
+# supplies a flight value. A vendor spec is not a measurement -- anything the
+# simulation actually flies on still lives under `provenance` with status
+# `simulated`/`derived`, and the real value still has to be measured. The point of
+# this block is to (1) name the exact devices, (2) record where the current
+# simulation model diverges from them, and (3) list what can be measured now, on a
+# bench, without the battery or companion computer the kit does not yet include.
+hardware:
+  acquired:
+    flight_controller:
+      device: Holybro Pixhawk 6C
+      part_of: holybro_x500_v2_developer_kit
+      firmware_target: PX4 v1.17.0  # matches simulation.px4_version
+      provenance: vendor
+      source: https://docs.holybro.com/drone-development-kit/px4-development-kit-x500v2
+    gnss:
+      device: Holybro M8N/M10 GPS
+      part_of: holybro_x500_v2_developer_kit
+      provenance: vendor
+    airframe:
+      device: Holybro X500 V2 frame kit
+      includes: [frame, motors, ESCs, power_distribution_board, propellers, SiK_telemetry_radio]
+      assembly: no-soldering, arms pre-fitted with motors + ESCs
+      provenance: vendor
+    camera:
+      device: Hawkeye 4K Split V5
+      maps_to: sensors.cameras.front_rgb   # navigation / FPV role, per hardware decision
+      sensor: 1/2.3in CMOS, 12 MP
+      native_video: 4K @ 30 fps (down to 720p @ 240 fps)
+      horizontal_fov_deg: 160            # ~2.793 rad; a wide fisheye
+      mass_g: 19
+      module_mm: [19, 19]
+      interfaces: [USB_UVC, HDMI, AV]
+      stabilization: gyro EIS (onboard)
+      provenance: vendor
+      source: https://shop.makerfire.com/products/hawkeye-4k-split-v5-camera
+  # Bought but not yet in hand. Every capability gated on these stays unmeasured.
+  not_yet_acquired:
+    flight_battery:
+      note: 4S ~5000 mAh recommended by Holybro; none purchased.
+      blocks: [propulsion.*, battery.*, vehicle.mass_kg flight mass, any powered/flight test]
+    companion_computer:
+      note: Jetson (or Raspberry Pi 4) not purchased; platform board is pre-drilled for it.
+      blocks: [sensors.cameras.*.latency_ms, perception pipeline on real hardware]
+  # Where the current simulation model and the real device disagree today. These
+  # are known, recorded gaps -- not silent drift -- each with how it gets resolved.
+  sim_vs_hardware_gaps:
+    front_rgb_camera:
+      # The declared geometry gap is now closed: sensors.cameras.front_rgb carries
+      # the Hawkeye's real 4K / 2.793 rad values, not PX4's 1080p / 1.74 rad.
+      resolved: Declared FOV and resolution aligned to the Hawkeye (vendor).
+      remaining:
+        - what: Gazebo renders a pinhole camera; the Hawkeye is a fisheye.
+          detail: >-
+            <camera> at 2.793 rad is a wide-pinhole approximation. True fisheye
+            distortion is not modelled by the stock sensor and is not claimed.
+          plan: >-
+            Measure the Hawkeye's intrinsics + fisheye distortion on the bench over
+            UVC (standard OpenCV checkerboard), record them in the calibration
+            contract (shared/schemas/perception/camera_calibration_v0_1.schema.json),
+            and load them with brain/perception/camera_calibration.py.
+        - what: The Gazebo front-camera overlay is not yet wired to this FOV.
+          detail: >-
+            render_camera_horizontal_fov / declared_camera_fov can render it; the
+            front camera is disabled today, so enabling it and confirming the render
+            against a SITL run is the manual step that closes this.
+          plan: Wire the front overlay to declared_camera_fov when front_rgb is enabled; confirm on SITL.
+  # Measurable now, on a USB bench, with no battery and no companion computer.
+  # Each item names the twin parameter it would resolve; none is filled until the
+  # measurement exists (see the twin scope: vendor facts + measurement plans only).
+  bench_measurable_now:
+    - target: [sensors.imu.gyro_noise_density, sensors.imu.accel_noise_density, sensors.barometer.noise_pa]
+      how: Allan variance on a static USB-powered Pixhawk 6C recording.
+    - target: [vehicle.mass_kg]
+      how: Weigh the assembled dry airframe (no battery); flight mass follows once a battery is bought.
+    - target: [vehicle.inertia_kg_m2.ixx, vehicle.inertia_kg_m2.iyy, vehicle.inertia_kg_m2.izz]
+      how: Bifilar-pendulum measurement on the assembled airframe (mechanical, needs no power).
+    - target: [sensors.gps.horizontal_noise_m, sensors.gps.vertical_noise_m]
+      how: Outdoor static GPS-fix scatter from the M8N/M10 over a QGroundControl log.
+
 propulsion:
   motor_model: factory_developer_kit
   propeller_model: factory_developer_kit
@@ -138,14 +219,34 @@ sensors:
   # (simulation/gazebo/camera_profiles.py); PX4's stock model is 1280x960.
   cameras:
     front_rgb:
+      # Physical device: Hawkeye 4K Split V5 (see hardware.acquired.camera). The
+      # declared geometry is the REAL camera's now, not PX4's stock mono_cam: 4K
+      # and a 160-degree fisheye. Two honest caveats remain, both recorded here,
+      # neither silently papered over:
+      #   1. Gazebo's <camera> sensor is a pinhole model. Rendering at 2.793 rad
+      #      is a wide-pinhole approximation of a fisheye, not the real lens. The
+      #      Gazebo overlay can render this FOV (simulation/gazebo/camera_profiles.py
+      #      render_camera_horizontal_fov / declared_camera_fov); wiring it into a
+      #      front-camera run and confirming it is a manual SITL step, done when the
+      #      camera is enabled (it is disabled below).
+      #   2. brain/perception/target_estimator.py is a PINHOLE projection and runs
+      #      on down_rgb, not this camera. A 160-degree fisheye must be undistorted
+      #      with the measured calibration before any pinhole projection uses it.
       role: object detection and navigation
       profile: gz_x500_mono_cam
       enabled: false
-      width: 1920
-      height: 1080
-      horizontal_fov_rad: 1.74
+      width: 3840
+      height: 2160
+      horizontal_fov_rad: 2.793       # 160 deg, Hawkeye 4K Split V5 (vendor)
+      projection: fisheye             # NOT pinhole -- see calibration below
       fps: 30
       latency_ms: null
+      # Measured intrinsics + fisheye distortion are NOT inlined here: they are
+      # measured on the physical camera and live in a separate validated contract,
+      # loaded by brain/perception/camera_calibration.py. Uncalibrated until that
+      # measurement runs on the bench.
+      calibration_status: uncalibrated
+      calibration_contract: shared/schemas/perception/camera_calibration_v0_1.schema.json
     down_rgb:
       # The V1 first provable capability: target detection, relative position, and
       # precision landing all run off this camera.
@@ -190,7 +291,10 @@ provenance:
     status: simulated
     simulated_value: 2.0
     simulated_source: PX4 models/x500_base/model.sdf, base_link mass
-    plan: Weigh the assembled airframe with its flight battery once hardware is bought.
+    plan: >-
+      The developer-kit airframe is now in hand. Weigh the assembled dry airframe
+      (frame + FC + motors + ESCs + camera) now; the flight mass follows once a
+      battery is bought. See hardware.bench_measurable_now.
   vehicle.inertia_kg_m2.ixx:
     status: simulated
     simulated_value: 0.02166666666666667
@@ -245,16 +349,26 @@ provenance:
     plan: Measure under a known load, or read from the smart battery if the build uses one.
   sensors.imu.gyro_noise_density:
     status: unknown
-    plan: Allan variance on a static bench recording from the flight controller actually bought.
+    plan: >-
+      Allan variance on a static bench recording. The Pixhawk 6C is now in hand;
+      run this on a USB-powered recording, no battery needed.
   sensors.imu.accel_noise_density:
     status: unknown
-    plan: Allan variance on a static bench recording from the flight controller actually bought.
+    plan: >-
+      Allan variance on a static bench recording. The Pixhawk 6C is now in hand;
+      run this on a USB-powered recording, no battery needed.
   sensors.barometer.noise_pa:
     status: unknown
-    plan: Static bench recording at a known altitude, from the flight controller actually bought.
+    plan: >-
+      Static bench recording at a known altitude. The Pixhawk 6C is now in hand;
+      run this USB-powered, no battery needed.
   sensors.cameras.front_rgb.latency_ms:
     status: unknown
-    plan: Measure capture-to-availability delay on the chosen camera and companion computer.
+    plan: >-
+      Measure capture-to-availability delay on the camera and companion computer.
+      The Hawkeye 4K Split V5 is now in hand (hardware.acquired.camera), but this
+      still needs the companion computer, which is not yet bought, to time the
+      full chain.
   sensors.cameras.down_rgb.latency_ms:
     status: unknown
     plan: Measure capture-to-availability delay on the chosen camera and companion computer.
