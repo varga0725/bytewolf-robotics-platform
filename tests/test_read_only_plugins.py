@@ -18,15 +18,24 @@ from brain.plugin_sdk import PluginRegistry
 _NOW = datetime(2026, 7, 24, 10, 0, 0, 200000, tzinfo=UTC)
 
 
-def _detection_doc(validity="valid", captured_at="2026-07-24T10:00:00+00:00", max_age_s=0.5, detections=None):
+def _det(label, confidence=0.9, x=1, y=1, w=2, h=2):
+    return {"label": label, "confidence": confidence,
+            "bounding_box": {"x_px": x, "y_px": y, "width_px": w, "height_px": h}}
+
+
+def _summary_doc(validity="valid", observed_at="2026-07-24T10:00:00+00:00", max_age_s=0.5, detections=None):
+    dets = detections if detections is not None else []
     return {
         "contract_version": "v0.1",
-        "captured_at": captured_at,
+        "source": "camera:front_rgb",
+        "observed_at": observed_at,
         "max_age_s": max_age_s,
         "validity": validity,
-        "frame": {"width": 1280, "height": 720},
-        "detections": detections if detections is not None else [],
-        "source": "gz front_rgb",
+        "frame": {"width_px": 1280, "height_px": 720},
+        "model_id": "yolo",
+        "model_version": "v8",
+        "detections": dets,
+        "detection_count": len(dets),
     }
 
 
@@ -34,13 +43,13 @@ class VisionSummaryTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.path = Path(self._tmp.name) / "detections.json"
+        self.path = Path(self._tmp.name) / "vision-summary.json"
 
     def _plugin(self):
         return VisionSummaryPlugin(self.path, now=lambda: _NOW)
 
     def test_a_fresh_reading_is_summarised_as_fresh(self) -> None:
-        self.path.write_text(json.dumps(_detection_doc(detections=[{"label": "marker"}])), encoding="utf-8")
+        self.path.write_text(json.dumps(_summary_doc(detections=[_det("marker")])), encoding="utf-8")
         plugin = self._plugin()
         plugin.start()
         summary = plugin.capabilities()["vision.summary"]()
@@ -50,7 +59,7 @@ class VisionSummaryTests(unittest.TestCase):
 
     def test_a_stale_reading_is_not_fresh(self) -> None:
         self.path.write_text(
-            json.dumps(_detection_doc(captured_at="2026-07-24T09:59:00+00:00")), encoding="utf-8"
+            json.dumps(_summary_doc(observed_at="2026-07-24T09:59:00+00:00")), encoding="utf-8"
         )
         summary = self._plugin().capabilities()["vision.summary"]()
         self.assertFalse(summary["fresh"])
@@ -60,18 +69,22 @@ class VisionSummaryTests(unittest.TestCase):
         self.assertFalse(summary["available"])
         self.assertEqual(summary["detection_count"], 0)
 
+    def test_a_contract_violating_artifact_is_unavailable(self) -> None:
+        # A document that is not a valid VisionSummary is unavailable, not a crash.
+        self.path.write_text(json.dumps({"contract_version": "v0.1", "detections": []}), encoding="utf-8")
+        summary = self._plugin().capabilities()["vision.summary"]()
+        self.assertFalse(summary["available"])
+
     def test_the_summary_carries_detection_identities(self) -> None:
-        self.path.write_text(json.dumps(_detection_doc(detections=[
-            {"label": "marker", "confidence": 0.91, "bbox": {"x": 1, "y": 1, "width": 2, "height": 2}},
-        ])), encoding="utf-8")
+        self.path.write_text(json.dumps(_summary_doc(detections=[_det("marker", 0.91)])), encoding="utf-8")
         summary = self._plugin().capabilities()["vision.summary"]()
         self.assertEqual(summary["detections"][0]["label"], "marker")
         self.assertEqual(summary["detections"][0]["confidence"], 0.91)
 
     def test_both_camera_feeds_are_aggregated(self) -> None:
         down = Path(self._tmp.name) / "down.json"
-        self.path.write_text(json.dumps(_detection_doc(detections=[{"label": "front-marker"}])), encoding="utf-8")
-        down.write_text(json.dumps(_detection_doc(detections=[{"label": "down-pad"}])), encoding="utf-8")
+        self.path.write_text(json.dumps(_summary_doc(detections=[_det("front-marker")])), encoding="utf-8")
+        down.write_text(json.dumps(_summary_doc(detections=[_det("down-pad")])), encoding="utf-8")
         plugin = VisionSummaryPlugin({"front": self.path, "down": down}, now=lambda: _NOW)
         plugin.start()
         summary = plugin.capabilities()["vision.summary"]()
@@ -80,7 +93,7 @@ class VisionSummaryTests(unittest.TestCase):
         self.assertEqual(labels, {"front-marker", "down-pad"})
 
     def test_invocation_through_the_registry(self) -> None:
-        self.path.write_text(json.dumps(_detection_doc()), encoding="utf-8")
+        self.path.write_text(json.dumps(_summary_doc()), encoding="utf-8")
         registry = PluginRegistry()
         vision_summary.register(registry, self.path)
         registry.start("vision.summary")

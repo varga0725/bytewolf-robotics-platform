@@ -1,12 +1,13 @@
 """Read-only vision summary plugin: the get_vision_summary tool as a capability.
 
-It reads the current detection artifacts (versioned detection_v0_1 documents) --
-one per camera feed -- and returns a bounded, self-qualifying summary: per source
-whether the reading is valid and fresh and how many detections it holds, plus a
-bounded list of detection identities (label and confidence) so the agent can say
-*what* the camera sees, not merely how many. It never controls the drone, never
-invents a detection, and fails soft: an unreadable artifact reports unavailable
-for that source rather than raising.
+It reads the current canonical VisionSummary artifacts (the shared
+vision_summary v0.1 contract) -- one per camera feed -- through the fail-closed
+loader, and returns a bounded, self-qualifying summary: per source whether the
+reading is valid and fresh and how many detections it holds, plus a bounded list
+of detection identities (label and confidence) so the agent can say *what* the
+camera sees, not merely how many. It never controls the drone, never invents a
+detection, and fails soft: a missing or contract-violating artifact reports
+unavailable for that source rather than raising.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from brain.plugin_sdk import PluginManifest, PluginRegistry, load_plugin_manifest
+from brain.vision.canonical import VisionContractError, VisionState, load_vision_summary
 
 
 MAX_DETECTION_IDENTITIES = 8
@@ -70,18 +72,17 @@ class VisionSummaryPlugin:
         identities: list[dict[str, Any]] = []
         total = 0
         any_fresh = False
+        now = self._now()
         for name, path in self._sources.items():
-            document = self._read(path)
-            if document is None:
+            summary = self._read(path)
+            if summary is None:
                 per_source[name] = {"available": False}
                 continue
-            detections = document.get("detections")
-            detections = detections if isinstance(detections, list) else []
-            fresh = self._is_fresh(document)
+            fresh = summary.state(now) is VisionState.VALID
             any_fresh = any_fresh or fresh
-            total += len(detections)
-            for detection in detections:
-                if isinstance(detection, dict) and len(identities) < MAX_DETECTION_IDENTITIES:
+            total += summary.detection_count
+            for detection in summary.detections:
+                if len(identities) < MAX_DETECTION_IDENTITIES:
                     identities.append({
                         "source": name,
                         "label": detection.get("label"),
@@ -89,10 +90,10 @@ class VisionSummaryPlugin:
                     })
             per_source[name] = {
                 "available": True,
-                "validity": document.get("validity"),
-                "captured_at": document.get("captured_at"),
+                "validity": summary.declared_validity,
+                "observed_at": summary.observed_at.isoformat(),
                 "fresh": fresh,
-                "detection_count": len(detections),
+                "detection_count": summary.detection_count,
             }
         return {
             "available": any(source.get("available") for source in per_source.values()),
@@ -102,28 +103,21 @@ class VisionSummaryPlugin:
             "sources": per_source,
         }
 
-    def _read(self, path: Path) -> dict[str, Any] | None:
+    def _read(self, path: Path):
+        """Read one source as a canonical VisionSummary, or None if unavailable.
+
+        A missing file, unreadable JSON, or a document that does not satisfy the
+        shared vision_summary v0.1 contract is reported as unavailable for that
+        source -- never an exception into the turn.
+        """
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
-        return document if isinstance(document, dict) else None
-
-    def _is_fresh(self, document: dict[str, Any]) -> bool:
-        if document.get("validity") != "valid":
-            return False
-        captured_at = document.get("captured_at")
-        max_age_s = document.get("max_age_s")
-        if not isinstance(captured_at, str) or not isinstance(max_age_s, (int, float)):
-            return False
         try:
-            observed = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
-        except ValueError:
-            return False
-        if observed.tzinfo is None:
-            return False
-        age = (self._now() - observed.astimezone(UTC)).total_seconds()
-        return 0 <= age <= float(max_age_s)
+            return load_vision_summary(document)
+        except VisionContractError:
+            return None
 
 
 def manifest() -> PluginManifest:
