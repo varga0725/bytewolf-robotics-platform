@@ -35,21 +35,3 @@ jobs:
       - name: Run the unittest suite
         # The suite is the gate: no lint or formatter is configured in this repo.
         run: python -m unittest discover -s tests -v
-
-  node:
-    name: Pi agent memory suite
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Install the Pi agent dependencies
-        working-directory: apps/pi_agent
-        # --ignore-scripts matches the documented local install: no package in
-        # this tree needs a build step, and running arbitrary install scripts in
-        # CI is a supply-chain surface the project does not need.
-        run: npm ci --ignore-scripts
-      - name: Run the memory and prompt tests
-        working-directory: apps/pi_agent
-        run: node --test

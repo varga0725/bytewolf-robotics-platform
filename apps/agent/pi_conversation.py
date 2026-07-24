@@ -14,6 +14,7 @@ instructions, and a failed turn degrades to a safe message rather than a crash.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,13 +22,21 @@ from typing import Any
 from apps.agent.pi_memory import PiMemoryHook
 from apps.agent.pi_prompt import system_prompt
 from apps.gateway.memory_store import _load_facts
-from apps.gateway.pi_agent import PiAgentReply
 from apps.plugins import telemetry_read, vision_summary, world_query
 from brain.cognitive_runtime import CognitiveRuntime, Provider, SessionManager
 from brain.memory.briefing import capability_briefing, world_briefing
 from brain.memory.world_memory import load_world_memory
 from brain.plugin_sdk import PluginRegistry, build_tool_policy, load_plugin_manifest
 from brain.safety.profile import SafetyProfileError, load_safety_profile
+
+
+@dataclass(frozen=True)
+class PiAgentReply:
+    """One turn's typed result for the dashboard gateway."""
+
+    text: str
+    requests_drone_action: bool
+    memory_update: str = "unavailable"
 
 
 _READ_CAPABILITIES = ("telemetry.read", "vision.summary", "world_memory.query")

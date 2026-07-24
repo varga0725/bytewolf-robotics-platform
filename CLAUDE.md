@@ -65,12 +65,17 @@ the PX4 checkout with `make px4_sitl gz_x500`. It runs PX4 in daemon mode (`-d`)
 purpose: the interactive `pxh>` prompt used to fill an unread output pipe and stall SITL
 before MAVLink came up.
 
-There is no lint or formatter in this repo. `unittest` is the only gate, plus the
-Node suite for the Pi agent memory boundary (`cd apps/pi_agent && node --test`).
-`.github/workflows/tests.yml` runs both on push and pull request. CI runs neither
+There is no lint or formatter in this repo. `unittest` is the only gate.
+`.github/workflows/tests.yml` runs it on push and pull request. CI runs neither
 PX4 nor Gazebo — a hosted runner has neither — so a green tick proves the safety
 logic, contracts and memory boundaries, never that a flight works. SITL evidence
 stays manual and lives under `simulation/artifacts/`.
+
+The conversational agent runs on the Python Cognitive Runtime (`brain/cognitive_runtime`,
+`apps/agent/pi_conversation.py`): NIM directly, the read-only plugins as tools, the
+reserved draft-flight path, and the cognitive-hooks memory pipeline. The former Node
+Pi runner (`apps/pi_agent/`) has been retired; there is no longer a Node build or test
+step. See `docs/pi-retirement-v0_1.md` and `docs/cognitive-runtime-v0_1.md`.
 
 ## Non-negotiable safety architecture
 

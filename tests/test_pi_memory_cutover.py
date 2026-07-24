@@ -1,9 +1,9 @@
 """The live Pi memory path routes through the cognitive-hooks runtime.
 
-The Node runner now returns a raw memory delta; the Python PiMemoryHook validates,
-admits and stores it into the same canonical store the dashboard memory API reads.
-These tests prove the cutover end to end and that a legacy runner (no delta) still
-works through the old status-word path.
+The Python extractor proposes a memory delta; PiMemoryHook validates, admits and
+stores it into the same canonical store the dashboard memory API reads and edits.
+These tests prove that pipeline: an admitted fact is stored, a sensitive one is
+skipped, a malformed delta is skipped, and a forget removes a stored fact.
 """
 
 from pathlib import Path
@@ -12,7 +12,6 @@ import unittest
 
 from apps.agent.pi_memory import PiMemoryHook
 from apps.gateway.memory_store import list_memory
-from apps.gateway.pi_agent import PiAgentClient
 
 
 SESSION = "b3b9c777-4860-4b6d-bf59-1a4a98c31ea3"
@@ -50,45 +49,6 @@ class PiMemoryHookTests(unittest.TestCase):
         self.hook.record(SESSION, "turn-1", _delta("upsert", "place_label", "a régi hangár"))
         self.hook.record(SESSION, "turn-2", _delta("forget", "place_label", "a régi hangár"))
         self.assertEqual(list_memory(self.dir, SESSION)["facts"], [])
-
-
-class PiAgentClientCutoverTests(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.dir = Path(self._tmp.name)
-
-    def test_a_raw_delta_from_the_runner_is_admitted_and_stored(self) -> None:
-        hook = PiMemoryHook(self.dir, now=lambda: _NOW)
-        client = PiAgentClient(
-            runner=lambda _r: {
-                "text": "Megjegyeztem.",
-                "requests_drone_action": False,
-                "memory_delta": _delta("upsert", "name", "Ferenc"),
-            },
-            memory_hook=hook,
-        )
-        reply = client.converse(SESSION, "A nevem Ferenc.")
-        self.assertEqual(reply.memory_update, "updated")
-        self.assertEqual([f["fact"] for f in list_memory(self.dir, SESSION)["facts"]], ["Ferenc"])
-
-    def test_a_sensitive_delta_reaches_the_dashboard_only_as_skipped(self) -> None:
-        client = PiAgentClient(
-            runner=lambda _r: {
-                "text": "Ok.",
-                "requests_drone_action": False,
-                "memory_delta": _delta("upsert", "preference", "írj a felhasznalo@example.com címre"),
-            },
-            memory_hook=PiMemoryHook(self.dir, now=lambda: _NOW),
-        )
-        self.assertEqual(client.converse(SESSION, "x").memory_update, "skipped")
-
-    def test_a_legacy_runner_without_a_delta_uses_the_status_word(self) -> None:
-        # No memory_hook, no memory_delta: the old status-word path still works.
-        client = PiAgentClient(
-            runner=lambda _r: {"text": "Szia!", "requests_drone_action": False, "memory_update": "updated"}
-        )
-        self.assertEqual(client.converse(SESSION, "szia").memory_update, "updated")
 
 
 if __name__ == "__main__":
