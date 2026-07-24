@@ -16,6 +16,7 @@ from pathlib import Path
 import shutil
 import subprocess
 from typing import Any
+import uuid
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,8 +59,12 @@ class PiAgentClient:
     the session ID and text and emits one typed reply on stdout.
     """
 
-    def __init__(self, *, runner: RunPi | None = None) -> None:
+    def __init__(self, *, runner: RunPi | None = None, memory_hook: Any = None) -> None:
         self._runner = runner or _run_pi
+        # When set, the runner's raw `memory_delta` is validated, admitted and
+        # stored by the cognitive-hooks runtime; without it, a legacy runner's
+        # `memory_update` status word is used as-is.
+        self._memory_hook = memory_hook
 
     def converse(
         self,
@@ -97,7 +102,15 @@ class PiAgentClient:
             or not isinstance(requested, bool)
         ):
             raise PiAgentError("Pi agent returned an invalid reply; the drone received no command.")
-        return PiAgentReply(reply.strip(), requested, _memory_update(response.get("memory_update")))
+        return PiAgentReply(reply.strip(), requested, self._resolve_memory(session_id, response))
+
+    def _resolve_memory(self, session_id: str, response: Mapping[str, object]) -> str:
+        """Derive the memory status, routing a raw delta through the new runtime."""
+        if self._memory_hook is not None and "memory_delta" in response:
+            turn_id = f"{session_id}:{uuid.uuid4().hex}"
+            status = self._memory_hook.record(session_id, turn_id, response.get("memory_delta"))
+            return status if isinstance(status, str) and status in _MEMORY_UPDATE_STATES else "unavailable"
+        return _memory_update(response.get("memory_update"))
 
 
 def _memory_update(value: object) -> str:
