@@ -87,7 +87,6 @@ def create_app(
             detections_path or Path("simulation/artifacts/dashboard/detections.json"),
             safety_profile_path,
             world_memory_path,
-            agent_artifact_dir,
             memory_dir,
             capabilities,
         ),
@@ -348,7 +347,6 @@ def _build_live_converse(
     detections_path: Path,
     twin_path: Path,
     world_memory_path: Path,
-    pending_dir: Path,
     memory_dir: Path,
     capabilities: str,
 ):
@@ -373,7 +371,6 @@ def _build_live_converse(
                     detections_path=detections_path,
                     twin_path=twin_path,
                     world_memory_path=world_memory_path,
-                    pending_dir=pending_dir,
                     memory_dir=memory_dir,
                     extractor=_env_memory_extractor(),
                 )

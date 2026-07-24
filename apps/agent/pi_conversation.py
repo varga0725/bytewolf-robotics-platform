@@ -18,7 +18,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from apps.agent.cognitive_pi import build_flight_request_handler
 from apps.agent.pi_memory import PiMemoryHook
 from apps.agent.pi_prompt import system_prompt
 from apps.gateway.memory_store import _load_facts
@@ -58,7 +57,6 @@ class PiConversation:
         detections_path: Path | str,
         twin_path: Path | str,
         world_memory_path: Path | str,
-        pending_dir: Path | str,
         memory_dir: Path | str,
         extractor: MemoryExtractor | None = None,
         sessions: SessionManager | None = None,
@@ -69,7 +67,6 @@ class PiConversation:
         self._detections_path = Path(detections_path)
         self._twin_path = Path(twin_path)
         self._world_memory_path = Path(world_memory_path)
-        self._pending_dir = Path(pending_dir)
         self._memory_dir = Path(memory_dir)
         self._extractor = extractor
         self._sessions = sessions or SessionManager()  # keeps conversation history
@@ -91,7 +88,7 @@ class PiConversation:
             registry,
             prompt_version="cognitive-runtime.pi.v0_1",
             sessions=self._sessions,
-            flight_request_handler=build_flight_request_handler(self._twin_path, self._pending_dir),
+            flight_request_handler=_acknowledge_flight_request,
         )
         policy = build_tool_policy(
             load_plugin_manifest(_CONSUMER), registry, allowlist=set(_READ_CAPABILITIES)
@@ -136,6 +133,18 @@ class PiConversation:
             return world_briefing(memory.recall(now), memory.disputed(now), now=now)
         except (OSError, ValueError):
             return ""
+
+
+def _acknowledge_flight_request(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Signal flight intent for review; do not compile or validate a MissionSpec.
+
+    A chat model cannot author a full MissionSpec, and it must not: the turn only
+    records that the user wants to fly, which sets requests_drone_action. The
+    gateway's existing review step compiles the natural-language request into a
+    MissionSpec, and it still needs explicit approval before anything executes.
+    """
+    request = arguments.get("request") if isinstance(arguments, dict) else None
+    return {"status": "pending_review", "request": request}
 
 
 _PLUGIN_OF = {

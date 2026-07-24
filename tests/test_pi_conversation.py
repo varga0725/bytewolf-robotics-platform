@@ -19,17 +19,6 @@ ROOT = Path(__file__).resolve().parents[1]
 TWIN = ROOT / "shared/config/x500v2/twin.yaml"
 SESSION = "b3b9c777-4860-4b6d-bf59-1a4a98c31ea3"
 
-_VALID_SPEC = {
-    "schema_version": "0.1",
-    "mission_id": "a3b9c777-4860-4b6d-bf59-1a4a98c31ea3",
-    "vehicle_id": "x500v2_reference_01",
-    "intent": "test_flight",
-    "constraints": {"max_altitude_m": 10.0, "max_speed_m_s": 3.0, "max_radius_m": 25.0,
-                    "minimum_battery_percent_to_start": 40.0, "loss_of_link_action": "RTL"},
-    "steps": [{"type": "TAKEOFF", "altitude_m": 2.0}, {"type": "RTL"}],
-    "abort_policy": {"on_timeout": "LAND", "on_low_battery": "RTL", "on_position_invalid": "LAND"},
-}
-
 
 class _ScriptedProvider:
     name = "scripted"
@@ -54,15 +43,13 @@ class PiConversationTests(unittest.TestCase):
         self.detections = base / "detections.json"
         self.detections.write_text(json.dumps({"contract_version": "v0.1", "validity": "missing", "detections": []}), encoding="utf-8")
         self.world = base / "claims.jsonl"
-        self.pending = base / "pending"
         self.memory = base / "memory"
 
     def _conversation(self, provider, extractor=None):
         return PiConversation(
             provider,
             telemetry_path=self.telemetry, detections_path=self.detections, twin_path=TWIN,
-            world_memory_path=self.world, pending_dir=self.pending, memory_dir=self.memory,
-            extractor=extractor,
+            world_memory_path=self.world, memory_dir=self.memory, extractor=extractor,
         )
 
     def test_a_read_turn_replies_and_updates_memory(self) -> None:
@@ -82,17 +69,19 @@ class PiConversationTests(unittest.TestCase):
         system = [m for m in provider.last_messages if m.get("role") == "system"]
         self.assertTrue(system and "ByteWolf" in system[0]["content"])
 
-    def test_a_flight_intent_turn_drafts_for_review_without_actuating(self) -> None:
+    def test_a_flight_intent_turn_signals_a_request_without_actuating(self) -> None:
+        # The turn only signals flight intent; the gateway's review step compiles
+        # the natural-language request and still requires explicit approval. The
+        # turn never writes a plan and never actuates.
         provider = _ScriptedProvider([
             ProviderResponse(content=None,
-                            tool_calls=(ToolCall("c1", "draft_flight_request", {"mission_spec": _VALID_SPEC}),),
+                            tool_calls=(ToolCall("c1", "draft_flight_request", {"request": "Repülj egy kört."}),),
                             model="m", input_tokens=1, output_tokens=1),
             ProviderResponse(content="Beküldtem jóváhagyásra.", tool_calls=(), model="m", input_tokens=1, output_tokens=1),
         ])
         reply = self._conversation(provider).converse(SESSION, "Repülj egy kört!")
+        self.assertEqual(reply.text, "Beküldtem jóváhagyásra.")
         self.assertTrue(reply.requests_drone_action)
-        self.assertEqual(len(list(self.pending.glob("*.mission-spec.json"))), 1)
-        self.assertEqual(list(self.pending.glob("*.approval.json")), [])
 
     def test_a_provider_failure_degrades_to_a_safe_message(self) -> None:
         class _Dead:
