@@ -1,0 +1,1 @@
+{"events":[],"failure_reason":"SafetyViolation: Takeoff altitude exceeds the 20 m safety limit.","outcome":"failed","recorded_at":"2026-07-16T18:02:05.768730Z","run_id":"6773f3b4-7cb2-42f6-bc82-86e1ecf41040","safety_decision":"rejected","telemetry":null,"version":"v0.2"}

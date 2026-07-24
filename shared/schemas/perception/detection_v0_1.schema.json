@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.local/schemas/perception/detection_v0_1.schema.json",
+  "title": "ByteWolf Detection Result v0.1",
+  "description": "A versioned, validated detector output. It describes what a camera frame contained; it never commands. Consumers must distinguish valid, invalid, and missing results, and only act on a valid, fresh one.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "captured_at", "max_age_s", "validity", "frame", "detections"],
+  "properties": {
+    "contract_version": {"const": "v0.1"},
+    "captured_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, UTC, with an explicit offset. When the frame was captured, never when it was processed: age is measured from this instant."
+    },
+    "max_age_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "How long the result stays usable after captured_at. Past it the result is stale and must not be acted on."
+    },
+    "validity": {
+      "enum": ["valid", "invalid", "missing"],
+      "description": "'valid': the detector ran and trusts the result. 'invalid': the detector ran but does not trust it, e.g. a failure or an unreadable frame. 'missing': no frame was available, so there is no result. 'stale' is not declared here; it is derived from age."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What produced the result, e.g. 'gz mono_cam + stub'. Free text for audit, never for dispatch."
+    },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "properties": {
+        "width": {"type": "integer", "exclusiveMinimum": 0},
+        "height": {"type": "integer", "exclusiveMinimum": 0},
+        "frame_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "detections": {
+      "type": "array",
+      "description": "The objects found. A valid result may be empty (nothing detected); an invalid or missing result carries none.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "confidence", "bbox"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "bbox": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["x", "y", "width", "height"],
+            "description": "Pixel box in the frame, origin top-left.",
+            "properties": {
+              "x": {"type": "number", "minimum": 0},
+              "y": {"type": "number", "minimum": 0},
+              "width": {"type": "number", "exclusiveMinimum": 0},
+              "height": {"type": "number", "exclusiveMinimum": 0}
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"validity": {"not": {"const": "valid"}}}, "required": ["validity"]},
+      "then": {
+        "properties": {"detections": {"maxItems": 0}},
+        "description": "Only a valid result may carry detections; an invalid or missing one must not, so absence cannot be read as 'nothing there'."
+      }
+    }
+  ]
+}

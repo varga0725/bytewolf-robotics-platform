@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.local/schemas/cognitive_runtime/tool_trace_v0_1",
+  "title": "ByteWolf Cognitive Runtime Tool Trace Entry v0.1",
+  "description": "One record of a tool (plugin capability) call made during a turn. It carries a REFERENCE to the arguments, never the raw arguments, so the trace stays auditable without leaking prompt content or sensitive input. A tool_trace entry is a component of a response envelope, not a standalone document, so it does not repeat the envelope's contract_version. See docs/workstreams/cognitive-runtime.md.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["call_id", "capability_id", "status", "latency_ms"],
+  "properties": {
+    "call_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique id for this call within the turn, so a trace entry can be correlated with logs without exposing its payload."
+    },
+    "capability_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+      "description": "The plugin capability that was invoked, e.g. 'telemetry.read'. Matches the Plugin SDK capability namespace."
+    },
+    "status": {
+      "enum": ["ok", "denied", "error", "timeout"],
+      "description": "Outcome of the call. 'ok': returned normally. 'denied': the ToolPolicy did not grant it. 'error': the capability raised. 'timeout': the call exceeded its ToolPolicy limit and was cancelled."
+    },
+    "latency_ms": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Wall-clock milliseconds the call took, from dispatch to outcome."
+    },
+    "args_ref": {
+      "type": "string",
+      "description": "An opaque reference to the arguments (e.g. a content hash), NEVER the raw arguments. The trace records that a call happened and with which argument shape, not what the argument values were."
+    },
+    "detail": {
+      "type": "string",
+      "description": "Free text for audit on a non-ok status, e.g. a denial reason or an error class. Never parsed for dispatch, and never the raw tool output."
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "ok"}}, "required": ["status"]},
+      "then": {
+        "not": {"required": ["detail"]},
+        "description": "detail explains a non-ok outcome; an ok call carries none, so the trace cannot smuggle raw output through it."
+      }
+    }
+  ]
+}

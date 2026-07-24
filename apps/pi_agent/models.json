@@ -1,0 +1,24 @@
+{
+  "providers": {
+    "nvidia-nim": {
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "api": "openai-completions",
+      "apiKey": "$NVIDIA_API_KEY",
+      "authHeader": true,
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "nvidia/nemotron-3-nano-30b-a3b",
+          "name": "ByteWolf Mission Agent",
+          "input": ["text"],
+          "contextWindow": 32768,
+          "maxTokens": 1024,
+          "reasoning": false
+        }
+      ]
+    }
+  }
+}

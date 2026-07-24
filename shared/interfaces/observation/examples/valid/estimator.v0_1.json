@@ -1,0 +1,9 @@
+{
+  "contract_version": "v0.1",
+  "kind": "estimator",
+  "vehicle_id": "x500v2_reference_01",
+  "observed_at": "2026-07-17T12:00:00Z",
+  "max_age_s": 1.0,
+  "validity": "valid",
+  "payload": {"global_position_ok": true, "local_position_ok": true, "home_position_ok": true, "failsafe_active": false}
+}

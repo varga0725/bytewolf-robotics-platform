@@ -8,6 +8,7 @@ import unittest
 from brain.mission.commands import LandCommand, ReturnToHomeCommand, TakeoffCommand, WaypointCommand
 from brain.mission_spec.validation import (
     MissionSafetyProfile,
+    load_mission_safety_profile,
     validate_and_compile_mission_spec,
 )
 
@@ -160,12 +161,31 @@ class MissionSpecValidationTests(unittest.TestCase):
 
     def test_documented_example_is_valid(self) -> None:
         document = json.loads(
-            (ROOT / "interfaces/mission_spec/examples/takeoff_waypoint_rtl.v0_1.json").read_text()
+            (ROOT / "shared/interfaces/mission_spec/examples/takeoff_waypoint_rtl.v0_1.json").read_text()
         )
 
         report = validate_and_compile_mission_spec(document, PROFILE)
 
         self.assertTrue(report.approved)
+
+    def test_loads_the_active_twin_profile_for_mission_spec_validation(self) -> None:
+        """The shipped contract loads; its numbers are the contract's to choose.
+
+        `PROFILE` above is this module's own fixture, deliberately fixed so the
+        validation tests do not move when the envelope does. Asserting the file
+        equals it made the fixture a second copy of the contract, and every
+        change to the envelope a failure here.
+        """
+        import yaml
+
+        path = ROOT / "shared/config/x500v2/twin.yaml"
+        profile = load_mission_safety_profile(path)
+        safety = yaml.safe_load(path.read_text())["safety"]
+
+        self.assertEqual(profile.vehicle_id, "x500v2_reference_01")
+        self.assertEqual(profile.max_radius_m, float(safety["max_radius_m"]))
+        self.assertEqual(profile.max_altitude_m, float(safety["max_altitude_m"]))
+        self.assertEqual(profile.loss_of_link_action, safety["loss_of_link_action"])
 
 
 if __name__ == "__main__":

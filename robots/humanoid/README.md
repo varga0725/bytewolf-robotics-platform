@@ -1,0 +1,3 @@
+# Humanoid
+
+Fenntartott robotdomain.

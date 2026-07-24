@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.local/schemas/plugin_sdk/tool_policy_v0_1",
+  "title": "ByteWolf Plugin Tool Policy v0.1",
+  "description": "The registry's fail-closed decision about what a plugin may actually consume. A plugin never ships its own ToolPolicy: the registry derives it by intersecting the manifest's 'requests' with the capability allowlist, so an unrequested or disallowed capability is simply never granted. See docs/workstreams/plugin-sdk.md.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["contract_version", "plugin_id", "granted"],
+  "properties": {
+    "contract_version": {
+      "const": "v0.1",
+      "description": "Pins the meaning of every field below."
+    },
+    "plugin_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+      "description": "The plugin this policy applies to."
+    },
+    "granted": {
+      "type": "array",
+      "description": "The capabilities the plugin may consume. An empty array is a valid, deliberate outcome: it means the plugin was granted nothing, not that the decision is missing.",
+      "items": {
+        "type": "object",
+        "unevaluatedProperties": false,
+        "required": ["capability_id", "version"],
+        "properties": {
+          "capability_id": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"},
+          "version": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+$"}
+        }
+      }
+    },
+    "denied": {
+      "type": "array",
+      "description": "Capabilities the plugin requested but was refused, each with a reason, for audit. A denial is recorded, never silent.",
+      "items": {
+        "type": "object",
+        "unevaluatedProperties": false,
+        "required": ["capability_id", "reason"],
+        "properties": {
+          "capability_id": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"},
+          "reason": {"type": "string", "minLength": 1, "description": "Why the request was refused, e.g. 'not on allowlist' or 'version unavailable'."}
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "Default execution budget the runtime enforces for this plugin's capability calls. Declared here so the timeout/rate boundary is versioned and auditable next to the grant, not buried in runtime config.",
+      "properties": {
+        "timeout_ms": {"type": "integer", "exclusiveMinimum": 0, "description": "Wall-clock ceiling for one capability call before it is cancelled."},
+        "rate_per_min": {"type": "integer", "exclusiveMinimum": 0, "description": "Maximum calls per minute across this plugin's grants."},
+        "max_concurrent": {"type": "integer", "exclusiveMinimum": 0, "description": "Maximum in-flight calls at once."}
+      }
+    }
+  }
+}

@@ -1,0 +1,53 @@
+# Versioned pin of the simulation stack the X500 V2 twin is validated against.
+#
+# PX4-Autopilot is third-party source that lives outside this repository and is
+# git-ignored, so nothing in a clean checkout would otherwise say which tree the
+# evidence came from. This file is that record: `python -m simulation.baseline`
+# compares a local environment against it and fails closed on any drift.
+#
+# Every hash is sha256 of the file's bytes.
+version: v0.1
+
+px4:
+  # The upstream release the tree is based on.
+  describe: v1.17.0
+  commit: d6f12ad1c4f70ad3230afd7d86e971421e02fef4
+  # PX4 vendors its Gazebo assets as a submodule; the worlds and models below
+  # come from it, so its commit is part of the baseline.
+  gz_submodule_commit: b6127f4ec20de867e215fb5f78ae88b80f371909
+  # PX4 v1.17.0 does not build on Apple Silicon macOS as released. The tree
+  # therefore carries a recorded patch set, and reports itself as
+  # `v1.17.0-dirty`; that is expected, not drift. The patch is committed at
+  # simulation/px4/macos-build.patch and the patched files are hashed below, so
+  # the tree is pinned to base commit plus exactly this patch and nothing else.
+  required_patch: simulation/px4/macos-build.patch
+
+gazebo:
+  distribution: harmonic
+  # `gz sim --versions`. The wind fixture depends on this specific series: the
+  # WindEffects system and its force model are gz-sim 8 behaviour.
+  sim_version: 8.12.0
+
+world:
+  # The world every nominal scenario flies in. Wind scenarios render their own
+  # fixture from `windy.sdf`; see simulation/gazebo/wind_profiles.py.
+  baseline: default
+
+# The PX4 files this platform reads, renders fixtures from, or patches. A change
+# to any of them changes what the evidence means, so each is pinned by content
+# rather than by version alone.
+files:
+  # The macOS build patch set: C++17, Apple warning suppressions, the Homebrew
+  # library path, and the shared-library suffix the optical flow build assumes.
+  CMakeLists.txt: f50262c828681b3a04945d665ba28bc249ca2fc1b930a03bdb6dbd91b9ccecd3
+  src/modules/simulation/gz_msgs/CMakeLists.txt: e4e916ff34cc45ecdcb72a5f1b4dbac83062334ed64496a99031cf0d84c58cd3
+  src/modules/simulation/gz_plugins/moving_platform_controller/MovingPlatformController.cpp: cf6e11c0399a4bafe68411dbaf1e89f23ffc1f6eabc2ff46854558b8d682af9c
+  src/modules/simulation/gz_plugins/optical_flow/optical_flow.cmake: 52e187a2d3ce4bec08da38baa0d3fe0af4c3a1ee4e9663150410f6fc4973a8e4
+  # The airframe the missions fly, and the base the wind overlay is rendered from.
+  Tools/simulation/gz/models/x500/model.sdf: cfe92f98360967faa895b77aa8a6fff3fc9b290286e94e45297c4bdd7b62fbf9
+  Tools/simulation/gz/models/x500_base/model.sdf: e807dca3406f7cd5cb3d545898601c3ec17e0e5242e25cf467a69df1812cf436
+  # The baseline world, the wind fixture's source world, and the server config
+  # the wind system is added to.
+  Tools/simulation/gz/worlds/default.sdf: 457a363a22c437b788a4aaf1e2335aa149efce4e5b988cdc108065663cd879b2
+  Tools/simulation/gz/worlds/windy.sdf: 1289e65a807babe57ee822940ef99d78d666e20d867414cf4353901adb919aca
+  Tools/simulation/gz/server.config: 60871c73e32ecde05e008aaf995e1b9c09906ca3dacb143c595522c68d399172

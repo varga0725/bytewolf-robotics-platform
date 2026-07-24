@@ -1,0 +1,12 @@
+{
+  "position": {
+    "latitude_deg": 47.4979,
+    "longitude_deg": 19.0402,
+    "absolute_altitude_m": 125.5
+  },
+  "battery": {
+    "remaining_percent": 78.5
+  },
+  "in_air": true,
+  "captured_at": "2026-07-16T18:30:00Z"
+}

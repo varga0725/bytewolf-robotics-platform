@@ -1,0 +1,55 @@
+name: tests
+
+# The unit and contract suites are the only automated gate this project has.
+# They run without PX4, Gazebo or MAVSDK by design: every collaborator that
+# would need a simulator is faked, so this workflow proves the safety logic,
+# the contracts and the memory boundaries — never that a flight works.
+#
+# SITL evidence stays manual and is recorded as artifacts under
+# simulation/artifacts/, because a hosted runner has no Gazebo, no GPU and no
+# 30-second startup budget. A green tick here must not be read as a flight gate.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python contract and safety suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run the unittest suite
+        # The suite is the gate: no lint or formatter is configured in this repo.
+        run: python -m unittest discover -s tests -v
+
+  node:
+    name: Pi agent memory suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install the Pi agent dependencies
+        working-directory: apps/pi_agent
+        # --ignore-scripts matches the documented local install: no package in
+        # this tree needs a build step, and running arbitrary install scripts in
+        # CI is a supply-chain surface the project does not need.
+        run: npm ci --ignore-scripts
+      - name: Run the memory and prompt tests
+        working-directory: apps/pi_agent
+        run: node --test

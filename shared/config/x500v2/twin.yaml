@@ -1,0 +1,269 @@
+# Versioned configuration contract for the first X500 V2 digital-twin baseline.
+# Unknown physical values stay null until they are measured or manufacturer-sourced.
+#
+# A null here describes the real Holybro X500 V2, which nobody has measured. The
+# simulation still has to fly on some number, and it uses PX4's generic x500
+# model -- which has never been compared against an X500 V2. The `provenance`
+# section at the end records that gap per parameter: what the simulation flies
+# on today, and how the real value gets resolved. Every null below must appear
+# there, so an unmeasured parameter cannot pass as a settled one.
+vehicle:
+  id: x500v2_reference_01
+  hardware_baseline: holybro_x500_v2_developer_kit_v0
+  frame: quad_x
+  mass_kg: null
+  center_of_mass_m: [0.0, 0.0, 0.0]
+  inertia_kg_m2:
+    ixx: null
+    iyy: null
+    izz: null
+    ixy: 0.0
+    ixz: 0.0
+    iyz: 0.0
+
+payload:
+  active_payload_profile: factory_base
+  # Optional peripherals are modeled only in a separately versioned payload profile.
+  excluded_from_v0:
+    - companion_computer
+    - front_camera
+    - down_camera
+    - depth_camera
+    - lidar_or_rangefinder
+    - optical_flow
+    - microphone
+    - gimbal
+    - custom_payload
+    - cellular_modem
+
+propulsion:
+  motor_model: factory_developer_kit
+  propeller_model: factory_developer_kit
+  motor_constant: null
+  moment_constant: null
+  max_rotor_velocity_rad_s: null
+  time_constant_up_s: null
+  time_constant_down_s: null
+
+aerodynamics:
+  # Airframe drag against the relative airspeed: ||D|| = linear_drag_coefficient_kg_s * airspeed.
+  # A quadrotor's drag is linear, not quadratic, across roughly 2-9 m/s, because rotor drag
+  # dominates at low airspeed; it only turns quadratic above ~8-10 m/s. Measured on a 0.47 m
+  # quadrotor in a wind generator by Hattenberger, Bronz & Condomines, "Evaluation of drag
+  # coefficient for a quadrotor model", IMAV 2022: https://www.imavs.org/papers/2022/4.pdf
+  #
+  # Literature-derived, NOT measured on an X500: the paper's mass regression
+  # k = 0.105 + 0.087 * mass_kg is evaluated at the 2.064 kg simulated airframe. The paper
+  # fits 0.55-1.07 kg frames, so this extrapolates beyond its data. Replace it with a
+  # measured X500 V2 value before any wind result is called flight-representative.
+  linear_drag_coefficient_kg_s: 0.285
+  # The airspeed band the linear model above is backed by. A wind fixture outside this band
+  # records that it extrapolates, so no run can quietly claim validated aerodynamics.
+  linear_drag_valid_airspeed_m_s: [2.0, 9.0]
+
+simulation:
+  px4_version: v1.17.0
+  gazebo_distribution: harmonic
+  default_world: default
+  # PX4 SITL does model the battery: battery_simulator runs by default and MAVSDK reports a
+  # real percentage and voltage. This was true while the code misread MAVSDK's 0-100 scale as
+  # a 0-1 fraction, which made every reading look invalid and silently disabled both the arm
+  # reserve and the in-flight battery watchdog. Missing battery telemetry now fails closed.
+  allow_missing_battery_telemetry: false
+  profiles:
+    base: gz_x500
+    vision: gz_x500_vision
+    depth: gz_x500_depth
+    mono_front: gz_x500_mono_cam
+    mono_down: gz_x500_mono_cam_down
+    lidar_down: gz_x500_lidar_down
+    lidar_front: gz_x500_lidar_front
+    lidar_2d: gz_x500_lidar_2d
+
+safety:
+  max_altitude_m: 20
+  max_speed_m_s: 3
+  # 2 km. This is a simulation envelope, not a flight-endurance claim: the twin
+  # has no measured battery (capacity_mah is null with provenance), so nothing
+  # here says the vehicle can reach 2 km and come back. At the 3 m/s limit the
+  # transit alone is about 11 minutes each way, and the only thing standing
+  # between a distant waypoint and a dead battery is the runtime watchdog and
+  # PX4's own failsafe. Treat a long-range run as a simulator exercise until an
+  # endurance figure exists to size it against.
+  max_radius_m: 2000
+  # Local north/east metres relative to launch. This guard is evaluated before
+  # arming; PX4's runtime fence remains an additional future integration.
+  #
+  # The square stays strictly inside the radius circle, as it always has: its
+  # half-diagonal is 1697 m against the 2000 m limit, so the fence is the
+  # tighter bound in every direction and the radius can never be reached without
+  # the fence refusing first. Widening one without the other would leave corners
+  # that pass one check and fail the other for reasons nobody could see.
+  allowed_geofence:
+    vertices_m:
+      - [-1200, -1200]
+      - [1200, -1200]
+      - [1200, 1200]
+      - [-1200, 1200]
+  minimum_battery_percent_to_start: 40
+  loss_of_link_action: RTL
+
+battery:
+  chemistry: LiPo
+  cells: null
+  capacity_mah: null
+  nominal_voltage_v: null
+  internal_resistance_ohm: null
+  warning_percent: 30
+  critical_percent: 20
+  emergency_percent: 12
+
+sensors:
+  imu:
+    update_hz: 250
+    gyro_noise_density: null
+    accel_noise_density: null
+    latency_ms: 0
+  gps:
+    update_hz: 10
+    horizontal_noise_m: 0.5
+    vertical_noise_m: 0.8
+    latency_ms: 120
+  barometer:
+    update_hz: 50
+    noise_pa: null
+  # Every camera the twin can render, not just one. width/height/fov/fps are the
+  # simulated values; latency is hardware-gated and stays null with provenance.
+  # The mono cameras render at 1080p through the camera overlay
+  # (simulation/gazebo/camera_profiles.py); PX4's stock model is 1280x960.
+  cameras:
+    front_rgb:
+      role: object detection and navigation
+      profile: gz_x500_mono_cam
+      enabled: false
+      width: 1920
+      height: 1080
+      horizontal_fov_rad: 1.74
+      fps: 30
+      latency_ms: null
+    down_rgb:
+      # The V1 first provable capability: target detection, relative position, and
+      # precision landing all run off this camera.
+      role: target detection, relative position, precision landing
+      profile: gz_x500_mono_cam_down
+      enabled: true
+      width: 1920
+      height: 1080
+      horizontal_fov_rad: 1.74
+      fps: 30
+      latency_ms: null
+    depth:
+      # OakD-Lite: a 1080p RGB imager plus a lower-resolution stereo depth pair.
+      role: obstacle sensing and depth perception (future)
+      profile: gz_x500_depth
+      enabled: false
+      rgb:
+        width: 1920
+        height: 1080
+        horizontal_fov_rad: 1.204
+      depth:
+        width: 640
+        height: 480
+        horizontal_fov_rad: 1.274
+        min_range_m: 0.2
+      fps: 30
+      latency_ms: null
+
+# Source or measurement plan for every critical parameter, keyed by its dotted
+# path above. Enforced by tests/test_twin_provenance.py: a critical parameter
+# left null without an entry here fails the suite.
+#
+# status:
+#   simulated - the simulation flies on this value today, taken from PX4's
+#               generic x500 model. It is NOT an X500 V2 measurement and has
+#               never been checked against one.
+#   derived   - computed from published measurements of a comparable airframe.
+#   vendor    - published by Holybro for the X500 V2.
+#   measured  - measured on this project's own vehicle.
+provenance:
+  vehicle.mass_kg:
+    status: simulated
+    simulated_value: 2.0
+    simulated_source: PX4 models/x500_base/model.sdf, base_link mass
+    plan: Weigh the assembled airframe with its flight battery once hardware is bought.
+  vehicle.inertia_kg_m2.ixx:
+    status: simulated
+    simulated_value: 0.02166666666666667
+    simulated_source: PX4 models/x500_base/model.sdf, base_link inertia
+    plan: Bifilar pendulum measurement on the assembled airframe, or a CAD-derived vendor figure.
+  vehicle.inertia_kg_m2.iyy:
+    status: simulated
+    simulated_value: 0.02166666666666667
+    simulated_source: PX4 models/x500_base/model.sdf, base_link inertia
+    plan: Bifilar pendulum measurement on the assembled airframe, or a CAD-derived vendor figure.
+  vehicle.inertia_kg_m2.izz:
+    status: simulated
+    simulated_value: 0.04000000000000001
+    simulated_source: PX4 models/x500_base/model.sdf, base_link inertia
+    plan: Bifilar pendulum measurement on the assembled airframe, or a CAD-derived vendor figure.
+  propulsion.motor_constant:
+    status: simulated
+    simulated_value: 8.54858e-06
+    simulated_source: PX4 models/x500/model.sdf, MulticopterMotorModel
+    plan: Motor test bench thrust curve for the X500 V2's shipped motor and propeller pairing.
+  propulsion.moment_constant:
+    status: simulated
+    simulated_value: 0.016
+    simulated_source: PX4 models/x500/model.sdf, MulticopterMotorModel
+    plan: Motor test bench torque curve, measured alongside the thrust curve.
+  propulsion.max_rotor_velocity_rad_s:
+    status: simulated
+    simulated_value: 1000.0
+    simulated_source: PX4 models/x500/model.sdf, MulticopterMotorModel
+    plan: Motor test bench at full throttle on the shipped battery.
+  propulsion.time_constant_up_s:
+    status: simulated
+    simulated_value: 0.0125
+    simulated_source: PX4 models/x500/model.sdf, MulticopterMotorModel
+    plan: Step response on the motor test bench.
+  propulsion.time_constant_down_s:
+    status: simulated
+    simulated_value: 0.025
+    simulated_source: PX4 models/x500/model.sdf, MulticopterMotorModel
+    plan: Step response on the motor test bench.
+  battery.cells:
+    status: unknown
+    plan: Read from the battery the build actually ships with; the X500 V2 kit does not include one.
+  battery.capacity_mah:
+    status: unknown
+    plan: Read from the chosen battery's label, then confirm by a measured discharge.
+  battery.nominal_voltage_v:
+    status: unknown
+    plan: Derived from the chosen battery's cell count once selected.
+  battery.internal_resistance_ohm:
+    status: unknown
+    plan: Measure under a known load, or read from the smart battery if the build uses one.
+  sensors.imu.gyro_noise_density:
+    status: unknown
+    plan: Allan variance on a static bench recording from the flight controller actually bought.
+  sensors.imu.accel_noise_density:
+    status: unknown
+    plan: Allan variance on a static bench recording from the flight controller actually bought.
+  sensors.barometer.noise_pa:
+    status: unknown
+    plan: Static bench recording at a known altitude, from the flight controller actually bought.
+  sensors.cameras.front_rgb.latency_ms:
+    status: unknown
+    plan: Measure capture-to-availability delay on the chosen camera and companion computer.
+  sensors.cameras.down_rgb.latency_ms:
+    status: unknown
+    plan: Measure capture-to-availability delay on the chosen camera and companion computer.
+  sensors.cameras.depth.latency_ms:
+    status: unknown
+    plan: Measure capture-to-availability delay on the chosen depth camera and companion computer.
+  aerodynamics.linear_drag_coefficient_kg_s:
+    status: derived
+    plan: >-
+      Wind generator sweep across 2-9 m/s measuring hover bank angle, mirroring the IMAV 2022
+      method the current value is extrapolated from. Until then the wind results are simulation
+      regressions, not flight-representative claims.

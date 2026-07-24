@@ -1,6 +1,18 @@
 .DS_Store
 .venv/
+node_modules/
+.env
 __pycache__/
 *.py[cod]
 .pytest_cache/
 PX4-Autopilot
+var/mission-runs/
+var/pi-agent/
+var/world-memory/
+apps/pi_agent/var/
+apps/pi_agent/models-store.json
+apps/pi_agent/apps/pi_agent/models-store.json
+simulation/artifacts/agent-missions/
+
+# Generated Gazebo worlds: rebuilt from the committed OSM snapshot on demand.
+simulation/worlds/generated/

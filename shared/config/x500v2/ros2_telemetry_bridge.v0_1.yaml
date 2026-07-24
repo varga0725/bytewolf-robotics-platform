@@ -1,0 +1,18 @@
+# Declarative contract only. V1 does not start ROS 2 or publish these topics.
+# The future ROS 2 Humble bridge must keep this file backward compatible within v0.1.
+version: v0.1
+namespace: /bytewolf/x500v2_reference_01
+vehicle_id: x500v2_reference_01
+topics:
+  - name: /bytewolf/x500v2_reference_01/telemetry/position
+    message_type: geometry_msgs/msg/PoseStamped
+    source: MAVSDK telemetry.position
+    qos_profile: sensor_data
+  - name: /bytewolf/x500v2_reference_01/telemetry/battery
+    message_type: sensor_msgs/msg/BatteryState
+    source: MAVSDK telemetry.battery
+    qos_profile: reliable_status
+  - name: /bytewolf/x500v2_reference_01/telemetry/flight_state
+    message_type: std_msgs/msg/String
+    source: MAVSDK telemetry.in_air
+    qos_profile: reliable_status

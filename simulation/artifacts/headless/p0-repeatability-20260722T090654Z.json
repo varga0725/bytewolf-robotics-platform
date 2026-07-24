@@ -1,0 +1,24 @@
+{
+  "minimum_success_rate": 1.0,
+  "nominal_scenarios": [
+    "boot-prearm-check"
+  ],
+  "overall_status": "passed",
+  "repetitions": 10,
+  "run_reports": [
+    "simulation/artifacts/headless/repeatability-20260722T090654Z/run-01/p0-20260722T090654Z.json",
+    "simulation/artifacts/headless/repeatability-20260722T090654Z/run-02/p0-20260722T090746Z.json",
+    "simulation/artifacts/headless/repeatability-20260722T090654Z/run-03/p0-20260722T090839Z.json",
+    "simulation/artifacts/headless/repeatability-20260722T090654Z/run-04/p0-20260722T090931Z.json",
+    "simulation/artifacts/headless/repeatability-20260722T090654Z/run-05/p0-20260722T091023Z.json",
+    "simulation/artifacts/headless/repeatability-20260722T090654Z/run-06/p0-20260722T091115Z.json",
+    "simulation/artifacts/headless/repeatability-20260722T090654Z/run-07/p0-20260722T091208Z.json",
+    "simulation/artifacts/headless/repeatability-20260722T090654Z/run-08/p0-20260722T091259Z.json",
+    "simulation/artifacts/headless/repeatability-20260722T090654Z/run-09/p0-20260722T091352Z.json",
+    "simulation/artifacts/headless/repeatability-20260722T090654Z/run-10/p0-20260722T091445Z.json"
+  ],
+  "started_at": "2026-07-22T09:06:54.742992+00:00",
+  "success_rates": {
+    "boot-prearm-check": 1.0
+  }
+}

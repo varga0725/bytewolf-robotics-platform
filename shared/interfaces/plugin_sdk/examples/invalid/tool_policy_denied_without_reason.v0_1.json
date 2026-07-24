@@ -1,0 +1,8 @@
+{
+  "contract_version": "v0.1",
+  "plugin_id": "telemetry.read",
+  "granted": [],
+  "denied": [
+    {"capability_id": "mission.replay", "version": "v0.1"}
+  ]
+}

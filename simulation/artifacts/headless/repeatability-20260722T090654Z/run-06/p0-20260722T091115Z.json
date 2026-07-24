@@ -1,0 +1,36 @@
+{
+  "started_at": "2026-07-22T09:11:15.677815+00:00",
+  "overall_status": "passed",
+  "results": [
+    {
+      "identifier": "boot-prearm-check",
+      "module": "brain.cli.check_boot_prearm",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.check_boot_prearm",
+        "--preflight-wait-seconds",
+        "60",
+        "--mavsdk-server-port",
+        "54447",
+        "--artifact-dir",
+        "simulation/artifacts/headless/repeatability-20260722T090654Z/run-06/runs/20260722T091115Z-dedcbcd22d26456d9df366acff46bd36/mission-artifacts/boot-prearm-check"
+      ],
+      "status": "passed",
+      "returncode": 0,
+      "stdout": "Checking PX4 boot and pre-arm telemetry at udpin://0.0.0.0:14540...\nBoot/pre-arm approved: navigation, home, global position, and battery telemetry are valid (battery 100.0%). No flight command was sent.\n",
+      "stderr": "",
+      "version": "p0.v2",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-fail-closed-before-arm-if-prearm-is-invalid",
+      "fallback_expectation": "no-flight-command",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/repeatability-20260722T090654Z/run-06/runs/20260722T091115Z-dedcbcd22d26456d9df366acff46bd36/mission-artifacts/boot-prearm-check",
+      "wind": null,
+      "injected_faults": null
+    }
+  ]
+}

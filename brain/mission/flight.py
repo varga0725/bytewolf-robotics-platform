@@ -1,6 +1,7 @@
 """Safe, high-level flight mission definitions."""
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from math import isfinite
 
 from brain.mission.commands import ReturnToHomeCommand, TakeoffCommand, WaypointCommand
@@ -11,12 +12,33 @@ class MissionValidationError(ValueError):
     """Raised when a mission contains invalid timing or unsafe commands."""
 
 
+class InterruptionAction(StrEnum):
+    """The two explicit flight-interruption actions exercised by P0.v2."""
+
+    HOLD = "hold"
+    LAND = "land"
+
+
 @dataclass(frozen=True)
 class TakeoffHoverLandMission:
     """A bounded mission that leaves all low-level control to PX4."""
 
     takeoff: TakeoffCommand
     hover_duration_s: float
+
+
+@dataclass(frozen=True)
+class TakeoffInterruptLandMission:
+    """Take off, deliberately interrupt, then guarantee a terminal landing.
+
+    A HOLD interrupt is intentionally followed by one cleanup LAND command so
+    that no P0 scenario leaves a vehicle airborne after its evidence is saved.
+    """
+
+    takeoff: TakeoffCommand
+    interrupt_after_s: float
+    interruption_action: InterruptionAction
+    hold_cleanup_s: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -32,6 +54,54 @@ class TakeoffWaypointLandMission:
 
 
 @dataclass(frozen=True)
+class TakeoffWaypointsLandMission:
+    """A bounded, pre-authorized local route with no skip or retry path."""
+
+    takeoff: TakeoffCommand
+    waypoints: tuple[WaypointCommand, ...]
+    hover_duration_s: float
+    takeoff_settle_seconds: float = 4.0
+    waypoint_tolerance_m: float = 1.0
+    waypoint_timeout_s: float = 30.0
+
+
+@dataclass(frozen=True)
+class TakeoffWaypointSquareLandMission:
+    """A bounded four-leg local square, with a confirmed arrival at every corner.
+
+    Each waypoint is a displacement from the vehicle's current position. This
+    matches MAVSDK's local waypoint conversion and keeps every leg's reference
+    frame explicit.
+    """
+
+    takeoff: TakeoffCommand
+    waypoints: tuple[WaypointCommand, WaypointCommand, WaypointCommand, WaypointCommand]
+    hover_duration_s: float
+    takeoff_settle_seconds: float = 4.0
+    waypoint_tolerance_m: float = 1.0
+    waypoint_timeout_s: float = 30.0
+
+
+@dataclass(frozen=True)
+class TakeoffTargetApproachLandMission:
+    """Take off, search for a ground target, and move to it only if one is approved.
+
+    Unlike a waypoint mission, the move is not fixed at authorize time. This
+    mission fixes only the bounded envelope of the search -- the takeoff, the
+    capture-settle before looking, the hover, and the arrival tolerance and
+    timeout. The waypoint itself is discovered from the camera at hover and
+    re-checked by the SafetyGate then, so whether any move happens at all is a
+    live perception decision, not something pre-authorized here.
+    """
+
+    takeoff: TakeoffCommand
+    hover_duration_s: float
+    capture_settle_seconds: float = 4.0
+    waypoint_tolerance_m: float = 1.5
+    waypoint_timeout_s: float = 40.0
+
+
+@dataclass(frozen=True)
 class TakeoffReturnToHomeMission:
     """Take off, briefly hover, then ask PX4 to return to launch and land."""
 
@@ -42,6 +112,35 @@ class TakeoffReturnToHomeMission:
     )
     takeoff_settle_seconds: float = 4.0
     landing_timeout_s: float = 60.0
+    home_tolerance_m: float = 6.0
+
+
+@dataclass(frozen=True)
+class TakeoffWaypointsReturnToHomeMission:
+    """Fly an approved local route, then let PX4 bring the vehicle home and land.
+
+    A survey is the mission that needs this: its last waypoint is at the far
+    edge of the swept area, so landing where the pattern ended would leave the
+    vehicle wherever the sweep happened to finish. Landing at the end of a
+    route is a different promise from coming home at the end of a route, and
+    only the second one is what an area sweep means.
+
+    The hover is allowed to be zero. A route that goes straight from its last
+    waypoint to the return has no hover step in it, and inventing one would put
+    a wait in the air that nobody approved.
+    """
+
+    takeoff: TakeoffCommand
+    waypoints: tuple[WaypointCommand, ...]
+    hover_duration_s: float
+    return_to_home: ReturnToHomeCommand = field(
+        default_factory=lambda: ReturnToHomeCommand(target_altitude_m=2.0)
+    )
+    takeoff_settle_seconds: float = 4.0
+    waypoint_tolerance_m: float = 1.0
+    waypoint_timeout_s: float = 30.0
+    landing_timeout_s: float = 60.0
+    home_tolerance_m: float = 6.0
 
 
 def authorize_takeoff_hover_land(
@@ -54,6 +153,30 @@ def authorize_takeoff_hover_land(
     command = TakeoffCommand(target_altitude_m=target_altitude_m)
     gate.evaluate(command)
     return TakeoffHoverLandMission(takeoff=command, hover_duration_s=hover_duration_s)
+
+
+def authorize_takeoff_interrupt_land(
+    gate: SafetyGate,
+    takeoff_altitude_m: float,
+    interrupt_after_s: float,
+    interruption_action: InterruptionAction,
+    hold_cleanup_s: float = 1.0,
+) -> TakeoffInterruptLandMission:
+    """Authorize a controlled interruption that always terminates on land."""
+    if not isfinite(interrupt_after_s) or interrupt_after_s <= 0.0:
+        raise MissionValidationError("Interruption delay must be a positive, finite number of seconds.")
+    if not isfinite(hold_cleanup_s) or hold_cleanup_s < 0.0:
+        raise MissionValidationError("Hold cleanup duration must be a finite non-negative number of seconds.")
+    if not isinstance(interruption_action, InterruptionAction):
+        raise MissionValidationError("Interruption action must be HOLD or LAND.")
+    takeoff = TakeoffCommand(target_altitude_m=takeoff_altitude_m)
+    gate.evaluate(takeoff)
+    return TakeoffInterruptLandMission(
+        takeoff=takeoff,
+        interrupt_after_s=interrupt_after_s,
+        interruption_action=interruption_action,
+        hold_cleanup_s=hold_cleanup_s,
+    )
 
 
 def authorize_takeoff_waypoint_land(
@@ -85,6 +208,95 @@ def authorize_takeoff_waypoint_land(
         takeoff=takeoff,
         waypoint=waypoint,
         hover_duration_s=hover_duration_s,
+        waypoint_tolerance_m=waypoint_tolerance_m,
+        waypoint_timeout_s=waypoint_timeout_s,
+    )
+
+
+def authorize_takeoff_waypoint_square_land(
+    gate: SafetyGate,
+    takeoff_altitude_m: float,
+    side_length_m: float,
+    waypoint_altitude_m: float,
+    hover_duration_s: float,
+    waypoint_tolerance_m: float = 1.0,
+    waypoint_timeout_s: float = 30.0,
+) -> TakeoffWaypointSquareLandMission:
+    """Authorize all square corners before any flight operation can begin.
+
+    The final corner is the launch-relative origin, so the complete square is
+    observable in the simulator while remaining inside the same local safety
+    boundary as every other waypoint mission.
+    """
+    if not isfinite(side_length_m) or side_length_m <= 0.0:
+        raise MissionValidationError("Square side length must be a positive, finite number of metres.")
+    if not isfinite(hover_duration_s) or hover_duration_s <= 0.0:
+        raise MissionValidationError("Hover duration must be a positive, finite number of seconds.")
+    if not isfinite(waypoint_tolerance_m) or waypoint_tolerance_m <= 0.0:
+        raise MissionValidationError("Waypoint tolerance must be a positive, finite number of metres.")
+    if not isfinite(waypoint_timeout_s) or waypoint_timeout_s <= 0.0:
+        raise MissionValidationError("Waypoint timeout must be a positive, finite number of seconds.")
+
+    takeoff = TakeoffCommand(target_altitude_m=takeoff_altitude_m)
+    legs = tuple(
+        WaypointCommand(north_m=north_m, east_m=east_m, target_altitude_m=waypoint_altitude_m)
+        for north_m, east_m in (
+            (side_length_m, 0.0),
+            (0.0, side_length_m),
+            (-side_length_m, 0.0),
+            (0.0, -side_length_m),
+        )
+    )
+    # Safety limits are launch-relative, whereas execution legs are relative
+    # to the current position. Evaluate the cumulative corner coordinates
+    # before arming so that a rejected later corner blocks the whole mission.
+    absolute_corners = (
+        WaypointCommand(side_length_m, 0.0, waypoint_altitude_m),
+        WaypointCommand(side_length_m, side_length_m, waypoint_altitude_m),
+        WaypointCommand(0.0, side_length_m, waypoint_altitude_m),
+        WaypointCommand(0.0, 0.0, waypoint_altitude_m),
+    )
+    gate.evaluate(takeoff)
+    for waypoint in absolute_corners:
+        gate.evaluate(waypoint)
+    return TakeoffWaypointSquareLandMission(
+        takeoff=takeoff,
+        waypoints=(legs[0], legs[1], legs[2], legs[3]),
+        hover_duration_s=hover_duration_s,
+        waypoint_tolerance_m=waypoint_tolerance_m,
+        waypoint_timeout_s=waypoint_timeout_s,
+    )
+
+
+def authorize_takeoff_target_approach_land(
+    gate: SafetyGate,
+    takeoff_altitude_m: float,
+    hover_duration_s: float,
+    capture_settle_seconds: float = 4.0,
+    waypoint_tolerance_m: float = 1.5,
+    waypoint_timeout_s: float = 40.0,
+) -> TakeoffTargetApproachLandMission:
+    """Authorize the search envelope for an autonomous target approach.
+
+    Only the takeoff and the timing are validated here; the approach waypoint is
+    discovered live and re-checked by the SafetyGate at that moment, so it is not
+    pre-authorized. This keeps the "perception proposes, safety decides" seam
+    intact -- there is no move in this mission until the camera finds one.
+    """
+    if not isfinite(hover_duration_s) or hover_duration_s <= 0.0:
+        raise MissionValidationError("Hover duration must be a positive, finite number of seconds.")
+    if not isfinite(capture_settle_seconds) or capture_settle_seconds < 0.0:
+        raise MissionValidationError("Capture-settle duration must be a finite non-negative number of seconds.")
+    if not isfinite(waypoint_tolerance_m) or waypoint_tolerance_m <= 0.0:
+        raise MissionValidationError("Waypoint tolerance must be a positive, finite number of metres.")
+    if not isfinite(waypoint_timeout_s) or waypoint_timeout_s <= 0.0:
+        raise MissionValidationError("Waypoint timeout must be a positive, finite number of seconds.")
+    takeoff = TakeoffCommand(target_altitude_m=takeoff_altitude_m)
+    gate.evaluate(takeoff)
+    return TakeoffTargetApproachLandMission(
+        takeoff=takeoff,
+        hover_duration_s=hover_duration_s,
+        capture_settle_seconds=capture_settle_seconds,
         waypoint_tolerance_m=waypoint_tolerance_m,
         waypoint_timeout_s=waypoint_timeout_s,
     )

@@ -1,0 +1,17 @@
+{
+  "contract_version": "v0.1",
+  "proposal_id": "p-001",
+  "kind": "memory_delta",
+  "source": {
+    "job": "post_turn_memory",
+    "model": "nvidia/llama-3.3-nemotron",
+    "prompt_version": "memory-hook.v0_2",
+    "input_refs": ["turn-042"]
+  },
+  "created_at": "2026-07-23T09:00:00+00:00",
+  "payload": {
+    "operations": [
+      {"op": "upsert", "category": "preference", "value": "A felhasználó a Baylands világot szeretné alapértelmezettnek."}
+    ]
+  }
+}
