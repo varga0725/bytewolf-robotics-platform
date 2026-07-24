@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 from typing import Any
 
@@ -67,18 +68,26 @@ class PiConversation:
         twin_path: Path | str,
         world_memory_path: Path | str,
         memory_dir: Path | str,
+        down_detections_path: Path | str | None = None,
+        sessions_dir: Path | str = "var/pi-agent/sessions",
         extractor: MemoryExtractor | None = None,
         sessions: SessionManager | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._provider = provider
         self._telemetry_path = Path(telemetry_path)
-        self._detections_path = Path(detections_path)
+        # Both camera feeds reach the agent: an object seen only by the downward
+        # camera must still be answerable.
+        self._detection_sources = {"front": Path(detections_path)}
+        if down_detections_path is not None:
+            self._detection_sources["down"] = Path(down_detections_path)
         self._twin_path = Path(twin_path)
         self._world_memory_path = Path(world_memory_path)
         self._memory_dir = Path(memory_dir)
         self._extractor = extractor
         self._sessions = sessions or SessionManager()  # keeps conversation history
+        self._sessions_dir = Path(sessions_dir)
+        self._hydrated: set[str] = set()
         self._memory_hook = PiMemoryHook(memory_dir)
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -102,7 +111,9 @@ class PiConversation:
         policy = build_tool_policy(
             load_plugin_manifest(_CONSUMER), registry, allowlist=set(_READ_CAPABILITIES)
         )
+        self._hydrate(session_id)
         envelope = runtime.run_turn(session_id, text, policy, system_prompt=prompt)
+        self._persist(session_id)
 
         reply = envelope.reply if envelope.status == "completed" and envelope.reply else _SAFE_FALLBACK
         requests_drone_action = bool(envelope.safety_verdict.get("flight_drafted"))
@@ -111,10 +122,41 @@ class PiConversation:
 
     # -- internals --------------------------------------------------------
 
+    def _hydrate(self, session_id: str) -> None:
+        """Load a session's prior user/assistant history from disk once.
+
+        A browser keeping its session id across a server restart must not lose
+        conversational context, so history is restored the first time this
+        process sees the session. A read failure leaves the session empty rather
+        than costing the turn.
+        """
+        if session_id in self._hydrated:
+            return
+        self._hydrated.add(session_id)
+        try:
+            document = json.loads((self._sessions_dir / f"{session_id}.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        messages = document.get("messages") if isinstance(document, dict) else None
+        if isinstance(messages, list):
+            self._sessions.get(session_id).messages = _visible(messages)
+
+    def _persist(self, session_id: str) -> None:
+        """Write the session's visible history to disk, best-effort."""
+        try:
+            to_save = _visible(self._sessions.get(session_id).messages)
+            self._sessions_dir.mkdir(parents=True, exist_ok=True)
+            destination = self._sessions_dir / f"{session_id}.json"
+            temporary = destination.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps({"messages": to_save}, ensure_ascii=False), encoding="utf-8")
+            temporary.replace(destination)
+        except OSError:
+            pass
+
     def _registry(self) -> PluginRegistry:
         registry = PluginRegistry()
         telemetry_read.register(registry, self._telemetry_path)
-        vision_summary.register(registry, self._detections_path)
+        vision_summary.register(registry, self._detection_sources)
         world_query.register(registry, self._world_memory_path)
         for capability in _READ_CAPABILITIES:
             registry.start(_PLUGIN_OF[capability])
@@ -142,6 +184,19 @@ class PiConversation:
             return world_briefing(memory.recall(now), memory.disputed(now), now=now)
         except (OSError, ValueError):
             return ""
+
+
+def _visible(messages: list) -> list[dict[str, Any]]:
+    """The durable conversation: user and assistant turns, no system prompt or
+    tool scaffolding (the system prompt is rebuilt per turn from fresh briefings)."""
+    return [
+        {"role": message["role"], "content": message.get("content")}
+        for message in messages
+        if isinstance(message, dict)
+        and message.get("role") in ("user", "assistant")
+        and not message.get("tool_calls")
+        and message.get("content") is not None
+    ]
 
 
 def _acknowledge_flight_request(arguments: dict[str, Any]) -> dict[str, Any]:

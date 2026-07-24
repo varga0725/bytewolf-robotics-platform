@@ -49,7 +49,8 @@ class PiConversationTests(unittest.TestCase):
         return PiConversation(
             provider,
             telemetry_path=self.telemetry, detections_path=self.detections, twin_path=TWIN,
-            world_memory_path=self.world, memory_dir=self.memory, extractor=extractor,
+            world_memory_path=self.world, memory_dir=self.memory,
+            sessions_dir=self.memory.parent / "sessions", extractor=extractor,
         )
 
     def test_a_read_turn_replies_and_updates_memory(self) -> None:
@@ -82,6 +83,32 @@ class PiConversationTests(unittest.TestCase):
         reply = self._conversation(provider).converse(SESSION, "Repülj egy kört!")
         self.assertEqual(reply.text, "Beküldtem jóváhagyásra.")
         self.assertTrue(reply.requests_drone_action)
+
+    def test_conversation_history_survives_a_new_process(self) -> None:
+        sessions_dir = self.memory.parent / "sessions"
+
+        def _make(provider):
+            return PiConversation(
+                provider, telemetry_path=self.telemetry, detections_path=self.detections,
+                twin_path=TWIN, world_memory_path=self.world, memory_dir=self.memory,
+                sessions_dir=sessions_dir,
+            )
+
+        first = _ScriptedProvider([
+            ProviderResponse(content="Első válasz.", tool_calls=(), model="m", input_tokens=1, output_tokens=1)
+        ])
+        _make(first).converse(SESSION, "Első kérdés.")
+
+        # A fresh PiConversation (new in-memory sessions) with the same directory
+        # -- as after a server restart -- must still see the prior exchange.
+        second = _ScriptedProvider([
+            ProviderResponse(content="Második.", tool_calls=(), model="m", input_tokens=1, output_tokens=1)
+        ])
+        _make(second).converse(SESSION, "Második kérdés.")
+
+        contents = [m.get("content") for m in second.last_messages]
+        self.assertIn("Első kérdés.", contents)
+        self.assertIn("Első válasz.", contents)
 
     def test_a_provider_failure_degrades_to_a_safe_message(self) -> None:
         class _Dead:

@@ -89,6 +89,7 @@ def create_app(
             world_memory_path,
             memory_dir,
             capabilities,
+            down_detections_path,
         ),
         review=_review_with_cli,
         execute=_execute_with_cli,
@@ -349,6 +350,7 @@ def _build_live_converse(
     world_memory_path: Path,
     memory_dir: Path,
     capabilities: str,
+    down_detections_path: Path | None = None,
 ):
     """A converse closure that lazily builds the Python conversation.
 
@@ -372,6 +374,7 @@ def _build_live_converse(
                     twin_path=twin_path,
                     world_memory_path=world_memory_path,
                     memory_dir=memory_dir,
+                    down_detections_path=down_detections_path,
                     extractor=_env_memory_extractor(),
                 )
         conversation = state["conversation"]

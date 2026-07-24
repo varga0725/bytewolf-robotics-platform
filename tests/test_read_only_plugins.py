@@ -60,6 +60,25 @@ class VisionSummaryTests(unittest.TestCase):
         self.assertFalse(summary["available"])
         self.assertEqual(summary["detection_count"], 0)
 
+    def test_the_summary_carries_detection_identities(self) -> None:
+        self.path.write_text(json.dumps(_detection_doc(detections=[
+            {"label": "marker", "confidence": 0.91, "bbox": {"x": 1, "y": 1, "width": 2, "height": 2}},
+        ])), encoding="utf-8")
+        summary = self._plugin().capabilities()["vision.summary"]()
+        self.assertEqual(summary["detections"][0]["label"], "marker")
+        self.assertEqual(summary["detections"][0]["confidence"], 0.91)
+
+    def test_both_camera_feeds_are_aggregated(self) -> None:
+        down = Path(self._tmp.name) / "down.json"
+        self.path.write_text(json.dumps(_detection_doc(detections=[{"label": "front-marker"}])), encoding="utf-8")
+        down.write_text(json.dumps(_detection_doc(detections=[{"label": "down-pad"}])), encoding="utf-8")
+        plugin = VisionSummaryPlugin({"front": self.path, "down": down}, now=lambda: _NOW)
+        plugin.start()
+        summary = plugin.capabilities()["vision.summary"]()
+        self.assertEqual(summary["detection_count"], 2)
+        labels = {d["label"] for d in summary["detections"]}
+        self.assertEqual(labels, {"front-marker", "down-pad"})
+
     def test_invocation_through_the_registry(self) -> None:
         self.path.write_text(json.dumps(_detection_doc()), encoding="utf-8")
         registry = PluginRegistry()

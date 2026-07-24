@@ -246,6 +246,13 @@ class CognitiveRuntime:
             latency = (self._clock() - started) * 1000
             entry = {**base, "status": "error", "latency_ms": latency, "detail": str(error)}
             return entry, _tool_result(call, {"error": str(error)})
+        except Exception as error:  # noqa: BLE001 - a plugin handler fault must not escape the turn
+            # A capability that raises (e.g. a missing telemetry artifact) is an
+            # 'error' trace entry and a tool result the model can react to, never
+            # an exception that propagates out of the turn and 500s the endpoint.
+            latency = (self._clock() - started) * 1000
+            entry = {**base, "status": "error", "latency_ms": latency, "detail": str(error)}
+            return entry, _tool_result(call, {"error": "tool failed"})
         latency = (self._clock() - started) * 1000
         entry = {**base, "status": "ok", "latency_ms": latency}
         return entry, _tool_result(call, {"result": result})

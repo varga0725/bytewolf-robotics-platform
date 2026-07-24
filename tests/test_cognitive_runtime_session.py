@@ -143,6 +143,29 @@ class TurnLoopTests(unittest.TestCase):
         self.assertEqual(envelope.status, "cancelled")
         self.assertIsNone(envelope.reply)
 
+    def test_a_raising_tool_degrades_to_an_error_trace_not_an_exception(self) -> None:
+        class _Boom:
+            def capabilities(self):
+                def boom(**_kwargs):
+                    raise ValueError("telemetry artifact is missing")
+                return {"telemetry.read": boom}
+
+        provider = _ScriptedProvider([
+            ProviderResponse(content=None, tool_calls=(ToolCall("c1", "telemetry.read", {}),),
+                            model="m", input_tokens=1, output_tokens=1),
+            ProviderResponse(content="Most nem érem el az állapotot.", tool_calls=(), model="m",
+                            input_tokens=1, output_tokens=1),
+        ])
+        registry = PluginRegistry()
+        registry.register(_manifest("tools", ["telemetry.read"]), _Boom())
+        registry.start("tools")
+        runtime = CognitiveRuntime(provider, registry, prompt_version="test.v0_1")
+        policy = build_tool_policy(_consumer(["telemetry.read"]), registry, allowlist={"telemetry.read"})
+
+        envelope = runtime.run_turn("s6", "Mennyi az akku?", policy)  # must not raise
+        self.assertEqual(envelope.status, "completed")
+        self.assertEqual(envelope.tool_trace[0].status, "error")
+
     def test_a_slow_tool_is_abandoned_on_its_timeout(self) -> None:
         provider = _ScriptedProvider([
             ProviderResponse(
