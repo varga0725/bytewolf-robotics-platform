@@ -92,10 +92,17 @@ def _iter_boxes(boxes: Any) -> tuple[tuple[float, float, float, float, float, in
 
 
 def _detection_from_box(box: tuple[float, float, float, float, float, int], names: Any) -> Detection:
+    """Fit one YOLO box into the contract, clamping rather than voiding the frame.
+
+    A detector may report a confidence a hair outside [0, 1] or a box whose
+    origin sits slightly off the left or top edge. The contracts reject both,
+    and a single such box would raise out of the generator and demote the whole
+    frame to ``Unavailable`` -- losing every good detection alongside it.
+    """
     x1, y1, x2, y2, confidence, class_id = box
-    label = names[class_id] if isinstance(names, dict) else names[class_id]
+    left, top = max(0.0, x1), max(0.0, y1)
     return Detection(
-        str(label),
-        confidence,
-        BoundingBox(round(x1), round(y1), max(1, round(x2 - x1)), max(1, round(y2 - y1))),
+        str(names[class_id]),
+        min(1.0, max(0.0, confidence)),
+        BoundingBox(round(left), round(top), max(1, round(x2 - left)), max(1, round(y2 - top))),
     )

@@ -252,7 +252,9 @@ class LocalEvidenceDirectory:
         if not isinstance(payload, bytes):
             raise TypeError("Evidence payload must be bytes.")
 
-        self.directory.mkdir(parents=True, exist_ok=True)
+        # The file contents are encrypted, but the directory listing alone leaks
+        # event IDs and their timing, so it is not readable by other local users.
+        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         target = self.directory / f"{event_id}.evidence"
         self._require_contained(target)
         self.writer.write_encrypted(target, payload)

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
+import time
 from typing import Sequence
 
 from brain.vision.benchmark import (
@@ -100,6 +102,8 @@ def run_recorded_pipeline(
     last_result = None
 
     instant = now
+    previous_source_drops = 0
+    execution_ms: list[float] = []
     while not source.exhausted:
         frame = source.poll()
         accepted = frame is not None
@@ -112,15 +116,29 @@ def run_recorded_pipeline(
                 # Judge this frame at the moment it was captured, so a recorded
                 # clip is as fresh on replay as it was when it was recorded.
                 instant = frame.captured_at
+        # The replay clock decides freshness only. It must not also decide how
+        # long inference took: under it the runtime stamps produced_at at
+        # capture time, which would report every detector as taking 0 ms.
+        started_at = time.perf_counter()
         outcome = runtime.process_next(instant)
+        elapsed_ms = max(0.0, (time.perf_counter() - started_at) * 1000.0)
         if outcome.state is RuntimeState.PROCESSED:
             processed += 1
             last_payload = source.payload_for(outcome.frame)  # type: ignore[arg-type]
             last_result = outcome.detection
+            # dropped_frames is a running total on the frame, so the per-frame
+            # figure is the increment, not the counter itself.
+            source_drops = outcome.frame.dropped_frames  # type: ignore[union-attr]
+            frame_drops = max(0, source_drops - previous_source_drops)
+            previous_source_drops = source_drops
             if source.has_ground_truth:
                 evaluation_frames.append(EvaluationFrame(outcome.detection, source.ground_truth_for(outcome.frame)))  # type: ignore[arg-type]
+                execution_ms.append(outcome.frame.latency_ms + elapsed_ms)  # type: ignore[union-attr]
             else:
-                samples.append(BenchmarkSample(latency_ms=outcome.frame.latency_ms, dropped_frames=outcome.frame.dropped_frames))  # type: ignore[union-attr]
+                samples.append(BenchmarkSample(
+                    latency_ms=outcome.frame.latency_ms + elapsed_ms,  # type: ignore[union-attr]
+                    dropped_frames=frame_drops,
+                ))
         elif outcome.state is RuntimeState.REJECTED:
             rejected += 1
         elif outcome.state is RuntimeState.UNAVAILABLE:
@@ -137,7 +155,14 @@ def run_recorded_pipeline(
     benchmark_document = None
     if evaluation_frames:
         evaluation = GroundTruthEvaluator().evaluate(evaluation_frames)
-        benchmark = BenchmarkAggregator(str(input_path)).aggregate(evaluation.samples)
+        # The evaluator derives latency from produced_at, which the replay clock
+        # pins to capture time -- reporting every detector as taking 0 ms.
+        # Substitute transport plus what the detector and tracker actually took.
+        measured = tuple(
+            replace(sample, latency_ms=execution_ms[index])
+            for index, sample in enumerate(evaluation.samples)
+        ) if len(execution_ms) == len(evaluation.samples) else evaluation.samples
+        benchmark = BenchmarkAggregator(str(input_path)).aggregate(measured)
         benchmark_document = {
             "sample_count": benchmark.sample_count, "p50_latency_ms": benchmark.p50_latency_ms,
             "p95_latency_ms": benchmark.p95_latency_ms,

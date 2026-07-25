@@ -80,10 +80,13 @@ def vision_summary_to_canonical(summary: VisionSummary) -> dict[str, Any]:
     detection is also tracked. detection_count is the true number of detections.
     """
     frame = summary.source_frame
-    tracker_by_detection = {
-        (track.label, _box_key(track.bounding_box)): track.tracker_id
-        for track in summary.tracks
-    }
+    # Two detections of the same label may share a bounding box exactly -- a
+    # fixture annotation or a tracker can produce that, and the contracts accept
+    # it. Keying a plain dict by (label, box) collapsed both onto the last
+    # tracker id, so tracks are consumed in order per key instead.
+    tracker_by_detection: dict[tuple[str, Any], list[str | None]] = {}
+    for track in summary.tracks:
+        tracker_by_detection.setdefault((track.label, _box_key(track.bounding_box)), []).append(track.tracker_id)
     detections: list[dict[str, Any]] = []
     for event in summary.events:
         detection: dict[str, Any] = {
@@ -92,7 +95,8 @@ def vision_summary_to_canonical(summary: VisionSummary) -> dict[str, Any]:
             "confidence": event.confidence,
             "bounding_box": _box(event.bounding_box),
         }
-        tracker_id = tracker_by_detection.get((event.label, _box_key(event.bounding_box)))
+        pending = tracker_by_detection.get((event.label, _box_key(event.bounding_box)))
+        tracker_id = pending.pop(0) if pending else None
         if tracker_id is not None:
             detection["tracker_id"] = tracker_id
         detections.append(detection)

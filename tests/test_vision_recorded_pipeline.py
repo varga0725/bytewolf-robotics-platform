@@ -59,7 +59,9 @@ class RecordedPipelineTests(unittest.TestCase):
 
             self.assertEqual(report["processed_frames"], 2)
             self.assertEqual(report["rejected_frames"], 0)
-            self.assertEqual(report["benchmark"]["p50_latency_ms"], 5.0)
+            # The fixture contributes a fixed 5 ms of transport; the rest is the
+            # detector actually running, which no recorded clip can make reproducible.
+            self.assertGreaterEqual(report["benchmark"]["p50_latency_ms"], 5.0)
             self.assertIsNone(report["benchmark"]["precision"])
             self.assertEqual(report["benchmark"]["quality_kpis"], "unavailable_without_ground_truth")
             self.assertEqual(json.loads((root / "status.json").read_text())["state"], "valid")
@@ -155,6 +157,10 @@ class RecordedPipelineTests(unittest.TestCase):
             self.assertEqual(benchmark["id_switches"], 0)
             self.assertEqual(benchmark["fragmentations"], 0)
             self.assertEqual(benchmark["reacquisitions"], 0)
+            # Under the replay clock the runtime stamps produced_at at capture
+            # time, so a latency derived from it would be 0 ms no matter how
+            # slow the detector is. The reported figure is measured instead.
+            self.assertGreaterEqual(benchmark["p50_latency_ms"], 5.0)
 
     def test_partial_ground_truth_fixture_is_rejected_fail_closed(self) -> None:
         with TemporaryDirectory() as directory:

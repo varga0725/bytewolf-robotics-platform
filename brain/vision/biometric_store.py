@@ -154,7 +154,9 @@ class BiometricTemplateStore:
         return target
 
     def _atomic_encrypt(self, target: Path, plaintext: bytes) -> None:
-        self._directory.mkdir(parents=True, exist_ok=True)
+        # Each filename is a per-subject hash: an enumerable directory tells a
+        # local reader who has been enrolled, even with the templates encrypted.
+        self._directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         token = self._fernet.encrypt(plaintext)
         temporary_name: str | None = None
         try:

@@ -82,5 +82,24 @@ class CanonicalCompatTests(unittest.TestCase):
         self.assertNotIn("tracker_id", car)
 
 
+    def test_identical_boxes_keep_their_own_tracker_ids(self) -> None:
+        # Two same-label detections may share a box exactly; the contracts allow
+        # it, and keying tracks by (label, box) used to give both the last id.
+        frame = CameraFrame(
+            CAMERA_FRAME_V1, "device-1", "front_rgb", "session-1", 1, NOW, NOW,
+            "cal-1", "a" * 64, "jpeg", 1280, 720, 12.0, 0,
+        )
+        box = BoundingBox(320, 180, 96, 220)
+        result = DetectionResult(
+            "detection_result.v1", frame, "yolo", "v8n-aerial-2026-07", NOW,
+            (Detection("person", 0.91, box, "t-1"), Detection("person", 0.88, box, "t-2")),
+        )
+        summary = canonical_from_detection_result(result, ttl=timedelta(seconds=1))
+
+        document = vision_summary_to_canonical(summary)
+        tracker_ids = [detection.get("tracker_id") for detection in document["detections"]]
+        self.assertEqual(sorted(filter(None, tracker_ids)), ["t-1", "t-2"])
+
+
 if __name__ == "__main__":
     unittest.main()

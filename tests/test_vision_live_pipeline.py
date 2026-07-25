@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections import deque
+import hashlib
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
-from brain.cli.vision_live_pipeline import HashVerifiedGStreamerSource, run_live_pipeline
+from brain.cli.vision_live_pipeline import _RETAINED_PAYLOADS, HashVerifiedGStreamerSource, run_live_pipeline
 from brain.vision.contracts import BoundingBox, Detection
 from brain.vision.gstreamer import GStreamerIngestAdapter, GStreamerIngestError, StreamBinding
 
@@ -209,6 +210,27 @@ class LiveVisionPipelineTests(unittest.TestCase):
             self.assertFalse((root / "frame.jpg").exists())
 
 
+class PayloadRetentionTests(unittest.TestCase):
+    """A live stream must not keep every frame it ever saw."""
+
+    def _source(self) -> HashVerifiedGStreamerSource:
+        binding = StreamBinding("drone-1", "front-1", "session-a")
+        pipeline = FakePipeline([], binding)
+        adapter = GStreamerIngestAdapter(pipeline, binding=binding, calibration_version="cal-v1", clock=lambda: _NOW)
+        return HashVerifiedGStreamerSource(adapter, pipeline)
+
+    def test_the_payload_cache_is_bounded(self) -> None:
+        source = self._source()
+        payloads = [f"frame-{index}".encode() for index in range(_RETAINED_PAYLOADS * 3)]
+        for payload in payloads:
+            source.register_payload(hashlib.sha256(payload).hexdigest(), payload)
+
+        # The newest is still resolvable for inference; the oldest is long gone.
+        self.assertEqual(source.resolve(hashlib.sha256(payloads[-1]).hexdigest()), payloads[-1])
+        with self.assertRaises(ValueError):
+            source.resolve(hashlib.sha256(payloads[0]).hexdigest())
+
+
 def _jpeg() -> bytes:
     """Create a real tiny camera payload for the renderer integration test."""
     import cv2
@@ -220,7 +242,12 @@ def _jpeg() -> bytes:
     return bytes(payload)
 
 
-_JPEG = _jpeg()
+try:
+    _JPEG = _jpeg()
+except ImportError:  # pragma: no cover - depends on the host's optional Vision deps
+    # OpenCV lives in the research interpreter, not the safety-core venv. A host
+    # without it must skip this module, not fail the whole suite at collection.
+    raise unittest.SkipTest("OpenCV and NumPy are required for the live pipeline tests")
 
 
 if __name__ == "__main__":

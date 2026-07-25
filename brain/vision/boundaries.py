@@ -55,7 +55,46 @@ def _import_aliases(tree: ast.AST) -> tuple[frozenset[str], frozenset[str]]:
             for alias in node.names:
                 if alias.name == "import_module":
                     import_module_aliases.add(alias.asname or alias.name)
+    _follow_assigned_aliases(tree, importlib_aliases, import_module_aliases)
     return frozenset(importlib_aliases), frozenset(import_module_aliases)
+
+
+def _follow_assigned_aliases(
+    tree: ast.AST, importlib_aliases: set[str], import_module_aliases: set[str]
+) -> None:
+    """Track importers rebound to another name.
+
+    ``loader = import_module`` (or ``__import__``, or ``importlib.import_module``)
+    reaches exactly the same modules as a direct call, so a guard that only knows
+    import statements can be walked straight past. Rebinding can chain, so this
+    repeats until nothing new is learned.
+    """
+    import_module_aliases.add("__import__")
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, (ast.Name, ast.Attribute)):
+                continue
+            value = node.value
+            is_importer = (
+                isinstance(value, ast.Name) and value.id in import_module_aliases
+            ) or (
+                isinstance(value, ast.Attribute)
+                and value.attr == "import_module"
+                and isinstance(value.value, ast.Name)
+                and value.value.id in importlib_aliases
+            )
+            is_importlib = isinstance(value, ast.Name) and value.id in importlib_aliases
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                if is_importer and target.id not in import_module_aliases:
+                    import_module_aliases.add(target.id)
+                    changed = True
+                if is_importlib and target.id not in importlib_aliases:
+                    importlib_aliases.add(target.id)
+                    changed = True
 
 
 def _dynamic_import_target(
@@ -68,9 +107,10 @@ def _dynamic_import_target(
         and isinstance(function.value, ast.Name)
         and function.value.id in importlib_aliases
     )
+    # import_module_aliases carries __import__ and every name rebound to an
+    # importer, so a call through an alias is caught like a direct one.
     is_import_module_name = isinstance(function, ast.Name) and function.id in import_module_aliases
-    is_builtin_import = isinstance(function, ast.Name) and function.id == "__import__"
-    if not (is_import_module_attribute or is_import_module_name or is_builtin_import):
+    if not (is_import_module_attribute or is_import_module_name):
         return None
     if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
         return "<nonliteral>"

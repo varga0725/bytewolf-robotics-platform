@@ -90,6 +90,22 @@ class GStreamerIngestAdapterTests(unittest.TestCase):
 
         self.assertEqual(frame.frame_sequence, 0)  # type: ignore[union-attr]
 
+    def test_accepts_the_media_type_gstreamer_actually_reports_for_raw_video(self) -> None:
+        # GStreamer 1.0 names raw video "video/x-raw" and puts the layout in a
+        # separate format field. Keying support off "video/x-raw-rgb8" -- which
+        # is not a media type at all -- sent every real RGB buffer to the
+        # fail-closed unsupported branch.
+        pipeline = FakePipeline(
+            StreamBinding("edge-1", "front-rgb", "session-a"),
+            [FakeBuffer(b"raw-rgb", mime_type="video/x-raw")],
+        )
+        adapter = self.make_adapter(pipeline)
+
+        frame = adapter.poll()
+
+        self.assertIsNotNone(frame)
+        self.assertEqual(frame.encoding, "rgb8")  # type: ignore[union-attr]
+
     def test_disconnect_and_reconnect_rotate_session_and_reset_sequence(self) -> None:
         pipeline = FakePipeline(StreamBinding("edge-1", "front-rgb", "session-a"), [FakeBuffer(b"one")])
         adapter = self.make_adapter(pipeline)

@@ -90,6 +90,14 @@ class _Preview:
         import cv2  # imported lazily: the producer runs headless without --preview
 
         self._cv2 = cv2
+        if not hasattr(cv2, "imshow"):  # pragma: no cover - depends on the installed wheel
+            # requirements-vision-research.txt pins opencv-python-headless, which
+            # is right for a producer but ships no GUI backend. A preview run
+            # needs the desktop wheel; say so instead of failing inside cv2.
+            raise RuntimeError(
+                "--preview needs a GUI-enabled OpenCV: pip install 'opencv-python>=4.10,<5' "
+                "in place of opencv-python-headless."
+            )
         self._title = title
         self.stopped = False
 

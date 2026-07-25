@@ -31,6 +31,12 @@ import time
 from brain.vision.uvc import UvcCameraSource, UvcCaptureError
 
 
+#: How many captures may fail back to back before the device is declared gone.
+#: A camera drops the odd frame; fifty in a row is a disconnected camera, and a
+#: recorder that keeps asking a dead device is a busy loop, not resilience.
+MAX_CONSECUTIVE_FAILURES = 50
+
+
 def frame_record(frame, payload: bytes, detections=()) -> dict:
     """One JSONL record in the format RecordedJsonlIngest accepts."""
     record = {
@@ -85,6 +91,7 @@ def record_clip(
     started = now()
     written = 0
     dropped = 0
+    consecutive_failures = 0
     with output.open("w", encoding="utf-8") as handle:
         while True:
             if frames and written >= frames:
@@ -95,9 +102,15 @@ def record_clip(
                 frame, payload = source.capture_once()
             except UvcCaptureError:
                 dropped += 1
-                if dropped > 50 and written == 0:
+                consecutive_failures += 1
+                # A camera that stops responding mid-clip used to be survivable
+                # only because `written == 0` was the escape. With --frames and
+                # no deadline the target then became unreachable and this loop
+                # spun on a dead device forever.
+                if consecutive_failures > MAX_CONSECUTIVE_FAILURES:
                     raise
                 continue
+            consecutive_failures = 0
             detections = detector.detect(frame, now()) if detector is not None else ()
             handle.write(json.dumps(frame_record(frame, payload, detections)) + "\n")
             written += 1
@@ -124,6 +137,14 @@ class _RecorderPreview:
         import cv2
 
         self._cv2 = cv2
+        if not hasattr(cv2, "imshow"):  # pragma: no cover - depends on the installed wheel
+            # requirements-vision-research.txt pins opencv-python-headless, which
+            # is right for a producer but ships no GUI backend. A preview run
+            # needs the desktop wheel; say so instead of failing inside cv2.
+            raise RuntimeError(
+                "--preview needs a GUI-enabled OpenCV: pip install 'opencv-python>=4.10,<5' "
+                "in place of opencv-python-headless."
+            )
         self._title = title
         self.stopped = False
 

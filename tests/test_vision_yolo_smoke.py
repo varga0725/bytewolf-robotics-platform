@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -25,7 +26,7 @@ class YoloSmokeTests(unittest.TestCase):
         environment.pop("PYTHONPATH", None)
 
         result = subprocess.run(
-            ["/Users/vargaferenc/miniforge3/bin/python3", str(script_path), "--help"],
+            [sys.executable, str(script_path), "--help"],
             capture_output=True,
             text=True,
             env=environment,

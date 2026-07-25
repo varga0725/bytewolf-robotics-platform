@@ -13,7 +13,7 @@ import unittest
 
 import numpy as np
 
-from brain.cli.vision_uvc_recorder import record_clip
+from brain.cli.vision_uvc_recorder import MAX_CONSECUTIVE_FAILURES, record_clip
 from brain.vision.contracts import BoundingBox, Detection
 from brain.vision.recorded import RecordedJsonlIngest
 from brain.vision.uvc import UvcCameraSource, UvcCaptureError
@@ -134,6 +134,24 @@ class RecorderRoundTripTests(unittest.TestCase):
         _source_, summary = self._record(capture=_FakeCapture(count=3, fail_every=3))
         self.assertEqual(summary["frames"], 3)
         self.assertGreaterEqual(summary["dropped"], 1)
+
+
+    def test_a_camera_that_dies_mid_clip_ends_the_recording(self) -> None:
+        # With --frames and no deadline the target becomes unreachable once the
+        # device stops answering. Retrying forever is a busy loop, not patience.
+        with self.assertRaises(UvcCaptureError):
+            self._record(capture=_FakeCapture(count=1))
+        self.assertEqual(sum(1 for _ in self.clip.read_text().splitlines()), 1)
+
+    def test_occasional_drops_below_the_limit_are_survived(self) -> None:
+        source = _source(_FakeCapture(count=3, fail_every=2))
+        source.open()
+        try:
+            summary = record_clip(source, self.clip, frames=3)
+        finally:
+            source.close()
+        self.assertEqual(summary["frames"], 3)
+        self.assertLessEqual(summary["dropped"], MAX_CONSECUTIVE_FAILURES)
 
 
 class SafetyTests(unittest.TestCase):

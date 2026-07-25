@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -219,7 +220,15 @@ _VISION_READ_MODEL_FIELDS = frozenset(
 )
 
 
-def _vision_read_model(document: object) -> dict[str, object]:
+#: How long a published Vision status may be presented as live. The producer
+#: writes a file and stops; nothing rewrites it when the producer dies, so the
+#: consumer -- not the file -- has to decide the status has aged out. Chosen to
+#: be several frame intervals at any usable rate, so a healthy producer is never
+#: reported stale by a slow poll.
+VISION_STATUS_MAX_AGE_S = 5.0
+
+
+def _vision_read_model(document: object, *, now: datetime | None = None) -> dict[str, object]:
     """Allowlist the dashboard's observation-only Vision read model.
 
     The local artifact directory is still a producer boundary: never relay raw
@@ -238,7 +247,27 @@ def _vision_read_model(document: object) -> dict[str, object]:
     detections = document.get("detections")
     if not isinstance(detections, list) or not all(_is_dashboard_detection(item) for item in detections):
         raise ValueError("Vision status detections do not match the read-only contract.")
-    return {field: document.get(field) for field in _VISION_READ_MODEL_FIELDS if field in document}
+    read_model = {field: document.get(field) for field in _VISION_READ_MODEL_FIELDS if field in document}
+    if read_model.get("state") == "valid" and _is_stale(read_model.get("observed_at"), now):
+        # A producer that stalled or exited leaves its last valid file behind.
+        # Serving that state unchanged would show dead perception as live.
+        read_model["state"] = "stale"
+    return read_model
+
+
+def _is_stale(observed_at: object, now: datetime | None) -> bool:
+    """Whether a published observation has outlived its freshness budget."""
+    if not isinstance(observed_at, str):
+        return True
+    try:
+        published = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if published.tzinfo is None:
+        return True
+    age = ((now or datetime.now(UTC)).astimezone(UTC) - published.astimezone(UTC)).total_seconds()
+    # A future timestamp is a broken clock, not freshness to be trusted.
+    return age > VISION_STATUS_MAX_AGE_S or age < -VISION_STATUS_MAX_AGE_S
 
 
 def _is_dashboard_detection(value: object) -> bool:

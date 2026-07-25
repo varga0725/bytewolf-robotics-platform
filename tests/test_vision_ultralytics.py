@@ -56,5 +56,33 @@ class UltralyticsYoloDetectorTests(unittest.TestCase):
             detector.detect(frame("a" * 64), NOW)
 
 
+    def test_one_out_of_range_box_does_not_void_the_whole_frame(self) -> None:
+        # The contracts reject a negative origin and a confidence outside [0, 1].
+        # A detector reporting either at the edge of the image would otherwise
+        # raise out of detect() and demote the frame to Unavailable, losing every
+        # good detection alongside it.
+        class _EdgeResult:
+            boxes = type("Boxes", (), {
+                "xyxy": [[-3, -2, 7, 9]], "conf": [1.0000001], "cls": [0],
+            })()
+
+        class _EdgeModel(_Model):
+            def __call__(self, image, *, verbose: bool):
+                return (_EdgeResult(),)
+
+        detector = UltralyticsYoloDetector(
+            "research-yolo", "weights-v1", _Resolver(), model=_EdgeModel(), decoder=lambda _: object()
+        )
+
+        detection = detector.detect(frame(), NOW)[0]
+
+        self.assertEqual(detection.bounding_box.x_px, 0)
+        self.assertEqual(detection.bounding_box.y_px, 0)
+        self.assertEqual(detection.confidence, 1.0)
+        # Clamping moves the origin, not the far edge.
+        self.assertEqual(detection.bounding_box.width_px, 7)
+        self.assertEqual(detection.bounding_box.height_px, 9)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import json
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -9,7 +10,7 @@ import unittest
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
-from apps.dashboard.server import create_handler
+from apps.dashboard.server import VISION_STATUS_MAX_AGE_S, _vision_read_model, create_handler
 
 
 class DashboardVisionTests(unittest.TestCase):
@@ -122,8 +123,11 @@ class DashboardVisionTests(unittest.TestCase):
 
     @staticmethod
     def _status_document() -> dict[str, object]:
+        # Freshly observed: the endpoint ages a published status on every read,
+        # so a fixed historical timestamp would be served as stale.
+        observed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         return {
-            "contract_version": "vision_dashboard.v1", "state": "valid", "observed_at": "2026-07-21T12:00:00Z",
+            "contract_version": "vision_dashboard.v1", "state": "valid", "observed_at": observed_at,
             "track_count": 1, "detections": [], "backlog_frames": 0, "dropped_frames": 0,
             "stream_state": "healthy", "model_state": "healthy", "gpu_state": "healthy",
         }
@@ -140,6 +144,37 @@ class DashboardVisionTests(unittest.TestCase):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+class VisionStatusFreshnessTests(unittest.TestCase):
+    """A stalled producer leaves a valid file behind; it must not read as live."""
+
+    NOW = datetime(2026, 7, 25, 12, 0, tzinfo=UTC)
+
+    def _document(self, observed_at: datetime) -> dict[str, object]:
+        return {
+            "contract_version": "vision_dashboard.v1", "state": "valid",
+            "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
+            "track_count": 0, "detections": [],
+        }
+
+    def test_a_recent_observation_stays_valid(self) -> None:
+        document = self._document(self.NOW - timedelta(seconds=VISION_STATUS_MAX_AGE_S / 2))
+        self.assertEqual(_vision_read_model(document, now=self.NOW)["state"], "valid")
+
+    def test_an_aged_out_observation_is_served_as_stale(self) -> None:
+        document = self._document(self.NOW - timedelta(seconds=VISION_STATUS_MAX_AGE_S + 1))
+        self.assertEqual(_vision_read_model(document, now=self.NOW)["state"], "stale")
+
+    def test_a_future_timestamp_is_not_treated_as_fresh(self) -> None:
+        # A clock that ran backwards is a broken clock, not perpetual freshness.
+        document = self._document(self.NOW + timedelta(hours=1))
+        self.assertEqual(_vision_read_model(document, now=self.NOW)["state"], "stale")
+
+    def test_a_state_the_producer_already_refused_is_left_alone(self) -> None:
+        document = self._document(self.NOW - timedelta(hours=1))
+        document["state"] = "invalid"
+        self.assertEqual(_vision_read_model(document, now=self.NOW)["state"], "invalid")
 
 
 if __name__ == "__main__":

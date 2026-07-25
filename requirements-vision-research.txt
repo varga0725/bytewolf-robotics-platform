@@ -1,6 +1,9 @@
 # P0 research-only Vision runtime. Production model/runtime dependencies are
 # selected and licensed in P3; do not add these to the safety-core baseline.
 ultralytics>=8.4,<9
+# Headless is what a producer needs. The --preview window in the UVC CLIs is
+# the one exception: it needs the GUI wheel (opencv-python) instead, and the
+# preview refuses with that instruction rather than failing inside cv2.
 opencv-python-headless>=4.10,<5
 # Optional P0 local evidence writer; key material is supplied only at runtime.
 cryptography>=42,<49

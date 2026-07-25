@@ -29,6 +29,12 @@ from brain.vision.tracking import IoUAssociationTracker
 from brain.vision.ultralytics import UltralyticsYoloDetector
 
 
+#: How many recent payloads stay resolvable. Inference consumes a frame right
+#: after it is polled, so a small window is enough; the bound is what stops a
+#: long-running stream from retaining every frame it ever saw.
+_RETAINED_PAYLOADS = 64
+
+
 class _PayloadResolver(Protocol):
     def resolve(self, payload_hash: str) -> bytes: ...
 
@@ -55,6 +61,8 @@ class HashVerifiedGStreamerSource:
         # domain adapter receives the same immutable bytes and creates the
         # authoritative SHA-256; we compare before exposing anything to YOLO.
         self._payload_supplier = lambda: getattr(pipeline, "last_payload", None)
+        # Bounded by _RETAINED_PAYLOADS: at a live frame rate nearly every
+        # payload hash is unique, so an unbounded map retains the whole stream.
         self._payloads: dict[str, bytes] = {}
 
     @property
@@ -81,12 +89,18 @@ class HashVerifiedGStreamerSource:
         existing = self._payloads.setdefault(payload_hash, payload)
         if existing != payload:
             raise ValueError("GStreamer payload hash collision with conflicting bytes.")
+        self._evict_old_payloads()
 
     def resolve(self, payload_hash: str) -> bytes:
         try:
             return self._payloads[payload_hash]
         except KeyError as error:
             raise ValueError("No hash-verified GStreamer payload is available for inference.") from error
+
+    def _evict_old_payloads(self) -> None:
+        """Bound the retained bytes; inference only ever needs the newest frame."""
+        while len(self._payloads) > _RETAINED_PAYLOADS:
+            self._payloads.pop(next(iter(self._payloads)), None)
 
     def reconnect(self, stream_session_id: str) -> None:
         self._adapter.reconnect(stream_session_id)

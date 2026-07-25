@@ -20,7 +20,10 @@ _MIME_ENCODINGS = {
     "image/jpeg": "jpeg",
     "video/x-h264": "h264",
     "video/x-h265": "h265",
-    "video/x-raw-rgb8": "rgb8",
+    # GStreamer 1.0 names raw video "video/x-raw" and carries the layout in a
+    # separate "format" field. Keying off a made-up "video/x-raw-rgb8" meant
+    # every real appsink RGB buffer hit the fail-closed unsupported branch.
+    "video/x-raw": "rgb8",
 }
 
 

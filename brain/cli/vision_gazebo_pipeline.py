@@ -251,7 +251,14 @@ def run_gazebo_pipeline(
             processed += 1
             last_jpeg = source.dashboard_jpeg(outcome.frame.payload_hash)
             source_drops = outcome.frame.dropped_frames
-            samples.append(BenchmarkSample(outcome.frame.latency_ms, dropped_frames=max(0, source_drops - previous_source_drops)))
+            # frame.latency_ms ends when the image reached the adapter, before
+            # the detector and tracker ran. A benchmark that stops there cannot
+            # see a model getting slower, which is what it exists to catch.
+            processing_ms = max(0.0, (now() - observed_at).total_seconds() * 1000.0)
+            samples.append(BenchmarkSample(
+                outcome.frame.latency_ms + processing_ms,
+                dropped_frames=max(0, source_drops - previous_source_drops),
+            ))
             previous_source_drops = source_drops
             publisher.publish(outcome.detection, outcome.health, now=observed_at, render=lambda result: render_jpeg_overlay(last_jpeg, result))
         elif outcome.state is RuntimeState.UNAVAILABLE:
