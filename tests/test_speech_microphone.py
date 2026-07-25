@@ -91,5 +91,32 @@ class MicrophoneTests(unittest.TestCase):
                     self.assertNotIn(f"from {needle}", text)
 
 
+class InjectedRunnerTests(unittest.TestCase):
+    """A caller that supplied its own capture does not need the host's ffmpeg."""
+
+    def test_an_injected_runner_does_not_require_a_local_ffmpeg(self) -> None:
+        import brain.speech.adapters.microphone as microphone_module
+
+        original = microphone_module.shutil.which
+        microphone_module.shutil.which = lambda _name: None  # a host with no ffmpeg
+        try:
+            audio = FfmpegMicrophone(runner=_FakeRunner(audio=b"RIFF-injected")).record(1.0)
+        finally:
+            microphone_module.shutil.which = original
+
+        self.assertEqual(audio, b"RIFF-injected")
+
+    def test_the_default_path_still_requires_ffmpeg(self) -> None:
+        import brain.speech.adapters.microphone as microphone_module
+
+        original = microphone_module.shutil.which
+        microphone_module.shutil.which = lambda _name: None
+        try:
+            with self.assertRaises(MicrophoneError):
+                FfmpegMicrophone().record(1.0)
+        finally:
+            microphone_module.shutil.which = original
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -48,9 +48,15 @@ class FfmpegMicrophone:
             raise MicrophoneError("A capture needs a positive duration.")
         if seconds > MAX_CAPTURE_S:
             raise MicrophoneError(f"A single capture may not exceed {MAX_CAPTURE_S:g} seconds.")
-        binary = shutil.which("ffmpeg")
-        if binary is None:
-            raise MicrophoneError("ffmpeg is required to capture audio on this host.")
+        # Only the default subprocess path needs a local ffmpeg. A caller that
+        # injected a runner has supplied its own capture, and refusing here would
+        # make this class unusable on a host without ffmpeg for no reason.
+        if self.runner is None:
+            binary = shutil.which("ffmpeg")
+            if binary is None:
+                raise MicrophoneError("ffmpeg is required to capture audio on this host.")
+        else:
+            binary = "ffmpeg"
 
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "utterance.wav"

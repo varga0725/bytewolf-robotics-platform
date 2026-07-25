@@ -29,6 +29,7 @@ from brain.speech.adapters.microphone import FfmpegMicrophone, MicrophoneError, 
 from brain.speech.adapters.tts import TtsError
 from brain.speech.recognition import SpeechRecogniser
 from brain.speech.session import PushToTalkSession
+from brain.speech.transcript import to_document
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -82,18 +83,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  suggestion: {suggestion.intent_text!r} (requires approval: {suggestion.requires_approval})")
 
     if arguments.transcript is not None:
-        document = {
-            "transcript_id": transcript.transcript_id,
-            "text": transcript.text,
-            "language": transcript.language,
-            "confidence": transcript.confidence,
-            "state": state.value,
-            "engine": transcript.engine,
-            "command_suggestion": (
-                {"intent_text": suggestion.intent_text, "requires_approval": True}
-                if suggestion else None
-            ),
-        }
+        # The contract document, not a summary of it: a saved transcript that the
+        # loader would refuse is worse than no file at all.
+        document = to_document(transcript)
         arguments.transcript.parent.mkdir(parents=True, exist_ok=True)
         arguments.transcript.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"  written: {arguments.transcript}")

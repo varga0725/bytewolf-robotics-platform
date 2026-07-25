@@ -8,6 +8,7 @@ holds audio only while the button is down.
 """
 
 from datetime import UTC, datetime, timedelta
+import io
 import unittest
 
 import httpx
@@ -267,6 +268,38 @@ class TtsTests(unittest.TestCase):
         self.assertIsInstance(spoken, SpokenAudio)
         self.assertEqual(spoken.audio, b"wav-bytes")
         self.assertEqual(spoken.engine_id, "coqui/xtts-v2")
+
+    def test_a_float_waveform_becomes_playable_wav(self) -> None:
+        # XTTS returns floating-point samples, not encoded audio. Handing those
+        # straight to a caller produces headerless bytes nobody can play -- or a
+        # TypeError, which is worse because it escapes the fallback chain.
+        import wave
+
+        class _Waveform:
+            def tts(self, text, language, **kwargs):
+                return [0.0, 0.5, -0.5, 1.0, -1.0]
+
+        spoken = XttsTts(synthesiser=_Waveform(), sample_rate=24_000).speak("Szia!", language="hu-HU")
+
+        self.assertTrue(spoken.audio.startswith(b"RIFF"))
+        with wave.open(io.BytesIO(spoken.audio)) as handle:
+            self.assertEqual(handle.getframerate(), 24_000)
+            self.assertEqual(handle.getsampwidth(), 2)
+            self.assertEqual(handle.getnframes(), 5)
+
+    def test_a_waveform_failure_can_still_reach_the_fallback(self) -> None:
+        # The conversion has to raise TtsError, not TypeError, or FallbackTts
+        # cannot catch it and the fixed-message clip is never reached.
+        class _Nonsense:
+            def tts(self, text, language, **kwargs):
+                return object()
+
+        chain = FallbackTts((
+            XttsTts(synthesiser=_Nonsense()),
+            FixedMessageTts(clips={"Szia!": b"clip"}),
+        ))
+
+        self.assertEqual(chain.speak("Szia!", language="hu-HU").audio, b"clip")
 
     def test_an_engine_fault_is_a_refusal(self) -> None:
         class _Boom:

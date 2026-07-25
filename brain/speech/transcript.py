@@ -155,6 +155,45 @@ def load_transcript(document: object) -> Transcript:
     )
 
 
+def to_document(transcript: Transcript) -> dict[str, Any]:
+    """Rebuild the contract document from a loaded transcript.
+
+    A saved transcript has to be a transcript: writing a convenient summary
+    instead produces a file the loader refuses, which is worse than writing
+    nothing at all. What comes out of here loads straight back in.
+    """
+    document: dict[str, Any] = {
+        "contract_version": SPEECH_CONTRACT_VERSION,
+        "transcript_id": transcript.transcript_id,
+        "source": transcript.source,
+        "observed_at": transcript.observed_at.isoformat(),
+        "max_age_s": transcript.max_age_s,
+        "validity": transcript.declared_validity,
+        "engine": dict(transcript.engine),
+        "language": transcript.language,
+        "text": transcript.text,
+        "is_final": transcript.is_final,
+    }
+    for key, value in (
+        ("session_id", transcript.session_id),
+        ("audio_ref", transcript.audio_ref),
+        ("confidence", transcript.confidence),
+        ("language_confidence", transcript.language_confidence),
+        ("duration_s", transcript.duration_s),
+    ):
+        if value is not None:
+            document[key] = value
+    if transcript.command_suggestion is not None:
+        suggestion: dict[str, Any] = {
+            "intent_text": transcript.command_suggestion.intent_text,
+            "requires_approval": True,
+        }
+        if transcript.command_suggestion.confidence is not None:
+            suggestion["confidence"] = transcript.command_suggestion.confidence
+        document["command_suggestion"] = suggestion
+    return document
+
+
 def _finite_max_age(value: object) -> float:
     """Refuse a freshness window that cannot expire.
 
