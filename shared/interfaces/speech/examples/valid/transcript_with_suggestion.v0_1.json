@@ -1,0 +1,22 @@
+{
+  "contract_version": "v0.1",
+  "transcript_id": "utt-0042",
+  "source": "mic:headset",
+  "session_id": "b3b9c777-4860-4b6d-bf59-1a4a98c31ea3",
+  "observed_at": "2026-07-25T12:00:00+00:00",
+  "max_age_s": 30.0,
+  "validity": "valid",
+  "engine": {"id": "nvidia/parakeet-tdt-0.6b-v3", "version": "v3"},
+  "language": "hu-HU",
+  "language_confidence": 0.99,
+  "text": "Nézd meg kérlek, mi van az udvaron.",
+  "confidence": 0.93,
+  "is_final": true,
+  "duration_s": 2.4,
+  "audio_ref": "utterance-0042",
+  "command_suggestion": {
+    "intent_text": "Nézd meg, mi van az udvaron.",
+    "confidence": 0.88,
+    "requires_approval": true
+  }
+}
