@@ -15,16 +15,32 @@ faster-whisper 'small' (local, offline) ──transcribe──> Hungarian text
 SpeechRecogniser ──> transcript_v0_1 (validated) ──> command_suggestion
 ```
 
-Measured, on the loopback (the system voice speaking, the recogniser listening):
+Measured, on the loopback (the system voice speaking, the recogniser listening).
+The decided fallback model is `large-v3-turbo`; `small` is shown beside it
+because the difference is the argument for the larger model:
 
-| Spoken | Recognised | Confidence | State |
-| --- | --- | --- | --- |
-| "Mennyi az akkumulátor töltöttsége?" | "Mennyi az akumulátor töltöcsége?" | 0.72 | valid |
-| "Nézd meg kérlek mi van az udvaron." | "Nézzb meg, kérlek mi van az útvaron." | 0.66 | valid |
+| Spoken | `small` | `large-v3-turbo` |
+| --- | --- | --- |
+| Mennyi az akkumulátor töltöttsége? | "Mennyi az **akumulátor** **töltöcsége**?" (0.72) | "Mennyi az **akkumulátortöltötsége**?" (0.92) |
+| Nézd meg kérlek mi van az udvaron. | "**Nézzb** meg, kérlek mi van az **útvaron**." (0.66) | "Nézd meg, kérlek, mi van az **útvaron**." (0.88) |
+| Szállj fel két méterre és gyere vissza. | — | "Szállj fel két **métere** és gyere vissza!" (0.89) |
 
-Language was detected as `hu` in both cases, and the resulting transcript carried
-a `command_suggestion` with `requires_approval: true`, validated by the contract
+Language was detected as `hu` every time, and each transcript carried a
+`command_suggestion` with `requires_approval: true`, validated by the contract
 loader.
+
+**Latency, model already loaded, CPU on an Apple Silicon Mac: ~4.3 s per
+utterance** (4334 / 4335 / 4292 ms for the three above). The Speech Stack target
+is ≤ 1.5 s for a final result, so this host misses it by roughly 3×. That is a
+statement about the host, not the model: the decision put Parakeet on a GPU
+server for exactly this reason, and the same Whisper model on a GPU is a
+different measurement. Nothing here should be read as the target being met or
+unreachable.
+
+**On accuracy:** every one of the three transcripts is *semantically* right — the
+errors are a merged compound, a doubled consonant, a single letter. A language
+model reading these would understand all three correctly. That is not the same as
+a word error rate, and no WER is claimed here.
 
 ## The finding that changes the plan
 
@@ -43,19 +59,18 @@ on local Whisper, which is the decision's own documented fallback.
 
 ## What is honest about these numbers
 
-- **Both transcripts contain errors** ("akumulátor", "töltöcsége", "Nézzb",
-  "útvaron"). This is the `small` model; the decided fallback is
-  `large-v3-turbo`, which is materially better and is what a measurement should
-  use. `small` was chosen here to prove the wiring, not the accuracy.
 - **Synthetic speech is not a benchmark.** The recogniser was listening to a
-  speech synthesiser, in a silent room, with no microphone, no drone noise and no
-  room reverberation. The Speech Stack targets (≥90% Hungarian command
-  recognition, ≤1.5 s final result) cannot be claimed from this and were not
-  measured.
+  speech synthesiser, in a silent room, through no microphone, with no drone
+  noise and no room reverberation. The ≥90% Hungarian command recognition target
+  cannot be claimed from this and was not measured. Real microphone input is
+  wired (`brain/speech/adapters/microphone.py`) but needs a host with microphone
+  permission to run.
 - **Confidence is a heuristic.** faster-whisper reports average log-probability,
   converted here to a 0-1 figure so it can be compared to a threshold. It is not
   a calibrated probability, and the 0.6 suggestion threshold above it is a
   starting point.
+- **One host, one run each.** Three utterances on one machine is a wiring proof,
+  not a measurement with variance.
 
 ## The macOS voice is a dev-box tool, not a decision
 
@@ -81,3 +96,24 @@ print(FasterWhisperStt(model_size='small').transcribe(Path('/tmp/hu.wav').read_b
 ```
 
 The first run downloads the model; nothing leaves the machine after that.
+
+## Running a real turn
+
+Microphone capture goes through ffmpeg's AVFoundation input, so there is no new
+Python audio dependency and the output is already 16 kHz mono PCM. Every capture
+is bounded; there is no continuous-listening mode to enable by accident.
+
+```
+python -m brain.cli.speech_turn --list-devices
+python -m brain.cli.speech_turn --seconds 4 --model large-v3-turbo --speak-back
+```
+
+On macOS the recording process needs microphone permission, and a process
+spawned by an agent's shell tool does not inherit it — run this from a terminal
+that holds the grant, exactly as with the camera.
+
+The turn records, transcribes, publishes a validated transcript and can read the
+result back in Hungarian. It cannot fly anything: a recognised request becomes a
+`command_suggestion` carrying `requires_approval`, and turning that into a
+mission is the Cognitive Runtime's job through reviewed MissionSpec, the
+SafetyGate and an explicit approval.
