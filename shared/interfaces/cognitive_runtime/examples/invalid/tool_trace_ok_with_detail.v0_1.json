@@ -1,0 +1,7 @@
+{
+  "call_id": "c2",
+  "capability_id": "telemetry.read",
+  "status": "ok",
+  "latency_ms": 2.0,
+  "detail": "an ok call must not carry detail, which could smuggle raw output"
+}

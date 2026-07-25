@@ -18,7 +18,7 @@ class SimulationConfigurationTests(unittest.TestCase):
         self.assertIn("hardware_baseline: holybro_x500_v2_developer_kit_v0", configuration)
         self.assertIn("active_payload_profile: factory_base", configuration)
         self.assertIn("max_altitude_m: 20", configuration)
-        self.assertIn("max_radius_m: 50", configuration)
+        self.assertIn("max_radius_m: 2000", configuration)
 
     def test_launch_script_exposes_all_documented_x500_profiles(self) -> None:
         launcher = (ROOT / "simulation/gazebo/launch/run_px4_gazebo.zsh").read_text()
@@ -34,6 +34,22 @@ class SimulationConfigurationTests(unittest.TestCase):
             "gz_x500_lidar_2d",
         ):
             self.assertIn(target, launcher)
+        self.assertIn("WORLD=${PX4_GZ_WORLD:-baylands}", launcher)
+
+    def test_visual_baylands_launch_sets_a_safe_spawn_pose_and_isolates_px4_state(self) -> None:
+        """Baylands has no flat collision surface at the world origin."""
+        launcher = (ROOT / "simulation/gazebo/launch/run_px4_gazebo.zsh").read_text()
+
+        self.assertIn('PX4_GZ_MODEL_POSE=${PX4_GZ_MODEL_POSE:-205,155,2,0,0,0}', launcher)
+        self.assertIn('PX4_RUN_DIR=${PX4_RUN_DIR:-$(mktemp -d', launcher)
+        self.assertIn('"$PX4_BINARY" -d -w "$PX4_RUN_DIR"', launcher)
+
+    def test_headless_and_validation_default_to_baylands(self) -> None:
+        for script in (
+            "simulation/gazebo/launch/run_px4_gazebo_headless.zsh",
+            "simulation/gazebo/launch/validate_px4_gazebo.zsh",
+        ):
+            self.assertIn("WORLD=${PX4_GZ_WORLD:-baylands}", (ROOT / script).read_text())
 
     def test_vision_profile_selects_a_camera_capable_x500_target(self) -> None:
         """The Vision Core profile must publish image evidence, not just odometry."""

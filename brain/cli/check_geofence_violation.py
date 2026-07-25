@@ -9,19 +9,39 @@ from brain.cli.artifacts import write_run_artifact
 from brain.mission.commands import WaypointCommand
 from brain.mission.execution import MissionExecution
 from brain.safety.gate import SafetyGate, SafetyViolation
-from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
+from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, SafetyProfile, load_safety_profile
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Prove a geofence-violating waypoint is rejected before a PX4 connection or arm command."
     )
-    parser.add_argument("--north", type=float, default=45.0, help="Launch-relative north target in metres.")
+    parser.add_argument(
+        "--north", type=float, default=None,
+        help="Launch-relative north target in metres. Derived from the profile's own fence when omitted.",
+    )
     parser.add_argument("--east", type=float, default=0.0, help="Launch-relative east target in metres.")
     parser.add_argument("--altitude", type=float, default=2.0, help="Target altitude in metres.")
     parser.add_argument("--safety-profile", type=Path, default=DEFAULT_SAFETY_PROFILE_PATH)
     parser.add_argument("--artifact-dir", type=Path, default=None)
     return parser.parse_args(arguments)
+
+
+def _just_outside_the_fence(profile: SafetyProfile) -> float:
+    """A north target the profile's own fence must refuse.
+
+    The probe used to fly at a fixed 45 m, which was outside the fence only
+    because the fence happened to be a 30 m box. Widen the contract and the
+    probe quietly starts proving the opposite of what it claims: an approved
+    waypoint, reported as a passing safety scenario.
+
+    Derived from the fence itself, it cannot drift. A profile with no fence
+    falls back to just beyond the radius, which is then the only bound there is.
+    """
+    fence = profile.allowed_geofence
+    if fence is None:
+        return profile.max_radius_m * 1.1
+    return max(north_m for north_m, _east_m in fence.vertices_m) + 1.0
 
 
 async def run(arguments: argparse.Namespace) -> None:
@@ -32,7 +52,10 @@ async def run(arguments: argparse.Namespace) -> None:
     failure_reason: str | None = None
     try:
         profile = load_safety_profile(arguments.safety_profile)
-        command = WaypointCommand(arguments.north, arguments.east, arguments.altitude)
+        north_m = (
+            arguments.north if arguments.north is not None else _just_outside_the_fence(profile)
+        )
+        command = WaypointCommand(north_m, arguments.east, arguments.altitude)
         try:
             SafetyGate(profile.flight_limits()).evaluate(command)
         except SafetyViolation as error:

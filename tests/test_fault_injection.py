@@ -109,6 +109,46 @@ class ApplyPx4ParametersTests(unittest.TestCase):
         with self.assertRaisesRegex(FaultInjectionError, "timed out"):
             apply_px4_parameters((("SIM_BAT_DRAIN", 20.0),), px4_build_directory=Path("build"), run_command=slow)
 
+    def test_retries_a_transient_parameter_client_timeout_before_confirming_the_fault(self) -> None:
+        """A delayed PX4 daemon must not turn a confirmed fault into a blocked run."""
+        successful = _runner({"SIM_BAT_DRAIN": "20.0000"})
+        attempts = 0
+
+        def run(command, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise subprocess.TimeoutExpired("px4-param", 10.0)
+            return successful(command, **kwargs)
+
+        sleep = Mock()
+
+        applied = apply_px4_parameters(
+            (("SIM_BAT_DRAIN", 20.0),),
+            px4_build_directory=Path("build"),
+            run_command=Mock(side_effect=run),
+            sleep=sleep,
+        )
+
+        self.assertEqual(applied[0].confirmed, 20.0)
+        self.assertEqual(attempts, 3)
+        sleep.assert_called_once_with(1.0)
+
+    def test_fails_closed_after_bounded_parameter_client_timeouts(self) -> None:
+        run = Mock(side_effect=subprocess.TimeoutExpired("px4-param", 10.0))
+        sleep = Mock()
+
+        with self.assertRaisesRegex(FaultInjectionError, r"timed out .* after 3 attempts"):
+            apply_px4_parameters(
+                (("SIM_BAT_DRAIN", 20.0),),
+                px4_build_directory=Path("build"),
+                run_command=run,
+                sleep=sleep,
+            )
+
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

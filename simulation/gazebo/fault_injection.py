@@ -26,6 +26,7 @@ from math import isclose, isfinite
 from pathlib import Path
 import re
 import subprocess
+import time
 
 
 # PX4's parameter client talks to the daemon over its working directory.
@@ -39,6 +40,9 @@ _PARAM_VALUE = re.compile(r"^\s*(?:[x+*]\s+)*(\S+)\s+\[\d+,\d+\]\s*:\s*(\S+)\s*$
 
 # PX4 stores parameters as float32, so a read-back is not bit-identical.
 _READ_BACK_TOLERANCE = 1e-4
+_PARAMETER_CLIENT_TIMEOUT_S = 10.0
+_PARAMETER_CLIENT_ATTEMPTS = 3
+_PARAMETER_CLIENT_RETRY_DELAY_S = 1.0
 
 
 class FaultInjectionError(RuntimeError):
@@ -59,18 +63,24 @@ def apply_px4_parameters(
     *,
     px4_build_directory: Path = PX4_BUILD_DIRECTORY,
     run_command=subprocess.run,
+    sleep=time.sleep,
 ) -> tuple[AppliedParameter, ...]:
-    """Set each parameter on the running PX4 and read back what it holds."""
+    """Set each parameter on the running PX4 and read back what it holds.
+
+    PX4's local parameter client can briefly outlive the daemon's readiness at
+    SITL boot.  Retry only that bounded transport timeout; a value that cannot
+    be read back still fails closed and never starts the fault scenario.
+    """
     return tuple(
-        _apply_parameter(name, value, px4_build_directory, run_command) for name, value in parameters
+        _apply_parameter(name, value, px4_build_directory, run_command, sleep) for name, value in parameters
     )
 
 
-def _apply_parameter(name: str, value: float, build_directory: Path, run_command) -> AppliedParameter:
+def _apply_parameter(name: str, value: float, build_directory: Path, run_command, sleep) -> AppliedParameter:
     if not isfinite(value):
         raise FaultInjectionError(f"PX4 parameter '{name}' needs a finite value.")
-    _run_param(("set", name, f"{value:g}"), build_directory, run_command)
-    confirmed = _read_parameter(name, build_directory, run_command)
+    _run_param(("set", name, f"{value:g}"), build_directory, run_command, sleep)
+    confirmed = _read_parameter(name, build_directory, run_command, sleep)
     if not isclose(confirmed, value, rel_tol=_READ_BACK_TOLERANCE, abs_tol=_READ_BACK_TOLERANCE):
         raise FaultInjectionError(
             f"PX4 parameter '{name}' reads back {confirmed:g} after being set to {value:g}; "
@@ -79,8 +89,8 @@ def _apply_parameter(name: str, value: float, build_directory: Path, run_command
     return AppliedParameter(name, value, confirmed)
 
 
-def _read_parameter(name: str, build_directory: Path, run_command) -> float:
-    output = _run_param(("show", name), build_directory, run_command)
+def _read_parameter(name: str, build_directory: Path, run_command, sleep) -> float:
+    output = _run_param(("show", name), build_directory, run_command, sleep)
     for parameter_name, raw_value in _PARAM_VALUE.findall(output):
         if parameter_name == name:
             try:
@@ -90,18 +100,31 @@ def _read_parameter(name: str, build_directory: Path, run_command) -> float:
     raise FaultInjectionError(f"PX4 did not report a value for parameter '{name}'.")
 
 
-def _run_param(arguments: tuple[str, ...], build_directory: Path, run_command) -> str:
+def _run_param(arguments: tuple[str, ...], build_directory: Path, run_command, sleep) -> str:
     command = (str(Path("bin") / "px4-param"), *arguments)
-    try:
-        completed = run_command(
-            command, cwd=build_directory, capture_output=True, text=True, timeout=10.0, check=False
-        )
-    except OSError as error:
-        raise FaultInjectionError(f"Cannot run PX4's parameter client: {error}.") from error
-    except subprocess.TimeoutExpired as error:
-        raise FaultInjectionError(f"PX4's parameter client timed out on {' '.join(arguments)}.") from error
-    if completed.returncode != 0:
-        raise FaultInjectionError(
-            f"PX4's parameter client failed on {' '.join(arguments)}: {completed.stderr.strip()}"
-        )
-    return completed.stdout
+    for attempt in range(1, _PARAMETER_CLIENT_ATTEMPTS + 1):
+        try:
+            completed = run_command(
+                command,
+                cwd=build_directory,
+                capture_output=True,
+                text=True,
+                timeout=_PARAMETER_CLIENT_TIMEOUT_S,
+                check=False,
+            )
+        except OSError as error:
+            raise FaultInjectionError(f"Cannot run PX4's parameter client: {error}.") from error
+        except subprocess.TimeoutExpired as error:
+            if attempt == _PARAMETER_CLIENT_ATTEMPTS:
+                raise FaultInjectionError(
+                    f"PX4's parameter client timed out on {' '.join(arguments)} after "
+                    f"{_PARAMETER_CLIENT_ATTEMPTS} attempts."
+                ) from error
+            sleep(_PARAMETER_CLIENT_RETRY_DELAY_S)
+            continue
+        if completed.returncode != 0:
+            raise FaultInjectionError(
+                f"PX4's parameter client failed on {' '.join(arguments)}: {completed.stderr.strip()}"
+            )
+        return completed.stdout
+    raise AssertionError("The bounded parameter-client retry loop must return or raise.")

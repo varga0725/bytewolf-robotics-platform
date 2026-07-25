@@ -101,10 +101,23 @@ def _schema() -> dict[str, Any]:
         ) from error
 
 
+@lru_cache(maxsize=1)
+def _validator() -> Any:
+    """Compile the contract once rather than once per observation.
+
+    `jsonschema.validate` re-derives the schema on every call, and this runs on
+    every lidar scan a survey records. Same contract, compiled once.
+    """
+    schema = _schema()
+    validator_class = jsonschema.validators.validator_for(schema)
+    validator_class.check_schema(schema)
+    return validator_class(schema)
+
+
 def validate_observation_document(document: object) -> None:
     """Check a document against the versioned contract, raising on any breach."""
     try:
-        jsonschema.validate(document, _schema())
+        _validator().validate(document)
     except jsonschema.ValidationError as error:
         location = "/".join(str(part) for part in error.absolute_path) or "<root>"
         raise ObservationContractError(f"Observation rejected at '{location}': {error.message}") from error

@@ -39,6 +39,17 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./simulation/gazebo/launch/run_px4_gazebo.zsh base
 .venv/bin/python -m brain.cli.fly_takeoff_hover_land
 
+# Live dashboard while the simulator runs (terminal 2), then the web app (terminal 3).
+# Without the bridge nothing writes live-telemetry.json outside a mission run, so
+# the dashboard shows the last mission's snapshot and looks disconnected.
+.venv/bin/python -m brain.cli.dashboard_telemetry
+.venv/bin/python -m apps.api.server                    # http://127.0.0.1:8080
+
+# The world map is built from lidar returns, so it only fills for a lidar
+# airframe. `base` (gz_x500) carries no lidar and can never produce a map cell.
+./simulation/gazebo/launch/run_px4_gazebo_headless.zsh lidar-2d
+.venv/bin/python -m simulation.perception.survey_recorder --duration 120
+
 # Headless scenario matrices (start and tear down their own PX4/Gazebo)
 .venv/bin/python -m simulation.scenarios.scenarios                        # P0.v1 smoke
 .venv/bin/python -m simulation.scenarios.scenarios --runs 10              # repeatability gate
@@ -54,7 +65,17 @@ the PX4 checkout with `make px4_sitl gz_x500`. It runs PX4 in daemon mode (`-d`)
 purpose: the interactive `pxh>` prompt used to fill an unread output pipe and stall SITL
 before MAVLink came up.
 
-There is no lint, formatter, or CI config in this repo. `unittest` is the only gate.
+There is no lint or formatter in this repo. `unittest` is the only gate.
+`.github/workflows/tests.yml` runs it on push and pull request. CI runs neither
+PX4 nor Gazebo — a hosted runner has neither — so a green tick proves the safety
+logic, contracts and memory boundaries, never that a flight works. SITL evidence
+stays manual and lives under `simulation/artifacts/`.
+
+The conversational agent runs on the Python Cognitive Runtime (`brain/cognitive_runtime`,
+`apps/agent/pi_conversation.py`): NIM directly, the read-only plugins as tools, the
+reserved draft-flight path, and the cognitive-hooks memory pipeline. The former Node
+Pi runner (`apps/pi_agent/`) has been retired; there is no longer a Node build or test
+step. See `docs/pi-retirement-v0_1.md` and `docs/cognitive-runtime-v0_1.md`.
 
 ## Non-negotiable safety architecture
 
@@ -164,3 +185,28 @@ condition from the vehicle's hover tilt against Gazebo ground truth
 and the battery fault reads its parameters back from PX4. A measured X500 drag coefficient
 is gated on hardware the project has not bought. P1 locally complete; the Ubuntu 22.04 +
 ROS 2 Humble topic smoke is deferred for lack of an environment.
+
+As of 2026-07-21 (`91745d2`) the dashboard can actually fly: a map-picked point and an
+area survey both reach PX4, because a route may now end at home
+(`TakeoffWaypointsReturnToHomeMission`) and the orchestrator no longer caps waypoints or
+demands a HOLD. A survey flew end to end on SITL and built 49 lidar map cells. The
+envelope widened to a 2 km radius with a ±1200 m fence, which is a simulation envelope
+and not an endurance claim — the twin still has no measured battery. Two things that
+looked like features were absent: the geofence was enforced on the hand-written CLIs and
+on no MissionSpec route, and `flight_mode`/`landed_state` telemetry died on its first
+sample of every run. The camera renders and streams at the resolution `twin.yaml`
+declares, 30 fps end to end.
+
+The matrices were re-run on 2026-07-21 after the envelope, camera-resolution, and
+execution-path changes. P0.v1 passed 10/10
+(`simulation/artifacts/headless/p0-repeatability-20260721T105703Z.json`). P0.v2
+passed its 10-run repeatability gate
+(`simulation/artifacts/headless/p0-repeatability-20260721T200455Z.json`, commit
+`af55946`): the low-battery fallback and all three wind scenarios were 10/10; the
+boot/pre-arm check was 9/10, meeting the configured 0.9 nominal threshold. Do not
+describe this as an unconditional 10/10 P0.v2 result. The boot/pre-arm connection
+window was then widened from 15 to 30 seconds (`6b53b9e`), and its isolated 10-run,
+1.0-threshold rerun passed 10/10
+(`simulation/artifacts/headless/p0-repeatability-20260722T090654Z.json`). Note also that
+`simulation.gazebo.map_view` injects a camera model into the running world and must not
+be running during any evidence run.

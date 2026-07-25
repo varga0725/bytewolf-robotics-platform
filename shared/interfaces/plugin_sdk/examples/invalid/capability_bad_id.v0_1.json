@@ -1,0 +1,6 @@
+{
+  "capability_id": "Telemetry Read",
+  "version": "v0.1",
+  "access": "read",
+  "description": "Upper-case and spaces are rejected: ids must be machine-comparable so a conflict is exact, not a casing accident."
+}

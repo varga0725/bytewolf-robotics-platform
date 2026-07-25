@@ -1,0 +1,21 @@
+{
+  "contract_version": "v0.1",
+  "plugin_id": "telemetry.read",
+  "version": "1.0.0",
+  "name": "Telemetry Reader",
+  "description": "Reads the dashboard telemetry artifact and exposes it as a read-only capability.",
+  "provides": [
+    {
+      "capability_id": "telemetry.read",
+      "version": "v0.1",
+      "access": "read",
+      "data_contract": {"name": "observation", "version": "v0.1"},
+      "description": "Current vehicle state as versioned observations."
+    }
+  ],
+  "requests": [
+    {"capability_id": "world_memory.query", "version": "v0.1"}
+  ],
+  "reloadable": true,
+  "state_migration": "none"
+}

@@ -16,7 +16,7 @@
     "schema_version": {"const": "0.1"},
     "mission_id": {"type": "string", "format": "uuid"},
     "vehicle_id": {"type": "string", "minLength": 1},
-    "intent": {"type": "string", "enum": ["test_flight", "inspect_area"]},
+    "intent": {"type": "string", "enum": ["test_flight", "inspect_area", "patrol"]},
     "constraints": {
       "type": "object",
       "additionalProperties": false,

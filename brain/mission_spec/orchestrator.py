@@ -10,6 +10,8 @@ from brain.mission.flight import (
     TakeoffHoverLandMission,
     TakeoffReturnToHomeMission,
     TakeoffWaypointLandMission,
+    TakeoffWaypointsLandMission,
+    TakeoffWaypointsReturnToHomeMission,
 )
 from brain.mission_spec.validation import CompiledMission
 
@@ -27,8 +29,14 @@ class ApprovedMissionAdapter(Protocol):
         self, mission: TakeoffWaypointLandMission
     ) -> Awaitable[MissionExecution]: ...
 
+    def execute_waypoints_mission(self, mission: TakeoffWaypointsLandMission) -> Awaitable[MissionExecution]: ...
+
     def execute_return_to_home_mission(
         self, mission: TakeoffReturnToHomeMission
+    ) -> Awaitable[MissionExecution]: ...
+
+    def execute_waypoints_return_to_home_mission(
+        self, mission: TakeoffWaypointsReturnToHomeMission
     ) -> Awaitable[MissionExecution]: ...
 
 
@@ -48,11 +56,25 @@ async def execute_compiled_mission(
             return await adapter.execute(
                 TakeoffHoverLandMission(takeoff=takeoff, hover_duration_s=hold_duration_s)
             )
-        return await adapter.execute_waypoint_mission(
+        if len(intermediate) == 1:
+            return await adapter.execute_waypoint_mission(
             TakeoffWaypointLandMission(
                 takeoff=takeoff,
                 waypoint=intermediate[0],
                 hover_duration_s=hold_duration_s,
+            )
+            )
+        return await adapter.execute_waypoints_mission(
+            TakeoffWaypointsLandMission(takeoff=takeoff, waypoints=_route_legs(intermediate), hover_duration_s=hold_duration_s)
+        )
+
+    if intermediate:
+        return await adapter.execute_waypoints_return_to_home_mission(
+            TakeoffWaypointsReturnToHomeMission(
+                takeoff=takeoff,
+                waypoints=_route_legs(intermediate),
+                hover_duration_s=hold_duration_s,
+                return_to_home=terminal,
             )
         )
 
@@ -63,6 +85,11 @@ async def execute_compiled_mission(
             return_to_home=terminal,
         )
     )
+
+
+def require_executable_mission(mission: CompiledMission) -> None:
+    """Fail closed before connection when a MissionSpec has no lossless route."""
+    _supported_shape(mission)
 
 
 def _supported_shape(
@@ -80,22 +107,37 @@ def _supported_shape(
     if mission.terminal_action != expected_terminal_action:
         raise MissionSpecExecutionError("unsupported compiled MissionSpec: terminal action is inconsistent.")
 
-    if len(mission.hold_durations_s) != 1:
+    # A mission may hold once or not at all. An area sweep goes from its last
+    # waypoint straight to the return, and requiring a HOLD there would mean
+    # either refusing a mission the operator did ask for, or inserting a wait in
+    # the air that they did not.
+    if len(mission.hold_durations_s) > 1:
         raise MissionSpecExecutionError(
-            "unsupported compiled MissionSpec: expected exactly one HOLD duration."
+            "unsupported compiled MissionSpec: expected at most one HOLD duration."
         )
-    hold_duration_s = mission.hold_durations_s[0]
-    if not isfinite(hold_duration_s) or hold_duration_s <= 0.0:
-        raise MissionSpecExecutionError("unsupported compiled MissionSpec: HOLD duration must be positive.")
+    hold_duration_s = mission.hold_durations_s[0] if mission.hold_durations_s else 0.0
+    if not isfinite(hold_duration_s) or hold_duration_s < 0.0:
+        raise MissionSpecExecutionError("unsupported compiled MissionSpec: HOLD duration must not be negative.")
 
     intermediate = commands[1:-1]
-    if len(intermediate) > 1 or any(not isinstance(command, WaypointCommand) for command in intermediate):
+    if any(not isinstance(command, WaypointCommand) for command in intermediate):
         raise MissionSpecExecutionError(
-            "unsupported compiled MissionSpec: only one local waypoint is supported."
+            "unsupported compiled MissionSpec: only local waypoints may sit between takeoff and the terminal."
         )
+    # Deliberately uncapped here. How many waypoints a mission may carry is
+    # already decided in three places that know something this bridge does not:
+    # the survey pattern's own waypoint bound, the SafetyGate's per-waypoint
+    # geofence and radius check, and the runtime battery watchdog. A fourth
+    # number here would be a second source of a limit — and the one most likely
+    # to drift from the others.
     waypoints = tuple(command for command in intermediate if isinstance(command, WaypointCommand))
-    if isinstance(terminal, ReturnToHomeCommand) and waypoints:
-        raise MissionSpecExecutionError(
-            "unsupported compiled MissionSpec: RTL after a waypoint has no approved adapter path."
-        )
     return commands[0], waypoints, terminal, hold_duration_s
+
+
+def _route_legs(points: tuple[WaypointCommand, ...]) -> tuple[WaypointCommand, ...]:
+    north = east = 0.0
+    legs: list[WaypointCommand] = []
+    for point in points:
+        legs.append(WaypointCommand(point.north_m - north, point.east_m - east, point.target_altitude_m))
+        north, east = point.north_m, point.east_m
+    return tuple(legs)

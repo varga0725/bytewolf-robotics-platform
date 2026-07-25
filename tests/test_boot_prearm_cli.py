@@ -16,6 +16,9 @@ from brain.mission.artifacts import MissionTelemetrySnapshot
 
 
 class BootPrearmCliTests(unittest.TestCase):
+    def test_prearm_cli_allows_the_full_sitl_connection_window_by_default(self) -> None:
+        self.assertEqual(check_boot_prearm.parse_arguments(()).connection_timeout, 30.0)
+
     def test_prearm_cli_rejects_non_positive_or_non_finite_preflight_timeout(self) -> None:
         for invalid_timeout in ("0", "-1", "nan", "inf"):
             with self.subTest(invalid_timeout=invalid_timeout), self.assertRaises(SystemExit):

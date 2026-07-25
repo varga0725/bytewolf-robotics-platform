@@ -17,6 +17,7 @@ from simulation.gazebo.wind_probe import TiltObservation
 
 from simulation.scenarios.scenarios import (
     P0_SCENARIOS,
+    _mavsdk_server_port,
     P0_V2_SCENARIOS,
     Scenario,
     ScenarioRunner,
@@ -691,3 +692,57 @@ class WindScenarioEvidenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GrpcPortAllocationTests(unittest.TestCase):
+    """A busy gRPC port must be stepped over, not handed to mavsdk_server.
+
+    The hash gives every scenario a stable port, which stopped concurrent
+    scenarios colliding with each other. It never checked the port was free: a
+    repeatability run allocates about sixty from ten thousand, so a clash is
+    likely rather than rare. mavsdk_server then reports "Failed to bind server
+    to port" and exits, and the client waits out its whole connection timeout —
+    so the run fails as a timeout and names the wrong cause. That is the
+    1-in-10 `takeoff-hover-land` failure in the 2026-07-21 repeatability report.
+    """
+
+    def _scenario(self):
+        return P0_SCENARIOS[0]
+
+    def test_the_derived_port_is_stable_for_the_same_run_and_scenario(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = _mavsdk_server_port(root, self._scenario())
+            second = _mavsdk_server_port(root, self._scenario())
+
+        self.assertEqual(first, second)
+
+    def test_different_scenarios_do_not_share_a_port(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            ports = {_mavsdk_server_port(root, scenario) for scenario in P0_SCENARIOS}
+
+        self.assertEqual(len(ports), len(P0_SCENARIOS))
+
+    def test_a_taken_port_is_stepped_over(self) -> None:
+        import socket
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            preferred = _mavsdk_server_port(root, self._scenario())
+            holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            holder.bind(("127.0.0.1", preferred))
+            holder.listen(1)
+            try:
+                chosen = _mavsdk_server_port(root, self._scenario())
+            finally:
+                holder.close()
+
+        self.assertNotEqual(chosen, preferred)
+        self.assertTrue(51000 <= chosen < 61000)
+
+    def test_an_exhausted_range_is_reported_rather_than_searched_forever(self) -> None:
+        with TemporaryDirectory() as directory, \
+             patch("simulation.scenarios.scenarios._port_is_bindable", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "No free gRPC port"):
+                _mavsdk_server_port(Path(directory), self._scenario())

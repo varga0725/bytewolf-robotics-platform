@@ -1,0 +1,8 @@
+{
+  "contract_version": "v0.1",
+  "source": "camera:front_rgb",
+  "observed_at": "2026-07-24T09:00:00+00:00",
+  "max_age_s": 2.0,
+  "validity": "valid",
+  "state": "great"
+}

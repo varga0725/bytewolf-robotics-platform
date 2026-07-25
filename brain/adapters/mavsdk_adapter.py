@@ -14,7 +14,10 @@ from brain.mission.flight import (
     TakeoffHoverLandMission,
     TakeoffInterruptLandMission,
     TakeoffReturnToHomeMission,
+    TakeoffTargetApproachLandMission,
     TakeoffWaypointLandMission,
+    TakeoffWaypointsLandMission,
+    TakeoffWaypointsReturnToHomeMission,
     TakeoffWaypointSquareLandMission,
 )
 from brain.mission.runtime_policy import RuntimePolicy, load_runtime_policy
@@ -233,6 +236,71 @@ class MavsdkMissionAdapter:
             raise
         return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
 
+    async def execute_target_approach_mission(
+        self,
+        mission: TakeoffTargetApproachLandMission,
+        propose_move: Callable[[], Awaitable[WaypointCommand | None]],
+    ) -> MissionExecution:
+        """Take off, ask perception for a move, and visit it only if one is proposed.
+
+        ``propose_move`` is the perception decision, called once the vehicle is
+        airborne and settled. It returns a waypoint the SafetyGate has already
+        approved, or ``None`` to make no move -- a target that was not seen, was
+        too uncertain, or that the gate refused. This adapter never proposes a
+        move of its own: it flies exactly what perception hands it, or nothing,
+        and lands either way. The single airborne-land fallback still covers any
+        failure after takeoff, as in every other mission here.
+        """
+        await self._require_preflight()
+        execution = self._begin_execution()
+        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+        airborne = False
+        try:
+            await self._drone.action.arm()
+            execution = self._record(execution, MissionPhase.TAKING_OFF)
+            await self._drone.action.takeoff()
+            airborne = True
+            await self._sleep_with_runtime_watchdog(mission.capture_settle_seconds)
+            waypoint = await propose_move()
+            if waypoint is not None:
+                execution = self._record(execution, MissionPhase.NAVIGATING)
+                target = await self.goto_relative_waypoint(waypoint)
+                await self.wait_until_waypoint_reached(
+                    target,
+                    mission.waypoint_tolerance_m,
+                    min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s),
+                )
+            execution = self._record(execution, MissionPhase.HOVERING)
+            await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
+        except Exception:
+            await self._fallback_land_after_airborne_failure(
+                execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
+            )
+            raise
+        return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
+
+    async def execute_waypoints_mission(self, mission: TakeoffWaypointsLandMission) -> MissionExecution:
+        """Visit every approved local route point; one failure lands immediately."""
+        await self._require_preflight()
+        execution = self._begin_execution()
+        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+        airborne = False
+        try:
+            await self._drone.action.arm(); execution = self._record(execution, MissionPhase.TAKING_OFF)
+            await self._drone.action.takeoff(); airborne = True
+            await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
+            execution = self._record(execution, MissionPhase.NAVIGATING)
+            timeout_s = min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s)
+            for waypoint in mission.waypoints:
+                target = await self.goto_relative_waypoint(waypoint)
+                await self.wait_until_waypoint_reached(target, mission.waypoint_tolerance_m, timeout_s)
+            execution = self._record(execution, MissionPhase.HOVERING)
+            await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
+        except Exception:
+            await self._fallback_land_after_airborne_failure(execution, airborne, self._runtime_policy.landing_confirmation_timeout_s)
+            raise
+        return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
+
     async def execute_waypoint_square_mission(
         self, mission: TakeoffWaypointSquareLandMission
     ) -> MissionExecution:
@@ -320,28 +388,82 @@ class MavsdkMissionAdapter:
             raise
         return self._record(execution, MissionPhase.COMPLETED)
 
+    async def execute_waypoints_return_to_home_mission(
+        self, mission: TakeoffWaypointsReturnToHomeMission
+    ) -> MissionExecution:
+        """Fly every approved route point, then let PX4 bring the vehicle home.
+
+        This is `execute_waypoints_mission` and `execute_return_to_home_mission`
+        joined at the point where they differ, and nowhere else: the same
+        per-waypoint arrival confirmation, the same single land fallback, and
+        the same landed-at-home tolerance check that refuses to call a return
+        successful because the vehicle merely stopped moving.
+
+        There is no retry and no skip. A waypoint that cannot be reached is one
+        bounded landing and a raised error, exactly as on the landing route.
+        """
+        await self._require_preflight()
+        home = await self._global_position_sample("home")
+        execution = self._begin_execution()
+        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+        await self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m)
+        airborne = False
+        try:
+            await self._drone.action.arm()
+            execution = self._record(execution, MissionPhase.TAKING_OFF)
+            await self._drone.action.takeoff()
+            airborne = True
+            await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
+            execution = self._record(execution, MissionPhase.NAVIGATING)
+            timeout_s = min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s)
+            for waypoint in mission.waypoints:
+                target = await self.goto_relative_waypoint(waypoint)
+                await self.wait_until_waypoint_reached(target, mission.waypoint_tolerance_m, timeout_s)
+            execution = self._record(execution, MissionPhase.HOVERING)
+            await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
+            execution = self._record(execution, MissionPhase.RETURNING)
+            await self._drone.action.return_to_launch()
+            await self.wait_until_landed(
+                min(mission.landing_timeout_s, self._runtime_policy.landing_confirmation_timeout_s)
+            )
+            airborne = False
+            landing_position = await self._global_position_sample("landing position")
+            home_error_m = horizontal_distance_m(home, landing_position)
+            if home_error_m > mission.home_tolerance_m:
+                raise RuntimeError(
+                    f"RTL landed {home_error_m:.1f} m from home; limit is {mission.home_tolerance_m:.1f} m."
+                )
+        except Exception:
+            await self._fallback_land_after_airborne_failure(
+                execution,
+                airborne,
+                min(mission.landing_timeout_s, self._runtime_policy.landing_confirmation_timeout_s),
+            )
+            raise
+        return self._record(execution, MissionPhase.COMPLETED)
+
     async def _require_preflight(self) -> None:
         """Verify PX4 telemetry before issuing any configuration or flight command."""
         deadline = asyncio.get_running_loop().time() + self._preflight_wait_s
         health_stream = self._drone.telemetry.health()
-        first_sample = True
+        # A missing refresh is not alone a reason to reject a vehicle: PX4 can
+        # stop publishing Health after it is ready.  A received unhealthy
+        # sample is different: issuing arm after it would merely turn a clear
+        # preflight failure into a COMMAND_DENIED action failure.
+        health = None
         while True:
-            remaining_s = deadline - asyncio.get_running_loop().time()
-            if remaining_s < 0 and not first_sample:
-                raise MissionPreflightError(
-                    "Preflight rejected: health indicates global position or home position is not ready."
-                )
+            remaining = max(deadline - asyncio.get_running_loop().time(), 0.0)
             try:
-                health = await asyncio.wait_for(anext(health_stream), timeout=max(remaining_s, 0.01))
-            except TimeoutError as error:
-                raise MissionPreflightError(
-                    "Preflight rejected: health indicates global position or home position is not ready."
-                ) from error
-            except StopAsyncIteration as error:
-                raise MissionPreflightError("Preflight rejected: health telemetry is unavailable.") from error
+                health = await asyncio.wait_for(anext(health_stream), timeout=min(5.0, max(remaining, 0.01)))
+            except (TimeoutError, StopAsyncIteration):
+                break
             if self._has_required_navigation_health(health):
                 break
-            first_sample = False
+            if remaining <= 0:
+                raise MissionPreflightError(
+                    "Preflight rejected: the vehicle did not report itself ready to arm "
+                    "(global position, home, or PX4's own arming checks)."
+                )
 
         home = await self._first_telemetry_sample(self._drone.telemetry.home(), "home")
         self._require_global_position(home, "home")
@@ -392,11 +514,31 @@ class MavsdkMissionAdapter:
 
     @staticmethod
     def _has_required_navigation_health(health: object) -> bool:
-        """Require navigation readiness, but not unrelated GCS health checks."""
+        """Require navigation readiness and PX4's own verdict on arming.
+
+        Position and home alone are not the same question PX4 asks itself. It
+        runs a wider set of checks — calibration, EKF convergence — and until
+        they pass it answers an arm command with COMMAND_DENIED. This code
+        already said so, in the comment above the wait: arming an unhealthy
+        vehicle "would merely turn a clear preflight failure into a
+        COMMAND_DENIED action failure". It then waited on the narrower
+        condition anyway, so a mission launched moments after PX4 booted did
+        exactly that. Two of six scenarios failed that way in the first
+        repetition of `p0-repeatability-20260721T103416Z.json`, and none in the
+        nine repetitions after it.
+
+        `is_armable` is PX4's answer to the question actually being asked. It is
+        a strictly narrower gate than before: a vehicle that would have been
+        armed and refused is now waited for, or rejected before the command.
+        """
         try:
-            return bool(health.is_global_position_ok and health.is_home_position_ok)
+            navigation_ready = bool(health.is_global_position_ok and health.is_home_position_ok)
         except AttributeError as error:
             raise MissionPreflightError("Preflight rejected: health telemetry is unavailable.") from error
+        # Older MAVSDK Health messages have no verdict to offer; their absence
+        # must not be read as "not armable" and stall every flight.
+        armable = getattr(health, "is_armable", True)
+        return navigation_ready and bool(armable)
 
     @staticmethod
     def _require_global_position(position: object, label: str) -> None:

@@ -1,0 +1,7 @@
+{
+  "contract_version": "v0.1",
+  "plugin_id": "telemetry.read",
+  "version": "1.0.0",
+  "name": "Telemetry Reader",
+  "provides": []
+}

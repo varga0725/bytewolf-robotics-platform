@@ -28,6 +28,9 @@ class TelemetrySnapshot:
     battery_percent: float | None
     in_air: bool | None
     captured_at: str | None
+    # Absent when the vehicle has no attitude fix. Never defaulted: a zero here
+    # would aim every body-frame observation at north.
+    heading_deg: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -65,7 +68,8 @@ def load_telemetry_snapshot(path: Path) -> TelemetrySnapshot:
         raise TelemetryFormatError("captured_at must be a string when present.")
     if captured_at is not None:
         _validate_capture_time(captured_at)
-    return TelemetrySnapshot(position, battery_percent, in_air, captured_at)
+    heading_deg = _bounded_number_or_none(telemetry.get("heading_deg"), "heading_deg", minimum=-360.0, maximum=360.0)
+    return TelemetrySnapshot(position, battery_percent, in_air, captured_at, heading_deg)
 
 
 def _parse_position(value: Any) -> Position | None:

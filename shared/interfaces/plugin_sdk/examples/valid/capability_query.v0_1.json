@@ -1,0 +1,6 @@
+{
+  "capability_id": "world_memory.query",
+  "version": "v0.1",
+  "access": "query",
+  "description": "Answers a bounded question over the evidence-backed world store."
+}

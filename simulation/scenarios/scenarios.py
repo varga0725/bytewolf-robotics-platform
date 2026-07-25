@@ -735,10 +735,54 @@ def _latest_artifact(directory: Path) -> Path | None:
     return artifacts[0] if len(artifacts) == 1 else None
 
 
+_GRPC_PORT_BASE = 51000
+_GRPC_PORT_RANGE = 10000
+# Enough to step past a busy neighbourhood, small enough that an exhausted range
+# is reported rather than searched for forever.
+_GRPC_PORT_ATTEMPTS = 64
+
+
+def _port_is_bindable(port: int) -> bool:
+    import socket
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
 def _mavsdk_server_port(output_directory: Path, scenario: Scenario) -> int:
-    """Derive an isolated local gRPC port from immutable run identity and scenario."""
+    """Derive an isolated local gRPC port, and check it is actually free.
+
+    The hash alone gives every scenario a stable, traceable port, which is what
+    made concurrent scenarios stop colliding. It does not make the port
+    *available*: a repeatability run allocates around sixty of them from a range
+    of ten thousand, so a clash is likely rather than rare, and a lingering
+    mavsdk_server from an earlier scenario holds one for a while after its
+    mission ends.
+
+    When it collides the server reports "Failed to bind server to port" and
+    exits, and the client then waits out its whole connection timeout — so the
+    run fails as a timeout, naming the wrong cause. That is exactly the 1-in-10
+    `takeoff-hover-land` failure in `p0-repeatability-20260721T101101Z.json`.
+
+    The preferred port is still the derived one, so a report stays readable.
+    Stepping only happens when it is taken.
+    """
     identity = f"{output_directory.resolve()}:{scenario.identifier}".encode("utf-8")
-    return 51000 + int.from_bytes(sha256(identity).digest()[:2], "big") % 10000
+    preferred = int.from_bytes(sha256(identity).digest()[:2], "big") % _GRPC_PORT_RANGE
+    for offset in range(_GRPC_PORT_ATTEMPTS):
+        port = _GRPC_PORT_BASE + (preferred + offset) % _GRPC_PORT_RANGE
+        if _port_is_bindable(port):
+            return port
+    raise RuntimeError(
+        f"No free gRPC port for scenario {scenario.identifier!r} after "
+        f"{_GRPC_PORT_ATTEMPTS} attempts; nothing was run."
+    )
 
 
 def parse_arguments(arguments: Iterable[str] | None = None) -> argparse.Namespace:
