@@ -1,8 +1,9 @@
-# Speech adapter v0.1 — research and decision
+# Speech adapter v0.1 — decision and contract
 
-The speech workstream's first deliverable is a decision, not a pipeline: which
-STT and TTS engines a Hungarian-speaking robot can actually stand on, and what
-the contract between speech and the Cognitive Runtime must forbid.
+The models are **already decided** in the project's canonical planning source
+(Notion, *Speech Stack v0.1 döntés*, 2026-07-24). This document records that
+decision, the evidence that supports and qualifies it, and the contract that
+fences what speech is allowed to do.
 
 **The safety line first.** Speech is an *input* to the Cognitive Runtime. A
 recognised utterance becomes at most a `command_suggestion`; it travels the same
@@ -10,61 +11,94 @@ recognised utterance becomes at most a `command_suggestion`; it travels the same
 path as typed chat. Nothing spoken can shorten that path, and the transcript
 contract is built so that a document claiming otherwise is schema-invalid.
 
-## The finding that shapes the design
+## The decision
 
-The platform already runs on NVIDIA NIM, so the obvious first move is to use
-NVIDIA for speech too. That works for **listening** and fails for **speaking**:
+| Function | Primary | Fallback |
+| --- | --- | --- |
+| **STT** — speech to text | **NVIDIA Parakeet TDT 0.6B v3** | Whisper large-v3-turbo, server-side |
+| **TTS** — text to speech | **Coqui XTTS-v2** | pre-generated fixed Hungarian system messages for critical states |
 
-- **ASR:** Riva/NIM `parakeet-tdt-0.6b-v3` and `canary-1b-v2` both list Hungarian
-  among 25 European languages, with automatic language detection.
-- **TTS:** the current Magpie TTS Multilingual model covers **en-US, fr-FR and
-  es-US only** — no Hungarian.
+Both run locally. The recorded reasoning: Parakeet fits the platform's
+NVIDIA server and Jetson direction, is a small model, can be tuned for low
+latency, and suits a real-time robotics pipeline. XTTS-v2 produces usable
+Hungarian, runs locally, is multilingual, and can reproduce a speaker from a
+short sample — with voice cloning permitted only with documented consent and an
+authorised sample.
 
-So the two halves cannot come from one vendor. TTS is the constraint, not STT.
+## Evidence found while implementing
 
-## STT candidates
+Independent research supports the STT half and sharpens one open question on the
+TTS half.
 
-| Engine | Hungarian | Runs where | Latency shape | Licence / cost | Notes |
-| --- | --- | --- | --- | --- | --- |
-| **NVIDIA NIM Parakeet TDT 0.6B v3** | yes (25 EU langs, auto-detect) | cloud NIM, or self-hosted | streaming-capable, small model | same NVIDIA key the platform already holds | **Recommended first adapter**: no new vendor, no new secret |
-| NVIDIA Canary 1B v2 | yes (25 EU langs) | cloud NIM, or self-hosted | larger, slower than Parakeet | same key | fallback if Parakeet's Hungarian disappoints |
-| Whisper large-v3 (local, faster-whisper) | yes, unbenchmarked here | fully offline, GPU-friendly | batch-first; streaming needs chunking | permissive (MIT) | **the offline path**, and what a Jetson would run without a network |
-| ElevenLabs Scribe | vendor claims 3.1% WER FLEURS-hu, 5.5% Common Voice | cloud only | low | paid, new vendor | strongest *claimed* Hungarian accuracy, but a vendor claim, not an independent benchmark |
+**STT — the choice is well supported.** Riva/NIM `parakeet-tdt-0.6b-v3` lists
+Hungarian among 25 European languages with automatic language detection, so the
+primary STT needs no new vendor and no new secret: the platform already holds an
+NVIDIA key. `canary-1b-v2` covers the same languages with a larger model, a
+second NVIDIA-side option if Parakeet's Hungarian disappoints.
 
-## TTS candidates
+**TTS — NVIDIA could not have taken this half anyway.** The current Magpie TTS
+Multilingual model covers en-US, fr-FR and es-US only, with no Hungarian. That
+is why the two halves come from different vendors: TTS is the constraint, not
+STT.
 
-| Engine | Hungarian | Runs where | Licence | Notes |
-| --- | --- | --- | --- | --- |
-| **Piper** | yes (30+ langs) | fully offline, real-time on a Pi 5 **without a GPU** | permissive | **Recommended**: the only candidate that is offline, Hungarian, embedded-friendly and licence-clean |
-| ElevenLabs | yes | cloud only | paid | best quality, but a network dependency in the voice path of a robot |
-| Azure / Google TTS | yes | cloud only | paid | mature, multilingual, same network objection |
-| Coqui XTTS v2 | yes (17 langs) | offline | **CPML — non-commercial** | ⚠️ licence blocks the platform's commercial path; usable for experiments only |
-| macOS `AVSpeechSynthesizer` | yes | offline, macOS only | OS-bundled | fine on the dev Mac, useless on the Jetson |
+**⚠️ One concrete data point for the open licence item.** The plan already flags
+that XTTS-v2's licence must be cleared legally before commercial use. The
+specific obstacle is that the XTTS v2 model weights ship under the **Coqui
+Public Model License (CPML), which is non-commercial**. That does not overturn
+the decision — XTTS-v2 remains the right development choice, and Hungarian
+quality is why it was picked — but it means the compliance item is a real
+blocker for a commercial release, not a formality.
 
-## Recommendation
+If that item forces a change, the licence-clean alternative found in the same
+research is **Piper**: fully offline, 30+ languages including Hungarian,
+real-time on a Raspberry Pi 5 *without a GPU* (so comfortably within a Jetson's
+budget), permissive licence. Its weakness against XTTS-v2 is that it does not do
+voice cloning from a short sample. Cloud options (ElevenLabs, Azure, Google) all
+support Hungarian but put a network dependency in the voice path of a robot that
+must work without one.
 
-- **STT: NVIDIA NIM Parakeet** as the first adapter (no new vendor, no new
-  secret, Hungarian supported), with **local Whisper** kept as the offline
-  profile for the Jetson.
-- **TTS: Piper**, because it is the only option that is simultaneously offline,
-  Hungarian, real-time without a GPU, and licence-clean. Cloud TTS stays a
-  fallback for quality comparison, never the default voice of a robot that must
-  work without a network.
-- **Coqui XTTS v2 is rejected for production** on licence grounds (CPML,
-  non-commercial), matching the plan's own "licenc és kereskedelmi
-  használhatóság" decision criterion.
+None of the accuracy figures circulating for these engines is a decision: they
+are vendor claims or general benchmarks, not measurements on this platform's
+microphone, room and vocabulary. The engines sit behind an adapter interface so
+the choice can be re-made against a recorded Hungarian audio set, exactly as the
+vision detector choice waits on a recorded clip.
 
-None of these numbers is a decision on quality: the Hungarian WER figures above
-are vendor claims or general-purpose benchmarks, not measurements on this
-platform's microphone, room and vocabulary. The engines are behind an adapter
-interface precisely so the choice can be re-made against a recorded Hungarian
-audio set, the same way the vision detector choice waits on a recorded clip.
+## Targets to measure against
+
+From the plan, these are acceptance targets, not achievements:
+
+| Metric | Initial target |
+| --- | --- |
+| STT first partial result | ≤ 800 ms |
+| STT final result | ≤ 1.5 s from end of speech |
+| TTS first-audio latency | ≤ 1.5 s |
+| Full response start | ≤ 3 s for a simple command |
+| Hungarian command recognition rate | ≥ 90% in a controlled indoor environment |
+| **False mission starts** | **0 accepted cases** |
+
+The last one is the only metric the contract can enforce on its own, and it is
+the reason the contract is shaped the way it is.
+
+## Architectural rules this contract implements
+
+- STT and TTS are **adapter/capability**, never part of the cognitive core.
+- A voice instruction may not drive a motor, PX4 or a ROS 2 actuator. Every
+  physical action still goes `MissionSpec → SafetyGate → Mission Orchestrator →
+  Body Adapter`.
+- An uncertain transcript makes the system **ask back**; it never starts a
+  mission on a guess. The contract carries `confidence` and `language_confidence`
+  so a consumer can apply that rule rather than infer it.
+- Raw audio retention is **off by default**; the contract never carries audio,
+  only an opaque `audio_ref` to locally retained evidence.
+- Emergency commands need a **separate deterministic keyword and policy layer** —
+  deliberately not part of this contract, because an emergency path built out of
+  a probabilistic transcript is exactly the wrong construction.
 
 ## Push-to-talk and interruption
 
-Continuous listening is not the v0.1 default: a robot that is always recording
-is a privacy surface, and an open microphone invites the model to react to
-speech that was never addressed to it. v0.1 is push-to-talk.
+Continuous listening is not the v0.1 default: an always-open microphone is a
+privacy surface, and it invites the model to react to speech never addressed to
+it. v0.1 is push-to-talk.
 
 ```text
             ┌──────── press ────────┐
@@ -80,16 +114,16 @@ speech that was never addressed to it. v0.1 is push-to-talk.
 Rules the prototype must honour:
 
 - **No audio is retained in IDLE.** The buffer opens on press and is discarded
-  after the transcript is produced.
+  once the transcript exists.
 - **Barge-in cancels speech output, never a mission.** Interrupting the robot
   mid-sentence stops the audio; it cannot cancel, alter or approve a flight,
   because speech has no path to the executor either way.
 - **A partial transcript is never a command.** Only a final transcript may carry
   a `command_suggestion`, and even then it is a suggestion.
 - **Silence is not consent.** A timeout in LISTENING returns to IDLE and produces
-  nothing; it never falls back to "assume the last request".
+  nothing; it never falls back to assuming the last request.
 
-## Contract
+## The contract
 
 `shared/schemas/speech/transcript_v0_1.schema.json`, loaded fail-closed by
 `brain/speech/transcript.py`. It carries the utterance, the engine and version
@@ -106,6 +140,8 @@ The suggestion is where the safety line is written into the schema:
 - `is_final` must be true before a suggestion may appear — a partial transcript
   cannot propose anything.
 
-Raw audio never enters the contract. `audio_ref` is an opaque reference to
-locally retained evidence, on the same principle as the vision artifact
-reference.
+## What is not done
+
+The adapters themselves. This delivers the decision, the contract and the
+boundary; wiring Parakeet and XTTS-v2, recording a Hungarian audio set, and
+measuring against the targets above belong with the hardware.
