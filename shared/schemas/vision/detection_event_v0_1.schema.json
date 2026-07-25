@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.local/schemas/vision/detection_event_v0_1",
+  "title": "ByteWolf Vision Detection Event v0.1",
+  "description": "One detection in one camera frame, as the Vision stack publishes it to consumers (the Cognitive Runtime, its perception hooks, the world model and the dashboard). It is observation-only: it describes what was seen, never a command, and it is a consumer-facing view -- the producing model's internal frame details (calibration, latency, drop counters) stay inside Vision. Consumers resolve freshness themselves: see docs and brain/vision/canonical.py.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": [
+    "contract_version", "event_id", "source", "observed_at", "max_age_s", "validity",
+    "frame", "model_id", "model_version", "label", "confidence", "bounding_box"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "v0.1",
+      "description": "Pins the meaning of every field below. A consumer that does not know this version rejects the event rather than guess."
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique id for this detection, so it can be correlated with a summary, an artifact or an audit record."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What produced it, e.g. 'camera:front_rgb' or 'camera:down_rgb'. Names the sensor origin for audit; never for dispatch."
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, UTC, with an explicit offset. When the frame was captured -- age is measured from here, not from publish time, so a slow pipeline cannot hide behind a fresh publish."
+    },
+    "max_age_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "How long this detection stays usable after observed_at. Past it the detection is stale and must not be acted on, even though its values are still present."
+    },
+    "validity": {
+      "enum": ["valid", "invalid", "missing"],
+      "description": "What the producer knows. 'valid': trustworthy at observed_at. 'invalid': measured but not trusted. 'missing': no detection was made. 'stale' is not declared here; only the consumer knows the current time, so it derives staleness from age."
+    },
+    "frame": {"$ref": "#/$defs/frame"},
+    "model_id": {"type": "string", "minLength": 1, "description": "The detector model that produced this, e.g. 'yolo' or 'rt-detr'."},
+    "model_version": {"type": "string", "minLength": 1, "description": "The model's version, so a regression is attributable and a consumer can pin."},
+    "label": {"type": "string", "minLength": 1, "description": "The detected class, e.g. 'person'. Not an authorisation: 'person' is never 'authorized_operator'; identity is a separate, opt-in pipeline."},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "The detector's confidence in [0, 1]."},
+    "bounding_box": {"$ref": "#/$defs/bounding_box"},
+    "artifact_ref": {"$ref": "#/$defs/artifact_ref"}
+  },
+  "$defs": {
+    "frame": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["width_px", "height_px"],
+      "description": "The frame's pixel dimensions, so a consumer can interpret the bounding box. The producer's richer internal CameraFrame (device, calibration, latency, drop counters) is deliberately not exposed here.",
+      "properties": {
+        "width_px": {"type": "integer", "exclusiveMinimum": 0},
+        "height_px": {"type": "integer", "exclusiveMinimum": 0}
+      }
+    },
+    "bounding_box": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["x_px", "y_px", "width_px", "height_px"],
+      "description": "Pixel box, origin top-left. The loader also checks it lies within the frame (x_px + width_px <= frame.width_px, likewise for height), which JSON Schema cannot express across fields.",
+      "properties": {
+        "x_px": {"type": "number", "minimum": 0},
+        "y_px": {"type": "number", "minimum": 0},
+        "width_px": {"type": "number", "exclusiveMinimum": 0},
+        "height_px": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "artifact_ref": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["artifact_id", "encoding", "payload_hash"],
+      "description": "An optional reference to a stored evidence clip or keyframe for this detection's frame.",
+      "properties": {
+        "artifact_id": {"type": "string", "minLength": 1},
+        "encoding": {"enum": ["jpeg", "h264", "h265"]},
+        "payload_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the artifact payload in canonical lower-case hex, so a consumer can actually verify the clip it references. A shorter or differently-encoded digest cannot serve that purpose, so it is refused rather than carried."
+        }
+      }
+    }
+  }
+}

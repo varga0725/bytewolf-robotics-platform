@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.local/schemas/vision/vision_summary_v0_1",
+  "title": "ByteWolf Vision Summary v0.1",
+  "description": "The consumer-facing roll-up of one camera frame's detections and tracks. It is the stable, versioned contract a consumer reads instead of the Vision internals: the source, the frame, the producing model, freshness, and a bounded list of detection identities. Observation-only; no command, no flight authority. See brain/vision/canonical.py.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": [
+    "contract_version", "source", "observed_at", "max_age_s", "validity",
+    "frame", "model_id", "model_version", "detections", "detection_count"
+  ],
+  "properties": {
+    "contract_version": {"const": "v0.1", "description": "Pins the meaning of every field below."},
+    "source": {"type": "string", "minLength": 1, "description": "The sensor origin, e.g. 'camera:front_rgb'."},
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, UTC, with an offset. When the frame was captured; age is measured from here."
+    },
+    "max_age_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "How long this summary stays usable after observed_at. Past it it is stale and must not be acted on."
+    },
+    "validity": {
+      "enum": ["valid", "invalid", "missing"],
+      "description": "'valid': trustworthy at observed_at. 'invalid': measured but not trusted. 'missing': no frame was analysed. 'stale' is derived by the consumer from age."
+    },
+    "frame": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["width_px", "height_px"],
+      "description": "The frame's pixel dimensions, so a consumer can interpret each bounding box.",
+      "properties": {
+        "width_px": {"type": "integer", "exclusiveMinimum": 0},
+        "height_px": {"type": "integer", "exclusiveMinimum": 0}
+      }
+    },
+    "model_id": {"type": "string", "minLength": 1},
+    "model_version": {"type": "string", "minLength": 1},
+    "detections": {
+      "type": "array",
+      "description": "A bounded list of detection identities in this frame. May be shorter than detection_count when the producer caps it; a consumer must read detection_count for the true total, not len(detections).",
+      "items": {
+        "type": "object",
+        "unevaluatedProperties": false,
+        "required": ["label", "confidence", "bounding_box"],
+        "properties": {
+          "event_id": {"type": "string", "minLength": 1, "description": "Optional link to the full DetectionEvent, when one was published."},
+          "tracker_id": {"type": "string", "minLength": 1, "description": "Present only for a detection carried across frames under a stable track."},
+          "label": {"type": "string", "minLength": 1},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "bounding_box": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": ["x_px", "y_px", "width_px", "height_px"],
+            "properties": {
+              "x_px": {"type": "number", "minimum": 0},
+              "y_px": {"type": "number", "minimum": 0},
+              "width_px": {"type": "number", "exclusiveMinimum": 0},
+              "height_px": {"type": "number", "exclusiveMinimum": 0}
+            }
+          }
+        }
+      }
+    },
+    "detection_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The true number of detections in the frame. Distinct from len(detections), which may be capped: a consumer must not read absence of a listed detection as 'nothing there'."
+    }
+  }
+}

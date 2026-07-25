@@ -1,0 +1,15 @@
+{
+  "contract_version": "v0.1",
+  "source": "camera:front_rgb",
+  "observed_at": "2026-07-24T09:00:00+00:00",
+  "max_age_s": 0.5,
+  "validity": "valid",
+  "frame": {"width_px": 1280, "height_px": 720},
+  "model_id": "yolo",
+  "model_version": "v8n-aerial-2026-07",
+  "detections": [
+    {"event_id": "front:1042:0", "label": "person", "confidence": 0.91, "bounding_box": {"x_px": 320.0, "y_px": 180.0, "width_px": 96.0, "height_px": 220.0}},
+    {"tracker_id": "t-3", "label": "car", "confidence": 0.77, "bounding_box": {"x_px": 800.0, "y_px": 400.0, "width_px": 200.0, "height_px": 120.0}}
+  ],
+  "detection_count": 2
+}
