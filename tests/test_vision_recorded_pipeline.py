@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
@@ -64,6 +64,40 @@ class RecordedPipelineTests(unittest.TestCase):
             self.assertEqual(report["benchmark"]["quality_kpis"], "unavailable_without_ground_truth")
             self.assertEqual(json.loads((root / "status.json").read_text())["state"], "valid")
             self.assertTrue((root / "frame.jpg").read_bytes().startswith(b"\xff\xd8"))
+
+    def test_a_clip_recorded_long_ago_still_replays(self) -> None:
+        # Every clip the UVC recorder produces is historical by the time it is
+        # replayed. Judging it against wall-clock time would mark every frame
+        # stale and reject the whole recording without ever running the detector.
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "frames.jsonl"
+            fixture.write_text(line(1, bytes(JPEG)) + "\n" + line(2, bytes(JPEG)) + "\n")
+            an_hour_later = NOW + timedelta(hours=1)
+
+            report = run_recorded_pipeline(
+                fixture, root / "status.json", root / "frame.jpg", now=an_hour_later,
+                detector="annotations",
+            )
+
+            self.assertEqual(report["processed_frames"], 2)
+            self.assertEqual(report["rejected_frames"], 0)
+
+    def test_wall_clock_mode_still_exercises_staleness(self) -> None:
+        # The staleness path is deliberately reachable, just not the default.
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "frames.jsonl"
+            fixture.write_text(line(1, bytes(JPEG)) + "\n")
+            an_hour_later = NOW + timedelta(hours=1)
+
+            report = run_recorded_pipeline(
+                fixture, root / "status.json", root / "frame.jpg", now=an_hour_later,
+                detector="annotations", replay_clock=False,
+            )
+
+            self.assertEqual(report["processed_frames"], 0)
+            self.assertGreaterEqual(report["rejected_frames"], 1)
 
     def test_cli_writes_json_report(self) -> None:
         with TemporaryDirectory() as directory:

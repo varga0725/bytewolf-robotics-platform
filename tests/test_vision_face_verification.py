@@ -69,6 +69,22 @@ class BiometricConsentTests(unittest.TestCase):
         with self.assertRaisesRegex(FaceVerificationError, "pseudonymous"):
             consent(subject_id="Alice Example")
 
+    def test_consent_before_its_grant_time_is_not_consent(self) -> None:
+        # A future-dated record, a clock rollback, or verification against a
+        # historical frame must not authorise biometric work for the interval
+        # before the subject actually agreed.
+        granted = consent()
+        an_hour_early = granted.granted_at - timedelta(hours=1)
+
+        self.assertEqual(granted.state(an_hour_early), ConsentState.NOT_YET_EFFECTIVE)
+        self.assertFalse(granted.allows_verification(an_hour_early))
+
+    def test_consent_takes_effect_exactly_at_its_grant_time(self) -> None:
+        granted = consent()
+
+        self.assertEqual(granted.state(granted.granted_at), ConsentState.GRANTED)
+        self.assertTrue(granted.allows_verification(granted.granted_at))
+
 
 class FaceVerificationContractTests(unittest.TestCase):
     def test_valid_opt_in_confirmation_is_immutable_and_observation_only(self) -> None:

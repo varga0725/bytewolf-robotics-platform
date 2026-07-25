@@ -30,6 +30,12 @@ from brain.vision.tracking import IoUAssociationTracker
 from brain.vision.ultralytics import UltralyticsYoloDetector
 
 
+#: How many recent hash-bound payloads the host keeps. Inference happens right
+#: after a poll, so a small window is enough; the bound is what stops a
+#: long-running stream from retaining every frame it ever saw.
+_RETAINED_PAYLOADS = 64
+
+
 class _ImageDetails(Protocol):
     data: bytes
     width: int
@@ -65,10 +71,11 @@ class HashVerifiedGazeboSource:
         clock: Callable[[], datetime],
         session_id_factory: Callable[[], str],
     ) -> None:
+        # Keyed by payload hash and filed inside the capture callback, so an
+        # accepted frame always finds its own bytes regardless of what arrived
+        # since. Bounded by _RETAINED_PAYLOADS.
         self._payloads: dict[str, bytes] = {}
         self._shapes: dict[str, tuple[int, int]] = {}
-        self._latest_payload: bytes | None = None
-        self._latest_shape: tuple[int, int] | None = None
         self._clock = clock
         self.adapter = GazeboImageIngestAdapter(
             bindings=_CapturingBindings(bindings, self._capture), topic=topic,
@@ -95,11 +102,14 @@ class HashVerifiedGazeboSource:
         frame = self.adapter.poll()
         if frame is None:
             return None
-        payload, shape = self._latest_payload, self._latest_shape
-        if payload is None or shape is None or hashlib.sha256(payload).hexdigest() != frame.payload_hash:
+        # The payload was filed under its own hash by the callback that produced
+        # it, so this looks up the accepted frame's bytes directly rather than
+        # racing a mutable 'latest' field.
+        payload = self._payloads.get(frame.payload_hash)
+        shape = self._shapes.get(frame.payload_hash)
+        if payload is None or shape is None:
             raise ValueError("Gazebo host did not retain the accepted hash-bound RGB payload.")
-        existing = self._payloads.setdefault(frame.payload_hash, payload)
-        if existing != payload or self._shapes.setdefault(frame.payload_hash, shape) != shape:
+        if hashlib.sha256(payload).hexdigest() != frame.payload_hash:
             raise ValueError("Gazebo payload hash collision with conflicting image evidence.")
         return frame
 
@@ -141,7 +151,14 @@ class HashVerifiedGazeboSource:
             raise ValueError("Gazebo reconnect must rotate the stream session ID.")
 
     def _capture(self, message: object) -> None:
-        """Best-effort capture; GazeboImageIngestAdapter remains the authority."""
+        """Best-effort capture; GazeboImageIngestAdapter remains the authority.
+
+        The payload is filed under its own hash here, inside the callback that
+        produced it. Consulting a mutable 'latest' field at poll time instead
+        would race: a second callback can land between the adapter accepting
+        frame A and the poll reading the payload, and comparing A's hash against
+        B's bytes reports an integrity failure that disconnects a healthy stream.
+        """
         try:
             image = message  # keep malformed host objects out of the payload map
             payload = bytes(getattr(image, "data"))
@@ -150,8 +167,19 @@ class HashVerifiedGazeboSource:
                 return
         except (AttributeError, TypeError, ValueError):
             return
-        self._latest_payload = payload
-        self._latest_shape = (width, height)
+        payload_hash = hashlib.sha256(payload).hexdigest()
+        shape = (width, height)
+        if self._payloads.setdefault(payload_hash, payload) != payload:
+            return  # a hash collision with conflicting bytes; poll() reports it
+        self._shapes.setdefault(payload_hash, shape)
+        self._evict_old_payloads()
+
+    def _evict_old_payloads(self) -> None:
+        """Bound the retained evidence; a long stream must not grow without end."""
+        while len(self._payloads) > _RETAINED_PAYLOADS:
+            oldest = next(iter(self._payloads))
+            self._payloads.pop(oldest, None)
+            self._shapes.pop(oldest, None)
 
 
 class GzTransportBindings:

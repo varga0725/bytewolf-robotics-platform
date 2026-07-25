@@ -74,9 +74,20 @@ def run_recorded_pipeline(
     input_path: Path, status_path: Path, frame_path: Path, *, now: datetime,
     detector: str = "yolo", weights_path: Path | None = None,
     tracker: TrackerPort | None = None, metadata_path: Path | None = None,
-    benchmark_manifest_path: Path | None = None,
+    benchmark_manifest_path: Path | None = None, replay_clock: bool = True,
 ) -> dict[str, object]:
-    """Replay a fixture, publishing only verified observation artifacts."""
+    """Replay a fixture, publishing only verified observation artifacts.
+
+    Freshness is judged on a **replay clock** by default: each frame is evaluated
+    at its own capture instant, so a clip recorded an hour ago replays exactly as
+    it behaved live. Judging a recording against wall-clock time would mark every
+    historical frame stale and reject the whole clip without ever running the
+    detector -- which would make a recorded fixture useless for the very
+    comparisons it exists to enable.
+
+    Pass ``replay_clock=False`` to judge against ``now`` instead, which is how to
+    exercise the staleness path deliberately.
+    """
     source = RecordedJsonlIngest(input_path)
     selected_detector, payload_resolver = _detector_for(detector, source, weights_path)
     active_tracker = tracker if tracker is not None else IoUAssociationTracker()
@@ -88,6 +99,7 @@ def run_recorded_pipeline(
     last_payload: bytes | None = None
     last_result = None
 
+    instant = now
     while not source.exhausted:
         frame = source.poll()
         accepted = frame is not None
@@ -96,7 +108,11 @@ def run_recorded_pipeline(
             if payload_resolver is not None:
                 payload_resolver.register(frame.payload_hash, payload)
             runtime.submit(frame)
-        outcome = runtime.process_next(now)
+            if replay_clock:
+                # Judge this frame at the moment it was captured, so a recorded
+                # clip is as fresh on replay as it was when it was recorded.
+                instant = frame.captured_at
+        outcome = runtime.process_next(instant)
         if outcome.state is RuntimeState.PROCESSED:
             processed += 1
             last_payload = source.payload_for(outcome.frame)  # type: ignore[arg-type]
@@ -112,11 +128,11 @@ def run_recorded_pipeline(
         if not accepted and outcome.state is RuntimeState.IDLE:
             break
         if last_payload is not None:
-            publisher.publish(outcome.detection, outcome.health, now=now, render=lambda result, payload=last_payload: render_jpeg_overlay(payload, result))
+            publisher.publish(outcome.detection, outcome.health, now=instant, render=lambda result, payload=last_payload: render_jpeg_overlay(payload, result))
 
-    health = runtime.health(now)
+    health = runtime.health(instant)
     if last_payload is not None:
-        publisher.publish(last_result, health, now=now, render=lambda result, payload=last_payload: render_jpeg_overlay(payload, result))
+        publisher.publish(last_result, health, now=instant, render=lambda result, payload=last_payload: render_jpeg_overlay(payload, result))
     benchmark = None
     benchmark_document = None
     if evaluation_frames:
@@ -184,6 +200,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="Explicit existing local YOLO11n weights file; required with --detector yolo. Downloads are disabled.",
     )
     parser.add_argument("--now", default=None, help="RFC3339 timestamp used for deterministic replay")
+    parser.add_argument(
+        "--wall-clock", action="store_true",
+        help=(
+            "Judge freshness against --now instead of each frame's capture time. "
+            "By default a recording replays on its own clock, so historical frames "
+            "are not all rejected as stale; use this to exercise staleness on purpose."
+        ),
+    )
     return parser.parse_args(arguments)
 
 
@@ -195,6 +219,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             args.input_path, args.status_path, args.frame_path, now=now,
             detector=args.detector, weights_path=args.weights, metadata_path=args.metadata_path,
             benchmark_manifest_path=args.benchmark_manifest_path,
+            replay_clock=not args.wall_clock,
         )
     except (GroundTruthValidationError, RecordedFixtureError, ValueError) as error:
         raise SystemExit(f"recorded vision fixture rejected: {error}") from error

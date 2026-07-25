@@ -192,8 +192,14 @@ def run_live_pipeline(
             processed += 1
             last_payload = source.resolve(outcome.frame.payload_hash)  # type: ignore[union-attr]
             source_drops = outcome.frame.dropped_frames  # type: ignore[union-attr]
+            # End to end, capture through inference: the frame's own latency_ms
+            # covers capture and transport only, and is fixed before the detector
+            # runs. Benchmarking that alone would leave p50/p95 unchanged when
+            # model latency moves by hundreds of milliseconds, which is exactly
+            # the number this benchmark exists to catch.
+            processing_ms = max(0.0, (now() - observed_at).total_seconds() * 1000.0)
             samples.append(BenchmarkSample(
-                latency_ms=outcome.frame.latency_ms,  # type: ignore[union-attr]
+                latency_ms=outcome.frame.latency_ms + processing_ms,  # type: ignore[union-attr]
                 dropped_frames=max(0, source_drops - previous_source_drops),
             ))
             previous_source_drops = source_drops
@@ -202,6 +208,12 @@ def run_live_pipeline(
             unavailable += 1
             if last_payload is not None:
                 publisher.publish(None, outcome.health, now=observed_at, render=lambda _result: last_payload)
+            else:
+                # A stream that fails before its first frame still has to say so.
+                # Skipping the status here would leave an earlier healthy run's
+                # artifact on disk, and the dashboard would read its stored
+                # 'valid' state as current.
+                publisher.publish_status(None, outcome.health, now=observed_at)
             last_payload = None
             if reconnect_factory is None or reconnects >= max_reconnects:
                 break

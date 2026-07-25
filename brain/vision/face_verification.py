@@ -34,6 +34,11 @@ class ConsentState(str, Enum):
     GRANTED = "granted"
     REVOKED = "revoked"
     EXPIRED = "expired"
+    #: Before ``granted_at``. Consent that has not taken effect yet is not
+    #: consent: a future-dated record, a clock rollback or verification against a
+    #: historical frame must not let biometric data be enrolled, decrypted or
+    #: compared in the interval before the subject actually agreed.
+    NOT_YET_EFFECTIVE = "not_yet_effective"
 
 
 class FaceQuality(str, Enum):
@@ -84,6 +89,12 @@ class BiometricConsent:
             return ConsentState.REVOKED
         if self.expires_at is not None and self.expires_at.astimezone(UTC) <= instant:
             return ConsentState.EXPIRED
+        if instant < self.granted_at.astimezone(UTC):
+            # Consent that has not started is not consent. Falling through to
+            # GRANTED here would let a future-dated record, a clock rollback, or
+            # verification against a historical frame authorise biometric work
+            # for the whole interval before the subject agreed.
+            return ConsentState.NOT_YET_EFFECTIVE
         return ConsentState.GRANTED
 
     def allows_verification(self, now: datetime) -> bool:

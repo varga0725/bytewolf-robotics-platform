@@ -96,6 +96,31 @@ class GazeboVisionPipelineTests(unittest.TestCase):
             self.assertEqual((root / "frame.jpg").read_bytes()[:2], b"\xff\xd8")
             self.assertEqual(source.resolve(detector.hashes[0]), payload)
 
+    def test_a_callback_arriving_mid_poll_does_not_break_the_accepted_frame(self) -> None:
+        # Gazebo callbacks are asynchronous: a second image can land between the
+        # adapter accepting frame A and the poll reading its payload. Consulting
+        # a mutable 'latest' field would then compare A's hash against B's bytes,
+        # report an integrity failure and disconnect a healthy stream. Each
+        # payload is filed under its own hash in the callback that produced it,
+        # so the accepted frame always finds its own bytes.
+        bindings = FakeBindings()
+        source = self.make_source(bindings)
+        first = bytes(range(12))
+        second = bytes(range(12, 24))
+        bindings.emit(Image(first))
+
+        accepted = source.adapter.poll
+        def poll_then_receive_another():
+            frame = accepted()
+            bindings.emit(Image(second))  # lands inside the race window
+            return frame
+        source.adapter.poll = poll_then_receive_another  # type: ignore[method-assign]
+
+        frame = source.poll()
+
+        self.assertIsNotNone(frame)
+        self.assertEqual(source.resolve(frame.payload_hash), first)
+
     def test_malformed_image_fails_closed_without_fake_detection(self) -> None:
         bindings = FakeBindings()
         source = self.make_source(bindings)

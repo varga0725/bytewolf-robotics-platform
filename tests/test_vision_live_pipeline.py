@@ -146,6 +146,55 @@ class LiveVisionPipelineTests(unittest.TestCase):
                 "dropped_frames": 2,
             })
 
+    def test_latency_samples_include_detector_execution(self) -> None:
+        # frame.latency_ms covers capture and transport only, and is fixed before
+        # inference. Benchmarking that alone would leave p50/p95 unchanged when
+        # the model slows by hundreds of milliseconds -- the number this
+        # benchmark exists to catch.
+        class _SlowDetector(FakeDetector):
+            def __init__(self, tick):
+                super().__init__()
+                self._tick = tick
+
+            def detect(self, frame, now):
+                self._tick(timedelta(milliseconds=400))
+                return super().detect(frame, now)
+
+        clock = [_NOW]
+
+        def tick(delta):
+            clock[0] = clock[0] + delta
+
+        source, _binding = self.make_source([FakeBuffer(_JPEG, captured_at=_NOW - timedelta(milliseconds=100))])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            report = run_live_pipeline(
+                source, _SlowDetector(tick), status_path=root / "status.json", frame_path=root / "frame.jpg",
+                now=lambda: clock[0], sleep=lambda _seconds: None, max_iterations=1,
+            )
+
+            # 100 ms transport + 400 ms inference, not 100 ms alone.
+            self.assertGreaterEqual(report["benchmark"]["p50_latency_ms"], 500.0)
+
+    def test_an_unavailable_stream_publishes_status_before_any_frame(self) -> None:
+        # A stream that fails before its first frame still has to say so, or an
+        # earlier healthy run's artifact stays on disk and the dashboard reads
+        # its stored 'valid' state as current.
+        source, _binding = self.make_source([RuntimeError("appsink closed")])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            report = run_live_pipeline(
+                source, FakeDetector(), status_path=root / "status.json", frame_path=root / "frame.jpg",
+                now=lambda: _NOW, sleep=lambda _seconds: None, max_iterations=1,
+            )
+
+            self.assertEqual(report["processed_frames"], 0)
+            self.assertEqual(report["unavailable_frames"], 1)
+            status = json.loads((root / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["stream_state"], "unavailable")
+            # No frame was ever produced, so no frame artifact is invented.
+            self.assertFalse((root / "frame.jpg").exists())
+
     def test_no_buffer_does_not_publish_fake_frame_or_observation(self) -> None:
         source, _binding = self.make_source([None])
         with tempfile.TemporaryDirectory() as temporary:

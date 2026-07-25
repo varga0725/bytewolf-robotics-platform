@@ -82,14 +82,35 @@ class VisionArtifactPublisher:
         render: Callable[[DetectionResult | None], bytes],
     ) -> None:
         """Render and publish a frame plus status without exposing a control path."""
-        document = vision_status_document(result, health, now=now)
         payload = render(result)
         if not isinstance(payload, bytes) or not payload:
             raise ValueError("Vision renderer must return non-empty encoded image bytes.")
-        _atomic_write(self._status_path, json.dumps(document, separators=(",", ":")).encode("utf-8"))
+        self._write_status(result, health, now=now)
         _atomic_write(self._frame_path, payload)
+
+    def publish_status(
+        self,
+        result: DetectionResult | None,
+        health: VisionHealth,
+        *,
+        now: datetime,
+    ) -> None:
+        """Publish the status alone, when there is no frame to show.
+
+        A stream that fails before its first frame still has to say so. Without
+        this, the status left by an earlier healthy run stays on disk and the
+        dashboard reads its stored ``valid`` state as current.
+        """
+        self._write_status(result, health, now=now)
+
+    def _write_status(
+        self, result: DetectionResult | None, health: VisionHealth, *, now: datetime
+    ) -> dict:
+        document = vision_status_document(result, health, now=now)
+        _atomic_write(self._status_path, json.dumps(document, separators=(",", ":")).encode("utf-8"))
         if self._metadata_store is not None:
             self._metadata_store.append_dashboard_status(document, written_at=now)
+        return document
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:
