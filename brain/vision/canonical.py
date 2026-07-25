@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from functools import lru_cache
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,12 @@ import jsonschema
 
 
 VISION_CONTRACT_VERSION = "v0.1"
+
+#: How far ahead of the consumer's clock a producer's timestamp may sit before
+#: the observation is refused. Small skew between machines is normal; a
+#: far-future timestamp is not, and clamping its age to zero would keep the
+#: observation usable until wall-clock time caught up and for max_age_s after.
+MAX_CLOCK_SKEW_S = 2.0
 
 _SCHEMA_DIR = Path(__file__).resolve().parents[2] / "shared/schemas/vision"
 DETECTION_EVENT_SCHEMA_PATH = _SCHEMA_DIR / "detection_event_v0_1.schema.json"
@@ -139,7 +146,7 @@ def load_detection_event(document: object) -> DetectionEvent:
         event_id=validated["event_id"],
         source=validated["source"],
         observed_at=_parse_timestamp(validated["observed_at"]),
-        max_age_s=float(validated["max_age_s"]),
+        max_age_s=_finite_max_age(validated["max_age_s"]),
         declared_validity=validated["validity"],
         frame=validated["frame"],
         model_id=validated["model_id"],
@@ -157,10 +164,17 @@ def load_vision_summary(document: object) -> VisionSummary:
     frame = validated["frame"]
     for detection in validated["detections"]:
         _require_box_in_frame(frame, detection["bounding_box"])
+    # The list may be capped, so the count may exceed it -- but a count below the
+    # listed entries is a contradiction, and a consumer told to prefer the count
+    # would report fewer objects than the document itself carries.
+    if validated["detection_count"] < len(validated["detections"]):
+        raise VisionContractError(
+            "detection_count must be at least the number of listed detections."
+        )
     return VisionSummary(
         source=validated["source"],
         observed_at=_parse_timestamp(validated["observed_at"]),
-        max_age_s=float(validated["max_age_s"]),
+        max_age_s=_finite_max_age(validated["max_age_s"]),
         declared_validity=validated["validity"],
         frame=frame,
         model_id=validated["model_id"],
@@ -176,7 +190,7 @@ def load_vision_health(document: object) -> VisionHealth:
     return VisionHealth(
         source=validated["source"],
         observed_at=_parse_timestamp(validated["observed_at"]),
-        max_age_s=float(validated["max_age_s"]),
+        max_age_s=_finite_max_age(validated["max_age_s"]),
         declared_validity=validated["validity"],
         stream_state=validated["state"],
         fps=validated.get("fps"),
@@ -193,10 +207,28 @@ def _resolve_state(validity: str, observed_at: datetime, max_age_s: float, now: 
         return VisionState.MISSING
     if validity == "invalid":
         return VisionState.INVALID
-    age = max(0.0, (_utc(now) - observed_at).total_seconds())
+    age = (_utc(now) - observed_at).total_seconds()
+    if age < -MAX_CLOCK_SKEW_S:
+        # Timestamped beyond the skew allowance into the future: the consumer
+        # cannot age it, so it is refused rather than treated as brand new.
+        return VisionState.INVALID
     if age > max_age_s:
         return VisionState.STALE
     return VisionState.VALID
+
+
+def _finite_max_age(value: object) -> float:
+    """Read a freshness window, refusing anything that cannot expire.
+
+    JSON has no infinity literal, but an oversized exponent such as ``1e400``
+    parses to ``inf`` and satisfies a lower-bound-only schema check. An infinite
+    window would make the observation permanently actionable, which is exactly
+    what the freshness boundary exists to prevent.
+    """
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise VisionContractError("max_age_s must be a positive, finite number of seconds.")
+    return number
 
 
 def _parse_timestamp(value: str) -> datetime:

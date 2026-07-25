@@ -77,7 +77,11 @@
       "properties": {
         "artifact_id": {"type": "string", "minLength": 1},
         "encoding": {"enum": ["jpeg", "h264", "h265"]},
-        "payload_hash": {"type": "string", "minLength": 1, "description": "sha256 of the artifact payload, so a consumer can verify the clip it references."}
+        "payload_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the artifact payload in canonical lower-case hex, so a consumer can actually verify the clip it references. A shorter or differently-encoded digest cannot serve that purpose, so it is refused rather than carried."
+        }
       }
     }
   }

@@ -97,6 +97,41 @@ class FreshnessTests(unittest.TestCase):
             event.state(datetime(2026, 7, 24, 9, 0, 0))
 
 
+class FailClosedFreshnessTests(unittest.TestCase):
+    """A freshness window that cannot expire, or a clock that runs ahead, must
+    not keep an observation actionable."""
+
+    def _event(self, **overrides) -> dict:
+        return {**_read(EXAMPLES / "valid/detection_event.v0_1.json"), **overrides}
+
+    def test_an_infinite_max_age_is_refused(self) -> None:
+        # JSON has no infinity literal, but 1e400 parses to inf and satisfies a
+        # lower-bound-only schema check; an infinite window never goes stale.
+        document = json.loads('{"max_age_s": 1e400}')
+        self.assertEqual(document["max_age_s"], float("inf"))
+        with self.assertRaises(VisionContractError):
+            load_detection_event(self._event(max_age_s=document["max_age_s"]))
+
+    def test_an_infinite_max_age_is_refused_for_summary_and_health(self) -> None:
+        infinite = json.loads('{"v": 1e400}')["v"]
+        with self.assertRaises(VisionContractError):
+            load_vision_summary({**_read(EXAMPLES / "valid/vision_summary.v0_1.json"), "max_age_s": infinite})
+        with self.assertRaises(VisionContractError):
+            load_vision_health({**_read(EXAMPLES / "valid/vision_health.v0_1.json"), "max_age_s": infinite})
+
+    def test_a_far_future_timestamp_is_invalid_not_brand_new(self) -> None:
+        event = load_detection_event(self._event())
+        # Clamping a negative age to zero would keep this usable until wall-clock
+        # time caught up, and for max_age_s beyond that.
+        an_hour_early = event.observed_at - timedelta(hours=1)
+        self.assertEqual(event.state(an_hour_early), VisionState.INVALID)
+
+    def test_small_clock_skew_is_tolerated(self) -> None:
+        event = load_detection_event(self._event())
+        slightly_early = event.observed_at - timedelta(seconds=1)
+        self.assertEqual(event.state(slightly_early), VisionState.VALID)
+
+
 class InvariantTests(unittest.TestCase):
     def test_future_version_is_rejected(self) -> None:
         with self.assertRaises(VisionContractError):
@@ -113,6 +148,20 @@ class InvariantTests(unittest.TestCase):
         document["detections"][0]["bounding_box"] = {"x_px": 1270.0, "y_px": 1.0, "width_px": 20.0, "height_px": 10.0}
         with self.assertRaises(VisionContractError):
             load_vision_summary(document)
+
+    def test_a_count_below_the_listed_detections_is_refused(self) -> None:
+        # The count is the truth and consumers are told to prefer it, so a count
+        # under the listed entries would hide objects the document carries.
+        document = _read(EXAMPLES / "valid/vision_summary.v0_1.json")
+        document["detection_count"] = 1
+        with self.assertRaises(VisionContractError):
+            load_vision_summary(document)
+
+    def test_an_artifact_hash_must_be_a_real_sha256(self) -> None:
+        document = _read(EXAMPLES / "valid/detection_event.v0_1.json")
+        document["artifact_ref"]["payload_hash"] = "9f86d0818"
+        with self.assertRaises(VisionContractError):
+            load_detection_event(document)
 
     def test_detection_count_can_exceed_the_listed_detections(self) -> None:
         # The list may be capped; the count is the truth. A valid summary with a
