@@ -113,6 +113,17 @@ class NIMMissionAgent:
             envelope = _model_envelope(response)
         except ValueError as error:
             return _rejected(self._model, str(error), "nim.response")
+        if envelope.get("kind") == "decline":
+            # The agent judged that no flight was asked for. That is an answer,
+            # not a failure, and it is the only place a request can be turned
+            # down for what it means rather than for the numbers it contains.
+            reason = envelope.get("reason")
+            return _rejected(
+                self._model,
+                str(reason).strip() if isinstance(reason, str) and reason.strip()
+                else "The agent declined to propose a flight for this request.",
+                "agent.decline",
+            )
         if envelope.get("kind") != "mission_proposal":
             return _rejected(
                 self._model,
@@ -160,6 +171,12 @@ def _request_payload(model: str, request: MissionAgentRequest) -> dict[str, obje
             "You are ByteWolf Mission Agent. You only propose one MissionSpec JSON document.",
             "Never output MAVLink, PX4, ROS, actuator, motor, shell, or tool commands.",
             "Call propose_mission_spec exactly once. Do not emit prose or a second proposal.",
+            "Decline instead of proposing when the request does not ask for a flight, when it "
+            "refuses or forbids one (for example Hungarian 'ne szállj fel', 'maradj a földön'), "
+            "or when you cannot tell what flight is being asked for. To decline, call "
+            "propose_mission_spec with kind 'decline' and a short reason, and no mission_spec. "
+            "Declining is a correct answer, not a failure: never invent a flight for a request "
+            "that did not ask for one.",
             "Use exactly one of these executable step shapes:",
             "1) TAKEOFF, HOLD, LAND; 2) TAKEOFF, one to four GOTO_LOCAL steps, HOLD, LAND; 3) TAKEOFF, HOLD, RTL.",
             "Use exactly one positive HOLD. If the user omits a hold duration, use 3 seconds.",
@@ -184,14 +201,23 @@ def _request_payload(model: str, request: MissionAgentRequest) -> dict[str, obje
             "type": "function",
             "function": {
                 "name": "propose_mission_spec",
-                "description": "Propose exactly one high-level MissionSpec for the safety kernel to validate.",
+                "description": (
+                    "Propose exactly one high-level MissionSpec for the safety kernel to validate, "
+                    "or decline when the request does not ask for a flight."
+                ),
                 "parameters": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["kind", "mission_spec"],
+                    "required": ["kind"],
                     "properties": {
-                        "kind": {"const": "mission_proposal"},
+                        # An agent with no way to say no has to invent a mission for
+                        # anything it hears, including a request that forbids one.
+                        "kind": {"enum": ["mission_proposal", "decline"]},
                         "mission_spec": _proposal_schema(),
+                        "reason": {
+                            "type": "string",
+                            "description": "Why no flight was proposed. Required when kind is 'decline'.",
+                        },
                     },
                 },
             },
