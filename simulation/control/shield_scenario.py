@@ -151,7 +151,20 @@ def evaluate_shield_run(
             "not the shield's protection."
         )
 
-    if expect_intervention and not interventions:
+    # A run in which the sensor never once saw the obstacle did not test
+    # obstacle avoidance, whatever the ground truth says afterwards. A matrix
+    # run reported "the shield never intervened" and a 0.49 m clearance while
+    # every one of its 110 samples read clear -- the vehicle passed the box
+    # rather than approached it, and the shield was never shown the thing it is
+    # judged on. Scoring that as a shield failure would be as wrong as scoring
+    # it as a pass.
+    ever_saw_something = any(sample.sensed_distance_m is not None for sample in samples)
+    if requires_ground_truth and not ever_saw_something:
+        findings.append(
+            "The sensor never reported an obstacle on the path, so this run did not "
+            "present one to the shield; it measured the flight, not the protection."
+        )
+    elif expect_intervention and not interventions:
         findings.append("The shield never intervened in a run that placed something in its way.")
     # A run where the sensor never produced anything tested fail-closed, not
     # obstacle avoidance. It must not pass as the latter: the first attempt at
@@ -182,7 +195,15 @@ def evaluate_shield_run(
     first_intervention_clearance = next(
         (sample.clearance_m for sample in interventions if sample.clearance_m is not None), None
     )
-    if expect_intervention and mode == "active" and minimum_clearance is not None:
+    if (
+        expect_intervention
+        and mode == "active"
+        and minimum_clearance is not None
+        # Only meaningful once the sensor actually saw the thing. A vehicle
+        # that passed the box rather than approached it is close to it in
+        # ground truth without ever having been on course for it.
+        and ever_saw_something
+    ):
         # Active mode is judged on where the vehicle actually ended up, because
         # the shield was allowed to stop it.
         if minimum_clearance < required_clearance_m:

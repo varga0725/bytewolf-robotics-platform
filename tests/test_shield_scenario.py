@@ -38,7 +38,11 @@ def _clear_sample(at_s: float, clearance_m: float | None = 20.0) -> ShieldSample
 
 
 def _stopped_sample(at_s: float, clearance_m: float | None, verdict="insufficient_clearance"):
-    return ShieldSample(at_s, 0.5, verdict, 0.0, clearance_m)
+    # sensed_distance_m carries what the *sensor* reported. A blocking verdict
+    # that never sensed anything is a run where the obstacle was never on the
+    # path, which the scoring refuses to read as a shield failure.
+    sensed = clearance_m if verdict == "insufficient_clearance" else None
+    return ShieldSample(at_s, 0.5, verdict, 0.0, clearance_m, sensed_distance_m=sensed)
 
 
 class StaticObstacleTests(unittest.TestCase):
@@ -119,6 +123,45 @@ class FailClosedTests(unittest.TestCase):
         self.assertTrue(report.passed, report.findings)
 
 
+class UnpresentedObstacleTests(unittest.TestCase):
+    """A run that never showed the obstacle to the shield tested nothing."""
+
+    def _run(self, samples):
+        from simulation.control.shield_scenario import evaluate_shield_run
+
+        return evaluate_shield_run(
+            scenario="static-obstacle", mode="active", samples=samples,
+            required_clearance_m=2.0, expect_intervention=True,
+            recorded_at="2026-07-26T12:00:00Z",
+            requires_sensor=True, requires_ground_truth=True, flown_seconds=22.0,
+        )
+
+    def test_a_flight_that_passed_the_box_is_inconclusive_not_a_failure(self) -> None:
+        # The measured case: 110 samples, every one clear, and a ground-truth
+        # clearance of 0.49 m because the vehicle went by the obstacle rather
+        # than at it. Blaming the shield for that would be as wrong as passing
+        # it -- the shield was never shown the thing it is judged on.
+        samples = [_clear_sample(index * 0.2, clearance_m=8.0 - index * 0.07) for index in range(110)]
+
+        report = self._run(samples)
+
+        self.assertFalse(report.passed)
+        joined = " ".join(report.findings)
+        self.assertIn("did not present one to the shield", joined)
+        self.assertNotIn("never intervened", joined)
+        self.assertNotIn("came within", joined)
+
+    def test_a_flight_that_did_approach_is_still_judged_on_clearance(self) -> None:
+        samples = [_clear_sample(0.0, clearance_m=8.0)] + [
+            _stopped_sample(index * 0.2, clearance_m=1.2) for index in range(1, 60)
+        ]
+
+        report = self._run(samples)
+
+        self.assertFalse(report.passed)
+        self.assertIn("came within", " ".join(report.findings))
+
+
 class ShadowTimingTests(unittest.TestCase):
     """Shadow is judged on timing, active on outcome. They ask different things."""
 
@@ -132,8 +175,8 @@ class ShadowTimingTests(unittest.TestCase):
     def test_a_shadow_run_is_not_blamed_for_where_the_vehicle_ended_up(self) -> None:
         # Nothing stopped it, by design. Its closest approach measures the
         # nominal planner; the shield is answerable for when it objected.
-        observed = ShieldSample(1.0, 0.5, "insufficient_clearance", 0.5, 6.0)
-        overshot = ShieldSample(2.0, 0.5, "insufficient_clearance", 0.5, 1.2)
+        observed = ShieldSample(1.0, 0.5, "insufficient_clearance", 0.5, 6.0, sensed_distance_m=6.0)
+        overshot = ShieldSample(2.0, 0.5, "insufficient_clearance", 0.5, 1.2, sensed_distance_m=1.2)
 
         report = self._shadow([_clear_sample(0.0, 10.0), observed, overshot])
 
@@ -144,7 +187,7 @@ class ShadowTimingTests(unittest.TestCase):
     def test_a_shadow_run_that_objected_too_late_fails(self) -> None:
         # It would not have stopped the vehicle in time, which is precisely
         # what shadow mode exists to find out before the shield is enabled.
-        late = ShieldSample(2.0, 0.5, "insufficient_clearance", 0.5, 1.5)
+        late = ShieldSample(2.0, 0.5, "insufficient_clearance", 0.5, 1.5, sensed_distance_m=1.5)
 
         report = self._shadow([_clear_sample(0.0, 10.0), late])
 
@@ -184,7 +227,7 @@ class ModeTests(unittest.TestCase):
     def test_a_shadow_run_that_changed_a_command_fails(self) -> None:
         # Shadow exists to measure without acting. One constrained command and
         # the numbers no longer describe what shadow mode does.
-        constrained = ShieldSample(0.0, 0.5, "insufficient_clearance", 0.0, 3.0)
+        constrained = ShieldSample(0.0, 0.5, "insufficient_clearance", 0.0, 3.0, sensed_distance_m=3.0)
 
         report = _run([constrained], mode="shadow")
 
@@ -192,7 +235,7 @@ class ModeTests(unittest.TestCase):
         self.assertIn("shadow must observe only", " ".join(report.findings))
 
     def test_a_shadow_run_that_only_observed_passes(self) -> None:
-        observed = ShieldSample(0.0, 0.5, "insufficient_clearance", 0.5, 3.0)
+        observed = ShieldSample(0.0, 0.5, "insufficient_clearance", 0.5, 3.0, sensed_distance_m=3.0)
 
         report = _run([observed], mode="shadow")
 
@@ -200,7 +243,7 @@ class ModeTests(unittest.TestCase):
         self.assertEqual(report.interventions, 1, "the verdict is still counted")
 
     def test_an_active_run_that_kept_moving_through_a_stop_fails(self) -> None:
-        ignored = ShieldSample(0.0, 0.5, "insufficient_clearance", 0.5, 3.0)
+        ignored = ShieldSample(0.0, 0.5, "insufficient_clearance", 0.5, 3.0, sensed_distance_m=3.0)
 
         report = _run([ignored], mode="active")
 
