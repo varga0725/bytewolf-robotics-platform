@@ -58,7 +58,20 @@ function ClaimSection({ claims, disputed, withheldCount }: { claims: Claim[]; di
 }
 
 function OccupancyMap({ map }: { map: MapState }) {
-  const span = useMemo(() => Math.max(12, ...map.cells.flatMap((cell) => [Math.abs(cell.north_m) + cell.cell_size_m / 2, Math.abs(cell.east_m) + cell.cell_size_m / 2])), [map.cells]);
+  // Folded rather than spread: an occupancy grid is API-sized, and spreading
+  // it as function arguments throws once it passes the engine's argument
+  // limit -- during render, taking the page with it.
+  const span = useMemo(
+    () => map.cells.reduce(
+      (widest, cell) => Math.max(
+        widest,
+        Math.abs(cell.north_m) + cell.cell_size_m / 2,
+        Math.abs(cell.east_m) + cell.cell_size_m / 2,
+      ),
+      12,
+    ),
+    [map.cells],
+  );
   const scale = (mapSize / 2 - 20) / span;
   const canRenderCells = map.occupancyOnly;
   return <section className="world-map-panel" aria-labelledby="world-map-title">

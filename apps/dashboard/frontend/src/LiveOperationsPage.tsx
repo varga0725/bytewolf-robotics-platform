@@ -54,7 +54,14 @@ function readTelemetry(value: unknown): Telemetry | null {
 
 function telemetryState(telemetry: Telemetry | null): OperationsState["telemetryState"] {
   if (!telemetry) return "unavailable";
-  return Date.now() - Date.parse(telemetry.capturedAt) > 10_000 ? "stale" : "fresh";
+  const age = Date.now() - Date.parse(telemetry.capturedAt);
+  // A producer clock ahead of the browser gives a negative age, which the old
+  // comparison read as fresh -- so this page could present a flight state,
+  // battery and position as current while the top-level sanitiser, which
+  // already refuses future samples, called the same sample unavailable. Two
+  // contradictory answers about one sample is worse than either alone.
+  if (age < -1_000) return "unavailable";
+  return age > 10_000 ? "stale" : "fresh";
 }
 
 function readSafety(value: unknown): SafetyEnvelope | null {
@@ -101,7 +108,11 @@ function metric(value: string | number | null, suffix = ""): string {
 
 function OccupancyPreview({ verified, cells }: { verified: boolean; cells: OccupancyCell[] }) {
   const scale = useMemo(() => {
-    const extent = Math.max(12, ...cells.flatMap((cell) => [Math.abs(cell.north) + cell.size, Math.abs(cell.east) + cell.size]));
+    // Folded, not spread: an API-sized grid spread as arguments throws.
+    const extent = cells.reduce(
+      (widest, cell) => Math.max(widest, Math.abs(cell.north) + cell.size, Math.abs(cell.east) + cell.size),
+      12,
+    );
     return 130 / extent;
   }, [cells]);
   return <div>

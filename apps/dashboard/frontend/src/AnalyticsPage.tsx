@@ -99,9 +99,13 @@ function phaseLabel(value: TerminalPhase): string {
   return labels[value];
 }
 
-function Distribution({ title, records }: { title: string; records: Array<{ key: string; label: string; count: number }> }) {
-  return <section aria-labelledby={title}>
-    <h3 id={title}>{title}</h3>
+function Distribution({ id, title, records }: { id: string; title: string; records: Array<{ key: string; label: string; count: number }> }) {
+  // aria-labelledby splits on whitespace, so a human title ("Rögzített
+  // kimenetek") named two IDs that do not exist and the section was left
+  // unlabelled for a screen reader. The id is passed explicitly rather than
+  // derived, so it stays stable when the visible wording changes.
+  return <section aria-labelledby={id}>
+    <h3 id={id}>{title}</h3>
     {records.length === 0 ? <p className="muted">Nincs ellenőrzött adat ebben a megoszlásban.</p> : <ul className="data-list" aria-label={title}>
       {records.map((record) => <li key={record.key}><strong>{record.label}</strong><span>{record.count} futás</span></li>)}
     </ul>}
@@ -153,8 +157,8 @@ export function AnalyticsPage() {
           <div><dt>Utolsó ellenőrzött futás</dt><dd><time dateTime={timestamps.at(-1)}>{timestamps.at(-1)}</time></dd></div>
         </dl>
         <div className="live-operations-grid">
-          <Distribution title="Rögzített kimenetek" records={outcomeDistribution} />
-          <Distribution title="Rögzített végső fázisok" records={phaseDistribution} />
+          <Distribution id="analytics-outcomes" title="Rögzített kimenetek" records={outcomeDistribution} />
+          <Distribution id="analytics-phases" title="Rögzített végső fázisok" records={phaseDistribution} />
         </div>
         <section className="mission-events" aria-labelledby="analytics-boundary-title">
           <p className="eyebrow">ÉRTELMEZÉSI HATÁR</p><h3 id="analytics-boundary-title">Az archívum korlátai</h3>

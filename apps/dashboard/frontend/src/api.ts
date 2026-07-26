@@ -1,11 +1,15 @@
 export type ApiError = Error & { status?: number };
 
 function sessionId(): string {
-  const stored = window.localStorage.getItem("bytewolfSession");
+  // sessionStorage, not localStorage: this identity is what binds a mission
+  // approval to the operator who gave it. localStorage survives browser
+  // restarts, so the next person at the same profile would have inherited the
+  // previous operator's session -- and with it their approvals.
+  const stored = window.sessionStorage.getItem("bytewolfSession");
   if (stored) return stored;
 
   const value = window.crypto.randomUUID();
-  window.localStorage.setItem("bytewolfSession", value);
+  window.sessionStorage.setItem("bytewolfSession", value);
   return value;
 }
 

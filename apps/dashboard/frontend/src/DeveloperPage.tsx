@@ -17,8 +17,24 @@ function isRecord(value: unknown): value is Record<string, unknown> { return typ
 function number(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value); }
 function timestamp(value: unknown): value is string { return typeof value === "string" && Number.isFinite(Date.parse(value)); }
 
+function optional(value: unknown, valid: (candidate: unknown) => boolean): boolean {
+  // The backend's TelemetrySnapshot documents every field as optional and
+  // returns null for anything the source did not carry, rather than inventing
+  // state. A validator that demands them all reports a contract violation for
+  // a snapshot that honours the contract exactly.
+  return value === null || value === undefined || valid(value);
+}
+
 function telemetryContract(value: unknown): boolean {
-  return isRecord(value) && timestamp(value.captured_at) && typeof value.in_air === "boolean" && number(value.battery_percent) && value.battery_percent >= 0 && value.battery_percent <= 100;
+  if (!isRecord(value)) return false;
+  return (
+    optional(value.captured_at, timestamp)
+    && optional(value.in_air, (candidate) => typeof candidate === "boolean")
+    && optional(
+      value.battery_percent,
+      (candidate) => number(candidate) && candidate >= 0 && candidate <= 100,
+    )
+  );
 }
 
 function safetyContract(value: unknown): boolean {

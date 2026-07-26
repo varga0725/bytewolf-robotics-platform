@@ -3,9 +3,15 @@ const runtimeStages = [
   ["02", "Memory", "Carries mission context across every decision."],
   ["03", "Reasoning", "Interprets intent against the live environment."],
   ["04", "Mission proposal", "Produces an inspectable, bounded plan."],
-  ["05", "Safety validation", "Checks the proposal before any body receives it."],
-  ["06", "Body execution", "Routes approved intent through the embodiment adapter."],
-  ["07", "Feedback", "Returns observations to the cognitive loop."],
+  ["05", "Safety validation", "Checks the proposal against the vehicle's own limits."],
+  // Human approval was missing from this list, and it is not a detail. Nothing
+  // in this platform flies without an operator approving the specific plan --
+  // it is a separate gate from the deterministic safety check, and a public
+  // page showing validation handing straight to execution misdescribes the one
+  // property the page exists to claim.
+  ["06", "Human approval", "An operator approves the specific plan. Nothing flies without it."],
+  ["07", "Body execution", "Routes approved intent through the embodiment adapter."],
+  ["08", "Feedback", "Returns observations to the cognitive loop."],
 ] as const;
 
 const roadmaps = [
@@ -55,7 +61,7 @@ export default function App() {
 
       <section className="proof shell" aria-label="Current platform status">
         <div><span className="metric">01</span><p>Active<br />embodiment</p></div>
-        <div><span className="metric">7</span><p>Runtime<br />stages</p></div>
+        <div><span className="metric">{runtimeStages.length}</span><p>Runtime<br />stages</p></div>
         <div><span className="metric">P0</span><p>Safety regression<br />closed</p></div>
         <div className="proof-last"><span className="small-dot" /> No direct browser-to-flight-control path</div>
       </section>
@@ -77,7 +83,8 @@ export default function App() {
           <div className="build-panel">
             <div className="panel-head"><span>BUILD STATUS / X500 V2</span><b><i /> OPERATIONAL TWIN</b></div>
             <div className="build-grid"><div><small>CONTROL PLANE</small><strong>PX4 SITL</strong></div><div><small>SIMULATION</small><strong>Gazebo Harmonic</strong></div><div><small>MISSION GATE</small><strong>Fail-closed</strong></div><div><small>TELEMETRY</small><strong>Read-only</strong></div></div>
-            <div className="test-line"><span>Safety regression matrix</span><b>10 / 10</b><div><i /></div></div>
+            <div className="test-line"><span>P0.v2 regression matrix, 2026-07</span><b>10 / 10</b><div><i /></div></div>
+            <p className="test-note">Simulation only: PX4 SITL and Gazebo, no physical flight. One scenario in that run needed an isolated rerun to reach 10 / 10.</p>
             <p className="panel-foot">Simulation evidence informs engineering confidence. It is not a claim of physical flight readiness.</p>
           </div>
         </div>

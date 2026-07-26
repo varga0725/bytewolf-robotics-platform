@@ -1,4 +1,14 @@
+/* Served from Google Fonts with display=swap, and preconnected in index.html
+   so the handshake overlaps the rest of the critical path.
+
+   The marketing plan asks for self-hosted, subsetted WOFF2 instead, and it is
+   right: a third-party host is a render-blocking dependency the homepage's LCP
+   budget should not carry. That is a build step plus a licence decision about
+   redistributing the files, and neither is done -- so this stays as it is
+   rather than pointing @font-face at files that do not exist, which is how an
+   earlier attempt at this fix silently broke the page's typography. */
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+
 
 :root { color: #eef3f1; background: #07100f; font-family: Manrope, Arial, sans-serif; font-synthesis: none; }
 * { box-sizing: border-box; }
@@ -20,3 +30,4 @@ h1, h2, h3, p { margin-top: 0; } h1 { font-size: clamp(58px, 6.25vw, 88px); lett
 .roadmap { padding-bottom: 162px; }.roadmap-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 70px; }.roadmap-card { min-height: 275px; padding: 22px; background: #10201b; border: 1px solid #283a33; position: relative; }.roadmap-card.active { background: #193127; border-color: #c6f968; }.roadmap-top { display: flex; justify-content: space-between; font: 10px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .08em; color: #93a49b; }.active .roadmap-top span { color: #c6f968; }.roadmap-top b { font-size: 20px; color: #c6f968; }.roadmap-card h3 { font-size: 29px; letter-spacing: -.06em; margin: 52px 0 12px; }.roadmap-card p { color: #9caaa3; font-size: 12px; max-width: 260px; line-height: 1.65; }.roadmap-line { height: 1px; background: #3a4c43; position: absolute; bottom: 42px; left: 22px; right: 22px; }.roadmap-line i { display: block; height: 100%; background: #c6f968; width: 35%; }.planned .roadmap-line i { width: 16%; background: #a1b0a8; }.vision .roadmap-line i { width: 8%; background: #6d7f75; }.roadmap-card small { position: absolute; bottom: 19px; }
 .closing { border-top: 1px solid #2b3935; padding: 95px 0; display: flex; justify-content: space-between; align-items: flex-end; }.closing .button { min-width: 240px; margin-bottom: 5px; } footer { border-top: 1px solid #2b3935; min-height: 108px; display: flex; align-items: center; justify-content: space-between; color: #75827b; font-size: 11px; } footer p { margin: 0; } footer > a:last-child { font: 10px 'DM Mono', monospace; color: #b5c2bc; }
 @media (max-width: 800px) { .shell { width: min(100% - 40px, 620px); }.nav-links { display: none; }.hero { grid-template-columns: 1fr; padding-top: 40px; }.hero-visual { height: 360px; margin-top: 25px; }.proof { grid-template-columns: 1fr 1fr; padding: 18px 0; gap: 15px; }.proof > div { border-left: 0; padding-left: 0; }.proof-last { grid-column: 1 / -1; }.section { padding: 90px 0; }.section-heading, .section-intro { display: block; width: 100%; }.section-intro { margin-top: 22px; }.runtime-flow { grid-template-columns: 1fr 1fr; }.stage:nth-child(2n) { border: 0; }.stage { min-height: 180px; }.stage h3 { margin-top: 32px; }.evidence-layout { grid-template-columns: 1fr; gap: 50px; }.roadmap-grid { grid-template-columns: 1fr; margin-top: 45px; }.closing { display: block; }.closing .button { margin-top: 30px; } footer { flex-wrap: wrap; gap: 10px; padding: 25px 0; } }
+.test-note { margin: 0.5rem 0 0; font-size: 0.78rem; opacity: 0.62; line-height: 1.45; }

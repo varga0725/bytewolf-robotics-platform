@@ -221,7 +221,7 @@ def create_app(
         return _execution_status(agent_artifact_dir, _mission_id(plan_id))
 
     @app.get("/api/v1/missions/replays")
-    def mission_replays() -> dict[str, list[dict[str, object]]]:
+    def mission_replays() -> dict[str, object]:
         """List only complete, validated offline replays; never contact a vehicle.
 
         This intentionally has no dashboard-session dependency. Audit evidence
@@ -229,15 +229,27 @@ def create_app(
         gateway or flight adapter in its path.
         """
         replays: list[dict[str, object]] = []
+        unreadable = 0
         if not mission_runs_dir.is_dir():
-            return {"replays": replays}
-        try:
-            for artifact_path in sorted(mission_runs_dir.glob("*.json")):
+            return {"replays": replays, "unreadable": unreadable}
+        for artifact_path in sorted(mission_runs_dir.glob("*.json")):
+            try:
                 replay = _load_mission_replay(mission_runs_dir, artifact_path.stem)
-                replays.append(_replay_summary(replay))
-        except MissionReplayError as error:
-            raise HTTPException(status_code=503, detail="Mission replay history is unavailable or invalid.") from error
-        return {"replays": replays}
+            except (MissionReplayError, _InvalidReplayIdentifier, FileNotFoundError):
+                # One artifact that cannot be read is not a reason to withhold
+                # the others. A mission that fails before its telemetry relay
+                # starts -- MAVSDK unavailable, the SafetyGate refusing, a PX4
+                # connection timing out -- still writes its audit artifact in a
+                # `finally`, and its history file is empty by then. Those are
+                # ordinary outcomes, and the old handler turned a single one
+                # into a 503 that hid every valid replay behind it.
+                #
+                # Counted rather than silently dropped: a view that quietly
+                # shows fewer runs than exist is its own kind of misleading.
+                unreadable += 1
+                continue
+            replays.append(_replay_summary(replay))
+        return {"replays": replays, "unreadable": unreadable}
 
     @app.get("/api/v1/missions/replays/{run_id}")
     def mission_replay(run_id: str) -> dict[str, object]:

@@ -96,8 +96,14 @@ function checkedAt(value: string | null): string {
 export function RobotsPage() {
   const [state, setState] = useState<RobotState>(initialState);
 
+  // Freshness is a judgement about *now*, so it has to be re-made. Evaluating
+  // it once at mount left this fail-closed page asserting KAPCSOLÓDVA, a
+  // battery and a position indefinitely, while the same sample would already
+  // have been classified stale -- and while the polled header said so. Five
+  // seconds matches LiveOperationsPage rather than inventing a second cadence.
   useEffect(() => {
     let active = true;
+    const load = () => {
     void Promise.allSettled([
       api<unknown>("/api/v1/telemetry"),
       api<unknown>("/api/v1/safety-envelope"),
@@ -113,7 +119,10 @@ export function RobotsPage() {
         checkedAt: new Date().toISOString(),
       });
     });
-    return () => { active = false; };
+    };
+    load();
+    const timer = window.setInterval(load, 5_000);
+    return () => { active = false; window.clearInterval(timer); };
   }, []);
 
   const telemetryUsable = state.telemetryState === "fresh";

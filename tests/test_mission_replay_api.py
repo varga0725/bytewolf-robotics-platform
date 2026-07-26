@@ -58,7 +58,7 @@ class MissionReplayApiTests(unittest.TestCase):
             "safety_decision": "approved",
             "outcome": "failed",
             "terminal_phase": "failed",
-        }]})
+        }], "unreadable": 0})
         self.assertNotIn(str(self.runs), response.text)
 
     def test_reads_one_immutable_replay_with_audited_timeline_and_telemetry(self) -> None:
@@ -104,7 +104,22 @@ class MissionReplayApiTests(unittest.TestCase):
         self.assertEqual(traversal.status_code, 400)
         self.assertEqual(missing.status_code, 404)
         self.assertEqual(invalid.status_code, 503)
-        self.assertEqual(listing.status_code, 503, "do not partially advertise unvalidated audit history")
+
+        # The listing used to 503 as well, so as not to "partially advertise
+        # unvalidated audit history". The intent was right and the mechanism
+        # was too blunt: a mission that fails before its telemetry relay starts
+        # -- MAVSDK unavailable, the SafetyGate refusing, PX4 timing out --
+        # still writes its audit artifact from a `finally`, with an empty
+        # history beside it. That is an ordinary outcome, and it made the whole
+        # archive permanently unavailable behind the first one.
+        #
+        # The intent is kept by counting rather than by refusing: valid replays
+        # are served, and the count says how many could not be read, so nothing
+        # is hidden without saying so.
+        self.assertEqual(listing.status_code, 200)
+        body = listing.json()
+        self.assertEqual(len(body["replays"]), 1, "the readable run is still served")
+        self.assertEqual(body["unreadable"], 1, "and the unreadable one is declared")
         for response in (traversal, missing, invalid, listing):
             self.assertNotIn(str(self.runs), response.text)
 

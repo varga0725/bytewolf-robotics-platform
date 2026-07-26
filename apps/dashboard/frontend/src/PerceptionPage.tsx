@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "./api";
 
@@ -81,7 +81,11 @@ function statusLabel(state: PerceptionEvidence["state"]): string {
 }
 
 function OccupancyMap({ map }: { map: MapState }) {
-  const scale = useMemo(() => 125 / Math.max(12, ...map.cells.flatMap((cell) => [Math.abs(cell.north) + cell.size, Math.abs(cell.east) + cell.size])), [map.cells]);
+  // Folded, not spread: an API-sized grid spread as arguments throws.
+  const scale = useMemo(() => 125 / map.cells.reduce(
+      (widest, cell) => Math.max(widest, Math.abs(cell.north) + cell.size, Math.abs(cell.east) + cell.size),
+      12,
+    ), [map.cells]);
   return <section className="world-map-panel" aria-labelledby="perception-map-title">
     <p className="eyebrow">KÜLÖN BIZONYÍTÉKLÁNC</p><h3 id="perception-map-title">Mért akadályok</h3>
     <svg className="world-map" viewBox="0 0 300 300" role="img" aria-label="Perception akadálytérkép">
@@ -97,15 +101,30 @@ export function PerceptionPage() {
   const [sensor, setSensor] = useState<SensorId>("front");
   const [evidence, setEvidence] = useState<PerceptionEvidence>({ state: "loading", reason: "Adatok betöltése…", capturedAt: null, detections: [], coverage: [] });
   const [map, setMap] = useState<MapState>({ verified: false, cells: [], rejected: 0 });
+  // Every request carries the generation it was issued in, and only the newest
+  // may answer. Without it, switching sensors while a request is in flight lets
+  // the older response resolve last -- and the front camera's detections are
+  // then drawn under the "Alsó kamera" heading, which is worse than showing
+  // nothing: it attributes one sensor's evidence to another.
+  const generation = useRef(0);
   const refresh = useCallback(() => {
+    const issued = ++generation.current;
     setEvidence({ state: "loading", reason: "Adatok betöltése…", capturedAt: null, detections: [], coverage: [] });
     void Promise.allSettled([api<unknown>(`/api/v1/cameras/${sensor}/detections`), api<unknown>("/api/v1/world-map")]).then(([detectionResult, mapResult]) => {
+      if (issued !== generation.current) return;
       setEvidence(detectionResult.status === "fulfilled" ? readEvidence(detectionResult.value) : { state: "unavailable", reason: "Az észlelési végpont nem elérhető.", capturedAt: null, detections: [], coverage: [] });
       setMap(mapResult.status === "fulfilled" ? readMap(mapResult.value) : { verified: false, cells: [], rejected: 0 });
     });
   }, [sensor]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  // Re-polled for the same reason RobotsPage is: a freshness label stamped
+  // once keeps claiming FRISS long past max_age_s, on a page whose stated
+  // contract is that stale evidence is withheld.
+  useEffect(() => {
+    refresh();
+    const timer = window.setInterval(refresh, 5_000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
   const source = sensors.find((item) => item.id === sensor) ?? sensors[0];
   return <section className="content-card" aria-labelledby="perception-title">
     <div className="section-heading"><div><p className="eyebrow">PERCEPTION · AUDITÁLHATÓ · CSAK OLVASHATÓ</p><h2 id="perception-title">Érzékelés</h2></div><button type="button" onClick={refresh}>Adatok frissítése</button></div>
