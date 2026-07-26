@@ -258,11 +258,10 @@ class WorldMapApiTests(unittest.TestCase):
             with self.subTest(method=method.__name__):
                 self.assertEqual(method("/api/v1/world-map").status_code, 405)
 
-    def test_the_dashboard_draws_the_map_and_says_what_it_is_not(self) -> None:
-        page = self.client.get("/").text
+    def test_the_world_map_contract_remains_explicitly_occupancy_only(self) -> None:
+        body = self.client.get("/api/v1/world-map").json()
 
-        self.assertIn('id="world-map"', page)
-        self.assertIn("szabad területet ez a réteg soha nem állít", page)
+        self.assertTrue(body["occupancy_only"])
 
 
 if __name__ == "__main__":

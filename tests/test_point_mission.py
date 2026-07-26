@@ -182,13 +182,11 @@ class PointMissionApiTests(unittest.TestCase):
         self.assertIn("radius", refused.json()["detail"])
         self.assertEqual(self.executed, [])
 
-    def test_the_dashboard_ships_the_mission_page_it_advertises(self) -> None:
-        page = self.client.get("/").text
+    def test_the_point_mission_contract_is_available_without_a_public_control_surface(self) -> None:
+        response = self._pick()
 
-        self.assertIn('data-target="page-mission"', page)
-        self.assertIn('id="mission-map"', page)
-        self.assertIn("/api/v1/missions/point", page)
-        self.assertIn("szabad területet nem állít", page)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["approval_required"])
 
 
 if __name__ == "__main__":

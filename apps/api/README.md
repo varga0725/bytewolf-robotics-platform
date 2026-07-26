@@ -1,26 +1,30 @@
 # ByteWolf Command Gateway API
 
-The local FastAPI service is the shared boundary for the web dashboard and the
-future mobile client. Its conversational layer is a local Pi SDK runner backed
+The local FastAPI service is the shared boundary for the authenticated Control
+Room and the later mobile client. It also serves the separate public marketing
+site at `/`. Its conversational layer is a local Pi SDK runner backed
 by NVIDIA NIM; it is the only user-interface route that may ask the Mission
 Agent to create a plan. It never exposes PX4, MAVSDK, motors, or raw actuator
 commands to a browser.
 
-## Run the Control Room
+## Run the public site and Control Room
 
 ```zsh
+cd apps/marketing/frontend && npm ci && npm run build && cd ../../..
 cd apps/dashboard/frontend && npm ci && npm run build && cd ../../..
 .venv/bin/python -m apps.api.server
 ```
 
-Open `http://127.0.0.1:8080/control-room/` for the React Control Room after
-the frontend build. It provides read-only state, camera, world evidence,
-memory, knowledge-graph and audit-replay views, plus reviewed mission
-planning. The legacy dashboard remains available at `http://127.0.0.1:8080`.
+Open `http://127.0.0.1:8080/` for the public marketing site and
+`http://127.0.0.1:8080/control-room/` for the React Control Room. The Control
+Room provides read-only state, camera, world evidence, memory, knowledge-graph
+and audit-replay views, plus reviewed mission planning. The legacy static
+dashboard has been removed.
 
-Both frontends use the same API boundary: a flight request creates a
-session-bound pending plan, and the browser must explicitly approve that exact
-plan before the existing safety-gated executor can connect to SITL.
+Only the Control Room uses the mission API boundary: a flight request creates
+a session-bound pending plan, and the browser must explicitly approve that
+exact plan before the existing safety-gated executor can connect to SITL. The
+public site has no telemetry, control, approval, or authentication surface.
 
 ## API boundary
 
@@ -34,9 +38,10 @@ plan before the existing safety-gated executor can connect to SITL.
 - `POST /api/v1/plans/approve`, `/cancel` — operate only on that browser
   session's pending plan.
 
-Validate the UI with `npm run test`, `npm run test:e2e`, and `npm run build`
-from `apps/dashboard/frontend`. The browser E2E suite mocks only read APIs and
-does not approve or execute a mission.
+Validate the Control Room with `npm run test`, `npm run test:e2e`, and
+`npm run build` from `apps/dashboard/frontend`; validate the public site with
+its `npm run test` and `npm run build` commands. The Control Room browser E2E
+suite mocks only read APIs and does not approve or execute a mission.
 
 Pi persists the conversation and explicitly admitted, non-sensitive user facts
 under the Git-ignored `var/pi-agent/` directory, keyed by the browser-generated

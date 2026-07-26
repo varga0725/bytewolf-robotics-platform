@@ -2,6 +2,8 @@
 .venv/
 node_modules/
 apps/dashboard/dist/
+apps/marketing/dist/
+apps/marketing/frontend/dist/
 apps/dashboard/frontend/test-results/
 *.tsbuildinfo
 .env

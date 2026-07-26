@@ -6,23 +6,28 @@ Ez az útmutató a P1 telemetriai fejlesztések jelenlegi, bizonyítható állap
 
 | Ellenőrzés | Hol fut | Mit igazol | Mit nem igazol |
 | --- | --- | --- | --- |
-| Dashboard replay | natív macOS | a böngészős, helyi olvasási nézet és az adatfrissesség-jelzés | élő PX4/MAVSDK kapcsolat |
+| Control Room replay | natív macOS | a React-alapú operátori nézet és az adatfrissesség-jelzés | élő PX4/MAVSDK kapcsolat |
 | Látható PX4 SITL + Gazebo | natív macOS | az X500 mozgása és a meglévő P0 repülési CLI-k | ROS 2 adatfolyam |
 | MAVSDK relay egységteszt | natív macOS | a dashboard három kötelező core adatfolyamának atomikus JSON-pillanatképpé válását, valamint az adapter által elérhető opcionális history-state streamek validálását | valódi MAVSDK/PX4 kapcsolat |
 | Élő ROS 2 bridge smoke | Ubuntu + ROS 2 Humble | MAVSDK → ROS telemetry → JSON-pillanatkép életciklusát | dashboard-vezérlést (ilyen nincs) |
 
-## 1. Dashboard replay macOS-en
+## 1. Control Room replay macOS-en
 
 Egy terminálban, a projekt gyökeréből indítsd el a helyi nézetet:
 
 ```zsh
-.venv/bin/python -m apps.dashboard.server \
-  --telemetry-file apps/dashboard/examples/sitl-replay.json
+cd apps/dashboard/frontend && npm ci && npm run build && cd ../../..
+.venv/bin/python -m apps.api.server \
+  --telemetry-file simulation/artifacts/dashboard/live-telemetry.json
 ```
 
-Nyisd meg a böngészőben: `http://127.0.0.1:8080`.
+Nyisd meg a böngészőben: `http://127.0.0.1:8080/control-room/`.
 
-Ellenőrizd, hogy megjelenik a pozíció, akkumulátor és repülési állapot. A mintafájl rögzített időbélyege miatt a státusz várhatóan `STALE`; ez helyes viselkedés, nem hiba. A `/api/telemetry` ugyanazt az állapotot JSON-ként, szintén csak olvashatóan mutatja. Egy `POST` kérésnek `405 Read-only dashboard` válasszal kell elutasítódnia.
+Ellenőrizd, hogy megjelenik a pozíció, akkumulátor és repülési állapot. Ha a
+relay nem frissít adatot, a Control Room `STALE` állapotot jelez; ez helyes
+viselkedés. A `/api/v1/telemetry` ugyanazt az állapotot JSON-ként,
+csak olvashatóan mutatja. A küldetésindítás továbbra is külön, felülvizsgált és
+explicit jóváhagyási folyamat.
 
 Leállítás: `Ctrl-C`. A szerver kizárólag a `127.0.0.1` címen figyel, tehát nem teszi elérhetővé a nézetet a helyi hálózaton.
 
@@ -56,7 +61,9 @@ Minden parancs után várd meg a `Mission completed` sort, és a Gazebóban is e
 
 ## 3. Mit lehet most együtt, vizuálisan ellenőrizni?
 
-A dashboard replay és a grafikus SITL egyidejűleg is futhat, de jelenleg **nem ugyanazt az élő adatfolyamot** mutatják: a replay szándékosan a rögzített `sitl-replay.json` fájlt olvassa, míg a Gazebo a PX4 szimulációt jeleníti meg. Ezért a replay csak a dashboard megjelenítési határát ellenőrzi, és nem szabad élő dróntelemetriának tekinteni.
+Ha az API-nak átadott telemetriai artifact nem a futó relay által frissített
+fájl, a Control Room csak a megjelenítési határt ellenőrzi; ezt nem szabad élő
+dróntelemetriának tekinteni.
 
 Az élő MAVSDK → ROS → JSON relay futtatható belépési pontja
 `brain.cli.ros2_telemetry_bridge`, de ROS 2 Humble-t igényel, ezért ezen a
@@ -66,8 +73,8 @@ de a repülési CLI-k kötelező history-rögzítése ennél több, validált st
 streamet is elmenthet (például velocity, attitude, IMU, battery diagnostics,
 ground truth és local position/velocity), ha az adapter ezeket ténylegesen
 szolgáltatja. A relay továbbra sem hív PX4 flight-control API-t. A macOS
-dashboardot továbbra is a replay fájllal ellenőrizd; egy repülési CLI artifactja
-nem élő relay formátum.
+Control Roomot a friss telemetry-artifacttal ellenőrizd; egy repülési CLI
+artifactja nem élő relay formátum.
 
 Az eddigi határtesztek futtatása:
 
@@ -110,10 +117,12 @@ ros2 topic echo --once /bytewolf/x500v2_reference_01/telemetry/battery
 ros2 topic echo --once /bytewolf/x500v2_reference_01/telemetry/flight_state
 ```
 
-A JSON-pillantkép vizuális ellenőrzéséhez egy harmadik terminálban futtasd:
+A JSON-pillantkép vizuális ellenőrzéséhez egy harmadik terminálban építsd fel
+és indítsd a Control Roomot:
 
 ```bash
-python3 -m apps.dashboard.server \
+cd apps/dashboard/frontend && npm ci && npm run build && cd ../../..
+python3 -m apps.api.server \
   --telemetry-file simulation/artifacts/dashboard/live-telemetry.json
 ```
 

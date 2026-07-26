@@ -10,12 +10,12 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway, DashboardReply
-from apps.dashboard.telemetry import TelemetryFormatError, load_telemetry_snapshot
+from apps.api.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.api.point_mission import PointMissionError, review_point_mission, review_survey_mission
 from apps.agent.pi_conversation import PiConversation
@@ -356,14 +356,26 @@ def create_app(
         facts = list_memory(memory_dir, _session(x_bytewolf_session))["facts"]
         return knowledge_view(facts, memory.recall(now), memory.disputed(now))
 
-    dashboard_root = Path(__file__).resolve().parents[1] / "dashboard"
-    # The React app is built by Vite into `dashboard/dist`. It is exposed under
-    # its own path until it reaches feature parity with the existing Control
-    # Room, so building an early migration slice cannot remove live UI flows.
-    control_room_root = dashboard_root / "dist"
+    applications_root = Path(__file__).resolve().parents[1]
+    # The two browser applications have intentionally separate deployment
+    # surfaces: the public site owns `/`, while the authenticated Control Room
+    # remains under `/control-room`.  Neither route is a flight-control path.
+    control_room_root = applications_root / "dashboard" / "dist"
     if control_room_root.is_dir():
         app.mount("/control-room", StaticFiles(directory=control_room_root, html=True), name="control-room")
-    app.mount("/", StaticFiles(directory=dashboard_root / "web", html=True), name="dashboard")
+    marketing_root = applications_root / "marketing" / "dist"
+    if marketing_root.is_dir():
+        app.mount("/", StaticFiles(directory=marketing_root, html=True), name="marketing")
+    else:
+        @app.get("/", include_in_schema=False)
+        def marketing_build_required() -> HTMLResponse:
+            """Keep the public entry point useful before the frontend build exists."""
+            return HTMLResponse(
+                "<!doctype html><title>ByteWolf Robotics</title>"
+                "<main><h1>ByteWolf Robotics</h1>"
+                "<p>The public site is being prepared. Build apps/marketing/frontend to serve it.</p>"
+                "</main>"
+            )
     return app
 
 

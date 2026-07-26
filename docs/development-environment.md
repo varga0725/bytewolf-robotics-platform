@@ -40,7 +40,7 @@ Később ROS 2-specifikus fejlesztéshez használható.
 
 ## Vizuális P1 ellenőrzés
 
-A helyi, csak olvasható dashboard replay, a látható Gazebo SITL repülések és a
+A helyi, csak olvasható Control Room replay, a látható Gazebo SITL repülések és a
 külön Ubuntu ROS 2 Humble smoke pontos lépései a
 [`visual-simulation-verification.md`](visual-simulation-verification.md)
 útmutatóban vannak. A dashboard nem repülésvezérlő felület; az élő MAVSDK → ROS

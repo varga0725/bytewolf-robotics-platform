@@ -25,7 +25,7 @@ from apps.api.point_mission import (
     review_survey_mission,
 )
 from apps.api.server import create_app
-from apps.dashboard.telemetry import Position, TelemetrySnapshot
+from apps.api.telemetry import Position, TelemetrySnapshot
 from brain.memory.recorder import WorldMemoryRecorder
 from brain.memory.world_map import MapGrid
 from brain.memory.world_memory import load_world_memory
@@ -245,12 +245,11 @@ class SurveyApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("radius", response.json()["detail"])
 
-    def test_the_dashboard_offers_the_survey_mode(self) -> None:
-        page = self.client.get("/").text
+    def test_the_survey_review_endpoint_is_available_to_the_control_room(self) -> None:
+        response = self._request()
 
-        self.assertIn('value="survey"', page)
-        self.assertIn("/api/v1/missions/survey", page)
-        self.assertIn('id="survey-spacing"', page)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["approval_required"])
 
 
 class SurveyRecorderTests(unittest.TestCase):

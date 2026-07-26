@@ -2,7 +2,7 @@
 
 It proves the contract end to end -- a manifest, the register/start/health/stop
 lifecycle, and a capability invoked through the registry -- against a real,
-read-only data source: the dashboard telemetry snapshot. It exposes exactly one
+read-only data source: the API telemetry snapshot. It exposes exactly one
 capability, ``telemetry.read`` (access ``read``), and has no MAVSDK, MAVLink,
 PX4 or actuator path. It is the pattern the workstream-D read-only plugins
 follow.
@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from apps.dashboard.telemetry import (
+from apps.api.telemetry import (
     TelemetryFormatError,
     load_telemetry_snapshot,
 )
@@ -26,7 +26,7 @@ TELEMETRY_READ_MANIFEST = {
     "plugin_id": "telemetry.read",
     "version": "0.1.0",
     "name": "Telemetry Reader",
-    "description": "Reads the dashboard telemetry snapshot as a read-only capability.",
+    "description": "Reads the API telemetry snapshot as a read-only capability.",
     "provides": [
         {
             "capability_id": "telemetry.read",
