@@ -201,6 +201,43 @@ h3 { color: var(--color-text-subtle); font-size: 1rem; font-weight: 650; line-he
 .connection--stale { border-color: var(--color-status-stale-border); color: var(--color-status-stale); background: var(--color-status-stale-surface); }
 .connection--unavailable { border-color: var(--color-status-danger-border); color: var(--color-status-danger); background: var(--color-status-danger-surface); }
 
+.operation-status-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid var(--color-card-border);
+  border-radius: 12px;
+  background: var(--color-line);
+  box-shadow: inset 0 1px var(--color-card-highlight);
+}
+.operation-status-strip > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 13px 15px;
+  background: var(--color-surface-card-strong);
+}
+.operation-status-strip strong {
+  color: var(--color-text-strong);
+  font-family: var(--mono);
+  font-size: .9rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.operation-status-strip span {
+  color: var(--color-text-muted);
+  font-family: var(--mono);
+  font-size: .72rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.operation-status-strip--stale { border-color: var(--color-status-stale-border); }
+.operation-status-strip--unavailable { border-color: var(--color-status-danger-border); }
+.operation-status-strip--stale > div:last-child { background: var(--color-status-stale-surface); }
+.operation-status-strip--unavailable > div:last-child { background: var(--color-status-danger-surface); }
+
 .safety-boundary, .next-slice, .content-card {
   border: 1px solid var(--color-card-border);
   border-radius: 14px;
@@ -308,13 +345,19 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .world-map-panel, .mission-events { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--color-card-border); }.world-map-panel h3, .mission-events h3 { margin: 4px 0 10px; }.world-map-cell { fill: var(--color-overlay-danger); stroke: var(--color-danger); stroke-width: 1; }.world-map-cell--disputed { fill: var(--color-overlay-warning); stroke: var(--color-warning); stroke-dasharray: 3 2; }.world-map-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 0; color: var(--color-text-legend); font-size: .8rem; }.world-map-legend__confirmed, .world-map-legend__disputed { display: inline-block; width: 10px; height: 10px; margin-left: 8px; background: var(--color-danger); }.world-map-legend__disputed { border: 1px dashed var(--color-text-strong); background: var(--color-warning); }
 .memory-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px; }.memory-edit { display: grid; gap: 9px; }
 .mission-events ol { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }.mission-events li { padding: 9px 10px; border-left: 2px solid var(--color-border-navigation-hover); background: var(--color-surface-list); color: var(--color-text-event); font-family: var(--mono); font-size: .79rem; line-height: 1.45; overflow-wrap: anywhere; }
+.event-record { display: grid; gap: 8px; margin: 14px 0 20px; padding: 15px; border: 1px solid var(--color-status-warning-border); border-left: 3px solid var(--color-warning); border-radius: 10px; background: var(--color-surface-list); }.event-record strong { color: var(--color-text-strong); font-family: var(--mono); font-size: .8rem; letter-spacing: .02em; }.event-record small { color: var(--color-text-data-muted); font-family: var(--mono); font-size: .75rem; line-height: 1.5; }
+.live-operations-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 20px; }.live-operations-zone { min-width: 0; padding: 16px; border: 1px solid var(--color-card-border); border-radius: 12px; background: var(--color-surface-card-strong); box-shadow: inset 0 1px var(--color-card-highlight); }.live-operations-zone > h3 { margin: 5px 0 13px; }.live-operations-zone .telemetry-details { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 14px 0; }.live-operations-zone .telemetry-details div { min-height: 70px; }.live-operations-zone .world-map { max-width: 100%; }.live-operations-zone .camera-stream-frame { margin-top: 15px; }.live-operations-zone .mission-events { display: grid; gap: 8px; margin: 14px 0 0; padding: 0; border: 0; list-style: none; }.live-operations-zone .mission-events li { display: grid; gap: 4px; padding: 10px; border-left-color: var(--color-accent); }.live-operations-zone .mission-events small { color: var(--color-text-data-muted); font-family: var(--mono); font-size: .72rem; }
 
 @media (max-width: 800px) {
   .control-room { padding: 24px var(--content-inline-gutter) calc(48px + env(safe-area-inset-bottom)); }
   .topbar, .section-heading { align-items: flex-start; flex-direction: column; gap: 13px; }
   .topbar { padding-bottom: 20px; }
   .connection { align-self: flex-start; min-height: var(--touch-target); }
+  .operation-status-strip { grid-template-columns: 1fr; }
+  .operation-status-strip > div { min-height: var(--touch-target); padding: 12px 14px; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .live-operations-grid { grid-template-columns: 1fr; }
+  .live-operations-zone { padding: 15px; }
   .telemetry-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mission-form { grid-template-columns: 1fr; gap: 16px; }
   .mission-form .wide, .mission-kind, .mission-map-panel { grid-column: span 1; }
@@ -349,6 +392,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
   .telemetry-details { grid-template-columns: 1fr; }
   .telemetry-integrity { padding: 16px; }
   .metric-card { min-height: 108px; padding: 13px; }
+  .live-operations-zone .telemetry-details { grid-template-columns: 1fr; }
   .metric-card strong { margin-top: 14px; font-size: 1rem; }
   .view-navigation { gap: 5px; }
   .nav-button { padding: 7px 11px; font-size: .82rem; }

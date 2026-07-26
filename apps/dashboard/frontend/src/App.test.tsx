@@ -227,6 +227,18 @@ describe("App view navigation", () => {
     const dialog = screen.getByRole("dialog", { name: "Gyors nézetváltó" });
     expect(within(dialog).getByRole("option", { name: "Tudás" })).toBeInTheDocument();
   });
+
+  it("includes Live Operations and Events & Logs in both operator navigation surfaces", () => {
+    render(<App />);
+
+    expect(screen.getByRole("tab", { name: "Élő műveletek" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Események és naplók" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const dialog = screen.getByRole("dialog", { name: "Gyors nézetváltó" });
+    expect(within(dialog).getByRole("option", { name: "Élő műveletek" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("option", { name: "Események és naplók" })).toBeInTheDocument();
+  });
 });
 
 describe("App overview context", () => {
@@ -239,5 +251,17 @@ describe("App overview context", () => {
     expect(context).toHaveTextContent("Telemetria nem elérhető");
     expect(context).toHaveTextContent("nincs közvetlen vezérlés");
     expect(context).toHaveTextContent("külön jóváhagyás");
+  });
+
+  it("keeps safety, simulation, and latest-sample context together in the upper status strip", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("offline"))));
+
+    render(<App />);
+
+    const strip = await screen.findByRole("region", { name: "Operátori rendszerállapot" });
+    expect(strip).toHaveTextContent("Jóváhagyás-köteles");
+    expect(strip).toHaveTextContent("Szimuláció");
+    expect(strip).toHaveTextContent("NEM ELLENŐRIZHETŐ");
+    expect(strip).toHaveTextContent("Nincs közvetlen vezérlés");
   });
 });

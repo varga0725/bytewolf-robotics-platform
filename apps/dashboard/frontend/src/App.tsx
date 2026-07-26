@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { CameraPage } from "./CameraPage";
 import { ChatPage } from "./ChatPage";
+import { EventsPage } from "./EventsPage";
 import { KnowledgePage } from "./KnowledgePage";
+import { LiveOperationsPage } from "./LiveOperationsPage";
 import { MemoryPage } from "./MemoryPage";
 import { MissionPage } from "./MissionPage";
 import { ReplayPage } from "./ReplayPage";
@@ -10,18 +12,20 @@ import { formatTelemetry, telemetryConnection, type TelemetrySnapshot } from "./
 import { WorldPage } from "./WorldPage";
 
 type LoadState = "loading" | "ready" | "unavailable";
-type View = "state" | "camera" | "chat" | "mission" | "memory" | "knowledge" | "world" | "replay";
+type View = "state" | "operations" | "camera" | "chat" | "mission" | "memory" | "knowledge" | "world" | "events" | "replay";
 type ConnectionState = "loading" | "ready" | "stale" | "unavailable";
 type OperatorTelemetry = TelemetrySnapshot & { heading_deg: number | null };
 
 const views: ReadonlyArray<{ id: View; label: string }> = [
   { id: "state", label: "Állapot" },
   { id: "camera", label: "Kamera" },
+  { id: "operations", label: "Élő műveletek" },
   { id: "chat", label: "Beszélgetés" },
   { id: "mission", label: "Küldetés" },
   { id: "memory", label: "Memória" },
   { id: "knowledge", label: "Tudás" },
   { id: "world", label: "Világ" },
+  { id: "events", label: "Események és naplók" },
   { id: "replay", label: "Visszajátszás" },
 ];
 
@@ -107,12 +111,14 @@ export function App() {
   const integrity = telemetryIntegrity(displayTelemetry);
   const activeViewDetails = views.find((view) => view.id === activeView) ?? views[0];
   const quickNavResults = views.filter((view) => view.label.toLocaleLowerCase("hu").includes(quickNavQuery.trim().toLocaleLowerCase("hu")));
-  const activeViewContent = activeView === "camera" ? <CameraPage />
+  const activeViewContent = activeView === "operations" ? <LiveOperationsPage />
+    : activeView === "camera" ? <CameraPage />
     : activeView === "chat" ? <ChatPage />
       : activeView === "mission" ? <MissionPage />
         : activeView === "memory" ? <MemoryPage />
           : activeView === "knowledge" ? <KnowledgePage />
           : activeView === "world" ? <WorldPage />
+            : activeView === "events" ? <EventsPage />
             : activeView === "replay" ? <ReplayPage />
             : <>
               <section className="safety-boundary" aria-labelledby="operating-context-heading">
@@ -252,6 +258,24 @@ export function App() {
           Gyorsnav ⌘K
         </button>
       </header>
+
+      <section className={`operation-status-strip operation-status-strip--${connection.state}`} role="region" aria-label="Operátori rendszerállapot">
+        <div>
+          <p className="eyebrow">BIZTONSÁGI MÓD</p>
+          <strong>Jóváhagyás-köteles</strong>
+          <span>Nincs közvetlen vezérlés</span>
+        </div>
+        <div>
+          <p className="eyebrow">KÖRNYEZET</p>
+          <strong>Szimuláció</strong>
+          <span>Operátori megfigyelés</span>
+        </div>
+        <div>
+          <p className="eyebrow">LEGUTÓBBI MINTA</p>
+          <strong>{status.title}</strong>
+          <span>{status.capturedAt ?? "NEM ELLENŐRIZHETŐ"}</span>
+        </div>
+      </section>
 
       <section
         className="safety-boundary"
