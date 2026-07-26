@@ -1,0 +1,60 @@
+{
+  "matrix": "shield.v1",
+  "mode": "active",
+  "recorded_at": "2026-07-26T17:05:59.988923Z",
+  "runs_per_scenario": 10,
+  "tallies": [
+    {
+      "scenario": "clear-path",
+      "runs": 10,
+      "passed": 9,
+      "success_rate": 0.9,
+      "threshold": 0.9,
+      "met": true,
+      "worst_clearance_m": null,
+      "worst_first_intervention_m": null,
+      "highest_false_stop_rate": 0.0,
+      "failures": [
+        "run 9: The shield intervened 30 times on a clear path; a shield that stops for nothing is the one that gets switched off."
+      ]
+    },
+    {
+      "scenario": "static-obstacle",
+      "runs": 10,
+      "passed": 10,
+      "success_rate": 1.0,
+      "threshold": 1.0,
+      "met": true,
+      "worst_clearance_m": 3.066,
+      "worst_first_intervention_m": 3.54,
+      "highest_false_stop_rate": 0.0,
+      "failures": []
+    },
+    {
+      "scenario": "blind-sector",
+      "runs": 10,
+      "passed": 10,
+      "success_rate": 1.0,
+      "threshold": 1.0,
+      "met": true,
+      "worst_clearance_m": null,
+      "worst_first_intervention_m": null,
+      "highest_false_stop_rate": 0.0,
+      "failures": []
+    },
+    {
+      "scenario": "stale-sensor",
+      "runs": 10,
+      "passed": 10,
+      "success_rate": 1.0,
+      "threshold": 1.0,
+      "met": true,
+      "worst_clearance_m": null,
+      "worst_first_intervention_m": null,
+      "highest_false_stop_rate": 0.0,
+      "failures": []
+    }
+  ],
+  "passed": true,
+  "proof_level": "app+SITL"
+}

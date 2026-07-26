@@ -1,0 +1,22 @@
+{
+  "scenario": "blind-sector",
+  "recorded_at": "2026-07-26T16:17:48.767444Z",
+  "mode": "active",
+  "samples": 110,
+  "interventions": 110,
+  "intervention_rate": 1.0,
+  "false_stops": 0,
+  "false_stop_rate": 0.0,
+  "minimum_clearance_m": null,
+  "required_clearance_m": 2.0,
+  "clearance_at_first_intervention_m": null,
+  "verdicts": {
+    "unobserved_sector": 110
+  },
+  "first_intervention_sensed_m": null,
+  "first_intervention_bearing_deg": 180.0,
+  "passed": true,
+  "findings": [],
+  "proof_level": "app+SITL",
+  "sample_rate_hz": 2.79
+}
