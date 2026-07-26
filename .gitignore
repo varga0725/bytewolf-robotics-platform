@@ -1,6 +1,9 @@
 .DS_Store
 .venv/
 node_modules/
+apps/dashboard/dist/
+apps/dashboard/frontend/test-results/
+*.tsbuildinfo
 .env
 __pycache__/
 *.py[cod]

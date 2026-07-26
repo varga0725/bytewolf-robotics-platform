@@ -25,8 +25,16 @@ from brain.memory.briefing import capability_briefing, world_briefing
 from brain.memory.graph import knowledge_view
 from brain.memory.world_map import map_view
 from brain.memory.world_memory import load_world_memory
+from brain.mission.replay import MissionReplay, MissionReplayError, replay_run
 from brain.mission_spec.validation import load_mission_safety_profile
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, SafetyProfileError, load_safety_profile
+from brain.telemetry.domain import (
+    BatteryTelemetryEvent,
+    FlightStateTelemetryEvent,
+    PositionTelemetryEvent,
+    SupplementalTelemetryEvent,
+)
+from brain.telemetry.persistence import ObservationHistoryEvent, TelemetryHistoryEvent
 from apps.gateway.telegram_mission_gateway import _execute_with_cli, _review_with_cli
 
 
@@ -69,6 +77,7 @@ def create_app(
     map_view_path: Path | None = None,
     map_view_meta_path: Path | None = None,
     agent_artifact_dir: Path = Path("simulation/artifacts/agent-missions"),
+    mission_runs_dir: Path = Path("var/mission-runs"),
     memory_dir: Path = Path("var/pi-agent/memory"),
     world_memory_path: Path = Path("var/world-memory/claims.jsonl"),
     safety_profile_path: Path = DEFAULT_SAFETY_PROFILE_PATH,
@@ -181,6 +190,38 @@ def create_app(
     @app.get("/api/v1/plans/{plan_id}/status")
     def plan_status(plan_id: str) -> dict[str, str]:
         return _execution_status(agent_artifact_dir, _mission_id(plan_id))
+
+    @app.get("/api/v1/missions/replays")
+    def mission_replays() -> dict[str, list[dict[str, object]]]:
+        """List only complete, validated offline replays; never contact a vehicle.
+
+        This intentionally has no dashboard-session dependency. Audit evidence
+        describes the shared vehicle history, and the handler has no command
+        gateway or flight adapter in its path.
+        """
+        replays: list[dict[str, object]] = []
+        if not mission_runs_dir.is_dir():
+            return {"replays": replays}
+        try:
+            for artifact_path in sorted(mission_runs_dir.glob("*.json")):
+                replay = _load_mission_replay(mission_runs_dir, artifact_path.stem)
+                replays.append(_replay_summary(replay))
+        except MissionReplayError as error:
+            raise HTTPException(status_code=503, detail="Mission replay history is unavailable or invalid.") from error
+        return {"replays": replays}
+
+    @app.get("/api/v1/missions/replays/{run_id}")
+    def mission_replay(run_id: str) -> dict[str, object]:
+        """Return one immutable audit + telemetry replay, never a flight command."""
+        try:
+            replay = _load_mission_replay(mission_runs_dir, run_id)
+        except _InvalidReplayIdentifier as error:
+            raise HTTPException(status_code=400, detail="Invalid mission replay identifier.") from error
+        except FileNotFoundError as error:
+            raise HTTPException(status_code=404, detail="Mission replay not found.") from error
+        except MissionReplayError as error:
+            raise HTTPException(status_code=503, detail="Mission replay is unavailable or invalid.") from error
+        return _replay_document(replay)
 
     @app.post("/api/v1/chat")
     def chat(request: ChatRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
@@ -315,8 +356,14 @@ def create_app(
         facts = list_memory(memory_dir, _session(x_bytewolf_session))["facts"]
         return knowledge_view(facts, memory.recall(now), memory.disputed(now))
 
-    web_root = Path(__file__).resolve().parents[1] / "dashboard" / "web"
-    app.mount("/", StaticFiles(directory=web_root, html=True), name="dashboard")
+    dashboard_root = Path(__file__).resolve().parents[1] / "dashboard"
+    # The React app is built by Vite into `dashboard/dist`. It is exposed under
+    # its own path until it reaches feature parity with the existing Control
+    # Room, so building an early migration slice cannot remove live UI flows.
+    control_room_root = dashboard_root / "dist"
+    if control_room_root.is_dir():
+        app.mount("/control-room", StaticFiles(directory=control_room_root, html=True), name="control-room")
+    app.mount("/", StaticFiles(directory=dashboard_root / "web", html=True), name="dashboard")
     return app
 
 
@@ -494,6 +541,104 @@ def _mission_id(value: str) -> str:
         return str(UUID(value))
     except ValueError as error:
         raise HTTPException(status_code=400, detail="Invalid mission identifier.") from error
+
+
+class _InvalidReplayIdentifier(ValueError):
+    """A URL identifier that cannot safely name one local audit artifact."""
+
+
+def _load_mission_replay(mission_runs_dir: Path, run_id: str) -> MissionReplay:
+    """Resolve a replay within its dedicated store, then validate it offline.
+
+    The run identifier is deliberately opaque: it is only ever joined to its
+    canonical ``<run_id>.json`` name after rejecting all path syntax.  Both the
+    audit file and its adjacent telemetry history must remain under the one
+    configured directory, including when a local symlink is present.
+    """
+    if (
+        not run_id
+        or Path(run_id).name != run_id
+        or run_id in {".", ".."}
+        or "/" in run_id
+        or "\\" in run_id
+        or "\x00" in run_id
+    ):
+        raise _InvalidReplayIdentifier(run_id)
+    root = mission_runs_dir.resolve()
+    artifact_path = mission_runs_dir / f"{run_id}.json"
+    if not artifact_path.is_file():
+        raise FileNotFoundError(run_id)
+    if artifact_path.is_symlink() or artifact_path.resolve().parent != root:
+        raise MissionReplayError("Replay artifact is outside the mission replay store.")
+    history_directory = mission_runs_dir / "telemetry-history"
+    history_path = history_directory / f"{run_id}.jsonl"
+    if (
+        history_directory.is_symlink()
+        or history_path.is_symlink()
+        or history_path.resolve().parent != root / "telemetry-history"
+    ):
+        raise MissionReplayError("Replay telemetry history is outside the mission replay store.")
+    replay = replay_run(artifact_path, telemetry_history_path=history_path)
+    if replay.run_id != run_id:
+        raise MissionReplayError("Replay artifact run_id does not match its registered identifier.")
+    return replay
+
+
+def _replay_summary(replay: MissionReplay) -> dict[str, object]:
+    return {
+        "id": replay.run_id,
+        "recorded_at": _api_timestamp(replay.recorded_at),
+        "safety_decision": replay.safety_decision,
+        "outcome": replay.outcome,
+        "terminal_phase": replay.terminal_phase.value if replay.terminal_phase else None,
+    }
+
+
+def _replay_document(replay: MissionReplay) -> dict[str, object]:
+    return {
+        **_replay_summary(replay),
+        "failure_reason": replay.failure_reason,
+        "preflight": {
+            "battery_percent": replay.preflight_battery_percent,
+            "navigation_ready": replay.preflight_navigation_ready,
+            "home_position_valid": replay.preflight_home_position_valid,
+            "global_position_valid": replay.preflight_global_position_valid,
+        },
+        "events": [
+            {"phase": event.phase.value, "timestamp": _api_timestamp(event.timestamp)}
+            for event in replay.events
+        ],
+        "telemetry": [_telemetry_replay_document(event) for event in replay.telemetry_events],
+    }
+
+
+def _telemetry_replay_document(event: TelemetryHistoryEvent) -> dict[str, object]:
+    common = {"topic": event.topic, "observed_at": _api_timestamp(event.observed_at)}
+    if isinstance(event, PositionTelemetryEvent):
+        return {
+            "type": "position", **common, "latitude_deg": event.latitude_deg,
+            "longitude_deg": event.longitude_deg, "absolute_altitude_m": event.absolute_altitude_m,
+            "relative_altitude_m": event.relative_altitude_m,
+        }
+    if isinstance(event, BatteryTelemetryEvent):
+        return {"type": "battery", **common, "remaining_percent": event.remaining_percent}
+    if isinstance(event, FlightStateTelemetryEvent):
+        return {"type": "flight_state", **common, "in_air": event.in_air}
+    if isinstance(event, SupplementalTelemetryEvent):
+        return {"type": "supplemental", **common, "source": event.source, "payload": dict(event.payload)}
+    if isinstance(event, ObservationHistoryEvent):
+        observation = event.observation
+        return {
+            "type": "observation", **common, "kind": observation.kind,
+            "vehicle_id": observation.vehicle_id, "max_age_s": observation.max_age_s,
+            "validity": observation.declared_validity, "payload": observation.payload,
+            "source": observation.source,
+        }
+    raise MissionReplayError("Replay telemetry event has an unsupported type.")
+
+
+def _api_timestamp(timestamp: datetime) -> str:
+    return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _execution_status(artifact_dir: Path, mission_id: str) -> dict[str, str]:

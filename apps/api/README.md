@@ -9,23 +9,34 @@ commands to a browser.
 ## Run the Control Room
 
 ```zsh
-cd apps/pi_agent && npm ci --ignore-scripts && cd ../..
-set -a; source .env; set +a
+cd apps/dashboard/frontend && npm ci && npm run build && cd ../../..
 .venv/bin/python -m apps.api.server
 ```
 
-Open `http://127.0.0.1:8080`. The page shows telemetry and camera evidence,
-then provides a conversational mission interface. A flight request creates a
-session-bound pending plan. The browser must explicitly approve that exact plan
-before the existing safety-gated executor can connect to SITL.
+Open `http://127.0.0.1:8080/control-room/` for the React Control Room after
+the frontend build. It provides read-only state, camera, world evidence,
+memory, knowledge-graph and audit-replay views, plus reviewed mission
+planning. The legacy dashboard remains available at `http://127.0.0.1:8080`.
+
+Both frontends use the same API boundary: a flight request creates a
+session-bound pending plan, and the browser must explicitly approve that exact
+plan before the existing safety-gated executor can connect to SITL.
 
 ## API boundary
 
 - `GET /api/v1/telemetry` — read-only flight state.
 - `GET /api/v1/camera`, `GET /api/v1/detections` — read-only vision evidence.
+- `GET /api/v1/world-map`, `/world-memory`, `/knowledge` — read-only evidence
+  and separate personal/world knowledge context. `/knowledge` is session-bound.
+- `GET /api/v1/missions/replays`, `/missions/replays/{run_id}` — validated,
+  read-only mission audit replay; these endpoints never contact a vehicle.
 - `POST /api/v1/chat` — conversational request; may create a pending plan.
 - `POST /api/v1/plans/approve`, `/cancel` — operate only on that browser
   session's pending plan.
+
+Validate the UI with `npm run test`, `npm run test:e2e`, and `npm run build`
+from `apps/dashboard/frontend`. The browser E2E suite mocks only read APIs and
+does not approve or execute a mission.
 
 Pi persists the conversation and explicitly admitted, non-sensitive user facts
 under the Git-ignored `var/pi-agent/` directory, keyed by the browser-generated
