@@ -23,6 +23,7 @@ from pathlib import Path
 import sys
 
 from simulation.control.shield_run import SCENARIOS, run_shield_scenario
+from simulation.control.shield_scenario import ShieldScenarioReport
 
 
 #: What fraction of runs must pass, per scenario. A safety behaviour that holds
@@ -105,6 +106,25 @@ def tally_scenario(scenario: str, reports) -> ScenarioTally:
     )
 
 
+def _crashed_run(scenario: str, mode: str, error: BaseException) -> ShieldScenarioReport:
+    """Record a run that never produced a verdict as the failure it is."""
+    return ShieldScenarioReport(
+        scenario=scenario,
+        recorded_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        mode=mode,
+        samples=0,
+        interventions=0,
+        intervention_rate=0.0,
+        false_stops=0,
+        false_stop_rate=0.0,
+        minimum_clearance_m=None,
+        required_clearance_m=0.0,
+        clearance_at_first_intervention_m=None,
+        passed=False,
+        findings=[f"The run did not complete: {type(error).__name__}: {error}"],
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--runs", type=int, default=10)
@@ -122,10 +142,18 @@ def main(argv: list[str] | None = None) -> int:
     for attempt in range(1, arguments.runs + 1):
         for scenario in scenarios:
             print(f"\n=== {scenario} — run {attempt}/{arguments.runs} ({arguments.mode}) ===", flush=True)
-            report = run_shield_scenario(
-                scenario, run_directory / f"run-{attempt:02d}",
-                mode=arguments.mode, fly_seconds=arguments.fly_seconds,
-            )
+            try:
+                report = run_shield_scenario(
+                    scenario, run_directory / f"run-{attempt:02d}",
+                    mode=arguments.mode, fly_seconds=arguments.fly_seconds,
+                )
+            except Exception as error:  # noqa: BLE001 - a crashed run is a failed run
+                # A run that dies is data, not a reason to abandon the matrix.
+                # The first attempt at this gate lost all forty runs to one
+                # COMMAND_DENIED forty seconds in, which is the opposite of
+                # what a repeatability gate is for: a run that fails sometimes
+                # is precisely the thing being measured.
+                report = _crashed_run(scenario, arguments.mode, error)
             collected[scenario].append(report)
             status = "pass" if report.passed else f"FAIL — {'; '.join(report.findings)}"
             print(f"  {status}", flush=True)

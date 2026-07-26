@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import unittest
 
-from simulation.control.shield_repeatability import THRESHOLDS, tally_scenario
+from simulation.control.shield_repeatability import THRESHOLDS, _crashed_run, tally_scenario
 from simulation.control.shield_scenario import ShieldScenarioReport
 
 
@@ -75,6 +75,38 @@ class WorstCaseTests(unittest.TestCase):
         tally = tally_scenario("blind-sector", [_report(True), _report(True)])
 
         self.assertIsNone(tally.worst_clearance_m)
+
+
+class CrashedRunTests(unittest.TestCase):
+    """A run that dies is data, not a reason to abandon the matrix."""
+
+    def test_a_crashed_run_counts_as_a_failure(self) -> None:
+        crashed = _crashed_run("static-obstacle", "active", RuntimeError("COMMAND_DENIED"))
+
+        self.assertFalse(crashed.passed)
+        self.assertIn("COMMAND_DENIED", crashed.findings[0])
+        self.assertIsNone(crashed.minimum_clearance_m, "a crash measured no clearance")
+
+    def test_one_crash_fails_a_safety_scenario_without_hiding_the_rest(self) -> None:
+        # The matrix must keep going and then say so, rather than one run
+        # forty seconds in taking the other thirty-nine with it.
+        runs = [_report(True)] * 9 + [
+            _crashed_run("static-obstacle", "active", RuntimeError("COMMAND_DENIED"))
+        ]
+
+        tally = tally_scenario("static-obstacle", runs)
+
+        self.assertEqual(tally.passed, 9)
+        self.assertFalse(tally.met)
+        self.assertIn("did not complete", tally.failures[0])
+
+    def test_a_crash_does_not_erase_the_worst_case_from_the_runs_that_flew(self) -> None:
+        runs = [
+            _report(True, clearance=3.2),
+            _crashed_run("static-obstacle", "active", RuntimeError("boom")),
+        ]
+
+        self.assertEqual(tally_scenario("static-obstacle", runs).worst_clearance_m, 3.2)
 
 
 class EmptyTests(unittest.TestCase):

@@ -149,6 +149,12 @@ async def _fly(
     started_at = time.monotonic()
 
     try:
+        # Wait for the vehicle to actually be armable rather than assuming a
+        # fixed startup sleep was enough. It was not: the matrix died on run 1
+        # with COMMAND_DENIED from arm(), because PX4 had not converged its
+        # estimator yet. A sleep long enough for the slowest start would waste
+        # a minute on every one of forty runs; asking is both faster and right.
+        await _await_armable(drone)
         await drone.action.arm()
         await drone.action.set_takeoff_altitude(altitude_m)
         await drone.action.takeoff()
@@ -365,6 +371,27 @@ def _spawn_obstacle(environment: dict) -> None:
     )
     if "true" not in result.stdout.lower():
         raise RuntimeError(f"Could not spawn the obstacle: {result.stdout.strip() or result.stderr.strip()}")
+
+
+async def _await_armable(drone, *, timeout_s: float = 90.0) -> None:
+    """Block until PX4 reports it could arm, or say why it never did.
+
+    Global position and home position are the two the estimator needs time for,
+    and they are exactly what a fixed sleep gambles on. A run that starts before
+    they are true does not fail cleanly -- it fails at arm(), several seconds of
+    setup later, with a message that says nothing about the cause.
+    """
+    deadline = time.monotonic() + timeout_s
+    last = None
+    async for health in drone.telemetry.health():
+        last = health
+        if health.is_global_position_ok and health.is_home_position_ok:
+            return
+        if time.monotonic() > deadline:
+            break
+    raise TimeoutError(
+        f"PX4 never became armable within {timeout_s:g} s; last health was {last}."
+    )
 
 
 async def _await_connection(drone) -> None:
