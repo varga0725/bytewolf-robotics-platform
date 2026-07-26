@@ -59,9 +59,10 @@ _SENSOR_ID = "lidar_2d_v2"
 _STREAM_HZ = 5.0
 
 #: How much of a live capture to read per poll. Bounded work per iteration,
-#: whatever the run length: at ~14 KB per scan this still holds tens of
-#: messages, and the newest is all the shield ever wants.
-_TAIL_WINDOW_BYTES = 512 * 1024
+#: whatever the run length. The depth scan costs Python time per byte, so this
+#: is sized to hold a handful of ~14 KB scans rather than as many as possible:
+#: 512 KB cost 26 ms an iteration, which the loop could not afford.
+_TAIL_WINDOW_BYTES = 128 * 1024
 _NOMINAL_SPEED_M_S = 0.6
 #: Where the box goes, in Gazebo's world frame. Far enough that the run has a
 #: clear stretch first, so a stop can be attributed to the obstacle.
@@ -176,7 +177,9 @@ async def _fly(
         sequence = 0
         entered = False
         stale_cut_at = started_at + 9.0 + fly_seconds / 2.0
-        deadline = time.monotonic() + fly_seconds
+        loop_started_at = time.monotonic()
+        tick = 0
+        deadline = loop_started_at + fly_seconds
 
         while time.monotonic() < deadline:
             now = datetime.now(UTC)
@@ -209,7 +212,14 @@ async def _fly(
                 sensed_distance_m=decision.clearance_m,
                 sensed_bearing_deg=decision.limiting_sector_deg,
             ))
-            await asyncio.sleep(1.0 / _STREAM_HZ)
+            # Sleep what is left of the period, not a fixed interval after the
+            # work. Sleeping a full period *after* each iteration guarantees a
+            # rate below the nominal one -- here the MAVSDK round trip alone is
+            # about 180 ms, so a 200 ms sleep produced 2.4 Hz instead of 5.
+            tick += 1
+            remaining = (loop_started_at + tick / _STREAM_HZ) - time.monotonic()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
 
         await OffboardFallbackExecutor(drone, adapter).execute(("zero_velocity", "hold", "land"))
         await asyncio.sleep(8.0)
