@@ -10,6 +10,13 @@ Silicon macOS. `PX4-Autopilot` is a symlink to `~/bytewolf-robotics/PX4-Autopilo
 (the physical path must stay space-free — a PX4 subproject breaks on spaces in the
 build path) and is git-ignored third-party source.
 
+The checkout lives at `~/bytewolf-robotics/platform`, deliberately outside
+`~/Documents`. macOS syncs Documents to iCloud, and iCloud resolves a write
+conflict by keeping both sides — appending ` 2`, ` 3` to the filename. That
+produced dozens of stale duplicate sources here, and the same mechanism applied
+to `.git` internals corrupts a repository rather than merely cluttering it. The
+path is also space-free, which is the same constraint PX4 already imposes.
+
 Never add ad-hoc edits to PX4. It carries exactly one recorded change,
 `simulation/px4/macos-build.patch`, because v1.17.0 does not build on Apple Silicon
 as released; a patched tree reports `v1.17.0-dirty`, which is the baseline, not drift.
