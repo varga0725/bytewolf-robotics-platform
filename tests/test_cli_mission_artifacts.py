@@ -2,9 +2,11 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
+from tempfile import TemporaryDirectory
 import unittest
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -35,8 +37,33 @@ def _mission() -> SimpleNamespace:
         waypoint=SimpleNamespace(north_m=5.0, east_m=0.0),
     )
 
+from brain.telemetry.link_lease import LEASE_PATH_ENV
+
+
+def _restore_environment(name: str, previous: str | None) -> None:
+    if previous is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = previous
+
 
 class CliMissionArtifactTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # These tests are about artifacts, not about link acquisition, which
+        # test_link_lease.py covers on its own temporary paths. Left real, the
+        # CLIs would claim the repository's lease file and bind the actual
+        # MAVLink port -- so two test processes fought over both, and a suite
+        # run while SITL or the telemetry bridge was up waited 15 s per CLI and
+        # then failed.
+        self._lease_directory = TemporaryDirectory()
+        self.addCleanup(self._lease_directory.cleanup)
+        previous_lease = os.environ.get(LEASE_PATH_ENV)
+        os.environ[LEASE_PATH_ENV] = str(Path(self._lease_directory.name) / "mavlink-link.lease")
+        self.addCleanup(_restore_environment, LEASE_PATH_ENV, previous_lease)
+        free_link = patch("brain.cli.mavsdk_lifecycle.wait_for_free_link", return_value=True)
+        free_link.start()
+        self.addCleanup(free_link.stop)
+
     def test_takeoff_cli_enables_the_local_live_dashboard_by_default(self) -> None:
         arguments = fly_takeoff_hover_land.parse_arguments(())
 
