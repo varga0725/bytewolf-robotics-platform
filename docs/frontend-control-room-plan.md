@@ -39,7 +39,7 @@ military themed.
 | 1. Foundation | Complete | Vite/React/TypeScript, typed telemetry client, deployable FastAPI-served build, accessible Control Room shell, stale/unavailable telemetry states and integrity summary. |
 | 2. Read-only evidence | Complete | Camera detections with evidence state, measured occupancy map, personal memory, world claims, separate personal/world knowledge graphs, and immutable audit-artifact mission replay. |
 | 3. Reviewed missions | Complete | Conversational mission proposal, point and survey review, safety-envelope display, session-bound approval/cancellation, execution-status monitoring, and explicit failure state when execution can no longer be verified. |
-| 4. Operator-grade UX | Substantially complete | Semantic design tokens, responsive layouts, keyboard-operable tabs, Ctrl/Cmd+K quick navigation, focus/error handling, consistent visual state system, and Chromium E2E smoke coverage for stale telemetry, read-only knowledge navigation, the explicit mission-approval boundary, and execution-status loss. |
+| 4. Operator-grade UX | Substantially complete | Semantic design tokens, responsive layouts, keyboard-operable tabs, Ctrl/Cmd+K quick navigation, focus/error handling, consistent visual state system, and Chromium E2E coverage for stale telemetry, evidence withholding, read-only knowledge/replay views, the explicit mission-approval boundary, cancellation, and execution-status loss. |
 
 ### Completed product constraints
 
@@ -60,11 +60,10 @@ military themed.
 ## Remaining delivery goals
 
 1. **Expand browser E2E coverage** — the Playwright smoke suite now verifies
-   stale telemetry, read-only Knowledge navigation, the explicit
-   mission-approval boundary, and execution-status loss with all routes
-   mocked. Add coverage for evidence withholding, cancellation, replay
-   inspection, and keyboard focus behavior against an isolated simulation
-   fixture.
+   stale telemetry, evidence withholding, read-only Knowledge/replay views,
+   the explicit mission-approval boundary, cancellation, and execution-status
+   loss with all routes mocked. Add keyboard focus behavior and isolated
+   simulation-fixture coverage for the remaining critical paths.
 2. **Explicit mobile product decision** — decide and document whether mobile
    is a read-only/on-call companion, a restricted approval surface, or not a
    supported operator platform. Then validate the selected scope on actual

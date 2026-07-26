@@ -131,3 +131,92 @@ test("a jóváhagyás utáni státuszhiba operátori figyelmeztetéssé válik",
   await expect(page.getByRole("region", { name: "Küldetési események" })).toContainText("A végrehajtási állapot figyelése megszakadt.");
   expect(statusRequests).toBe(1);
 });
+
+test("a Világ nézet visszatartja a nem igazolt foglaltsági cellákat", async ({ page }) => {
+  const prohibitedRequests: string[] = [];
+  page.on("request", (request) => {
+    if (/\/api\/v1\/(plans|missions)\//.test(new URL(request.url()).pathname)) prohibitedRequests.push(request.url());
+  });
+  await page.route("**/api/v1/world-memory", async (route) => {
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ claims: [], disputed: [] }) });
+  });
+  await page.route("**/api/v1/world-map", async (route) => {
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({
+      occupancy_only: false,
+      cells: [{ north_m: 8, east_m: -3, cell_size_m: 2 }],
+    }) });
+  });
+
+  await page.getByRole("tab", { name: "Világ" }).click();
+
+  await expect(page.getByRole("status").filter({ hasText: "foglaltsági jelentése nem igazolt" })).toBeVisible();
+  await expect(page.getByLabel("Mért akadály: É 8 m, K -3 m")).toHaveCount(0);
+  await expect(page.getByText("Az üres terület ismeretlen, nem szabad vagy biztonságos.")).toBeVisible();
+  expect(prohibitedRequests).toEqual([]);
+});
+
+test("a jóváhagyásra váró terv visszavonása nem indít végrehajtást", async ({ page }) => {
+  let approveRequests = 0;
+  let statusRequests = 0;
+  await mockMissionReadModels(page);
+  await page.route("**/api/v1/missions/point", async (route) => {
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(checkedMissionPlan) });
+  });
+  await page.route("**/api/v1/plans/cancel", async (route) => {
+    await expect(route.request().postDataJSON()).toEqual({ plan_id: checkedMissionPlan.plan_id });
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ text: "E2E: terv visszavonva", plan_id: null }) });
+  });
+  await page.route("**/api/v1/plans/approve", async (route) => {
+    approveRequests += 1;
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ detail: "nem indulhat" }) });
+  });
+  await page.route(`**/api/v1/plans/${checkedMissionPlan.plan_id}/status`, async (route) => {
+    statusRequests += 1;
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ detail: "nem kérhető" }) });
+  });
+
+  await page.getByRole("tab", { name: "Küldetés" }).click();
+  await page.getByRole("button", { name: "Terv ellenőrzése" }).click();
+  await expect(page.getByRole("button", { name: "Terv visszavonása" })).toBeVisible();
+  await page.getByRole("button", { name: "Terv visszavonása" }).click();
+
+  await expect(page.getByRole("status")).toContainText("E2E: terv visszavonva");
+  await expect(page.getByRole("region", { name: "Küldetési események" })).toContainText("A jóváhagyásra váró terv visszavonva.");
+  await expect(page.getByRole("button", { name: "Kifejezett jóváhagyás és indítás" })).toHaveCount(0);
+  expect(approveRequests).toBe(0);
+  expect(statusRequests).toBe(0);
+});
+
+test("a validált visszajátszás csak olvasható bizonyítékláncként jelenik meg", async ({ page }) => {
+  const replay = {
+    id: "audit-run-e2e-001",
+    recorded_at: "2026-07-26T08:30:00Z",
+    outcome: "completed",
+    safety_decision: "approved",
+    terminal_phase: "completed",
+    failure_reason: null,
+    events: [{ phase: "preflight", timestamp: "2026-07-26T08:29:00Z" }, { phase: "completed", timestamp: "2026-07-26T08:30:00Z" }],
+    preflight: { battery_percent: 82, navigation_ready: true, home_position_valid: true, global_position_valid: true },
+    telemetry: [],
+  };
+  const controlRequests: string[] = [];
+  page.on("request", (request) => {
+    if (/\/api\/v1\/(plans|missions)\/(?!replays)/.test(new URL(request.url()).pathname)) controlRequests.push(request.url());
+  });
+  await page.route("**/api/v1/missions/replays", async (route) => {
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ replays: [replay] }) });
+  });
+  await page.route(`**/api/v1/missions/replays/${replay.id}`, async (route) => {
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(replay) });
+  });
+
+  await page.getByRole("tab", { name: "Visszajátszás" }).click();
+
+  await expect(page.getByRole("heading", { name: "Küldetés-visszajátszás" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: `Futás: ${replay.id}` })).toBeVisible();
+  await expect(page.getByText("SafetyGate jóváhagyta").last()).toBeVisible();
+  await expect(page.getByText("Csak olvasható küldetéstörténet. A rögzített futások változatlanok; ez a nézet nem küld parancsot a robotnak.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Visszajátszás megnyitása/ })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /jóváhagyás|indítás|visszavonás/i })).toHaveCount(0);
+  expect(controlRequests).toEqual([]);
+});
