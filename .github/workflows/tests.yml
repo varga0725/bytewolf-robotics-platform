@@ -11,7 +11,9 @@ name: tests
 
 on:
   push:
-    branches: ["main"]
+    # develop is where the work lands; main only receives finished releases, so
+    # a gate that watched main alone would run after every decision was made.
+    branches: ["main", "develop"]
   pull_request:
   workflow_dispatch:
 
