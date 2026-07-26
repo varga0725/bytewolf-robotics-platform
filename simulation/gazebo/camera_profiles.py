@@ -15,8 +15,50 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import re
+
+
+def declared_camera_fov(
+    profile_path: Path | str = "shared/config/x500v2/twin.yaml", camera: str = "front_rgb"
+) -> float:
+    """Read a camera's declared horizontal FOV (radians) from the twin.
+
+    The front camera is the Hawkeye 4K Split V5, declared at 2.793 rad (160 deg).
+    Reading it here means the twin is the one source: changing the twin changes what
+    a front-camera overlay would render, exactly as `declared_camera_resolution`
+    does for resolution. It fails closed on a missing or non-physical value rather
+    than defaulting to a wrong FOV.
+    """
+    import yaml
+
+    document = yaml.safe_load(Path(profile_path).read_text(encoding="utf-8"))
+    try:
+        fov = float(document["sensors"]["cameras"][camera]["horizontal_fov_rad"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise CameraProfileError(
+            f"The twin does not declare a usable horizontal FOV for camera '{camera}'."
+        ) from error
+    if not 0.0 < fov < math.pi:
+        raise CameraProfileError(f"Camera '{camera}' FOV must be in (0, pi) radians, not {fov}.")
+    return fov
+
+
+def render_camera_horizontal_fov(source: str, fov_rad: float) -> str:
+    """Return the mono_cam model with only its horizontal FOV changed.
+
+    The mirror of `render_high_res_mono_cam` for the front camera: PX4's mono_cam
+    renders 1.74 rad (~100 deg), the Hawkeye is a 160-degree lens. This rewrites
+    only the FOV, so a front overlay can match the twin without touching the down
+    camera's shared model. It fails closed if the source does not expose exactly
+    one horizontal_fov, so a changed source cannot silently produce a wrong lens.
+    """
+    if not 0.0 < fov_rad < math.pi:
+        raise CameraProfileError(f"Horizontal FOV must be in (0, pi) radians, not {fov_rad}.")
+    if len(_HORIZONTAL_FOV.findall(source)) != 1:
+        raise CameraProfileError("Source mono_cam must declare exactly one horizontal_fov.")
+    return _HORIZONTAL_FOV.sub(f"<horizontal_fov>{fov_rad}</horizontal_fov>", source, count=1)
 
 
 def declared_camera_resolution(
@@ -46,6 +88,7 @@ def declared_camera_resolution(
 
 _WIDTH = re.compile(r"<width>\s*(\d+)\s*</width>")
 _HEIGHT = re.compile(r"<height>\s*(\d+)\s*</height>")
+_HORIZONTAL_FOV = re.compile(r"<horizontal_fov>\s*([0-9.]+)\s*</horizontal_fov>")
 _LINK = re.compile(r"(<link\s+name=\"[^\"]+\">.*?</link>)", re.DOTALL)
 MONO_CAM_MODEL_NAME = "mono_cam"
 # PX4 spawns the airframe by an explicit file:// path under PX4_GZ_MODELS, so the
