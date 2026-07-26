@@ -21,7 +21,7 @@ velocity that the boundary has already approved.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from brain.control.boundary import BoundaryDecision, OffboardBoundary, RejectionReason
@@ -127,6 +127,24 @@ class OffboardSession:
     def offer(self, setpoint: OffboardSetpoint, now: datetime) -> SessionOutcome:
         """Put one setpoint through the boundary, and deliver it if allowed."""
         self.record.offered += 1
+
+        # Ask the watchdog first. A caller that stopped polling -- a blocked
+        # event loop, a slow iteration -- could otherwise hand over a fresh
+        # setpoint after the stream had already been silent past its timeout,
+        # and accepting it would overwrite the evidence of the gap before anyone
+        # looked. The stream would resume, in active mode, without ever
+        # producing the fallback its own silence had earned.
+        pending = self._watchdog.evaluate(now)
+        if pending.requires_fallback:
+            self._note_fallback(pending)
+            decision = BoundaryDecision(
+                approved=False,
+                reason=RejectionReason.STREAM_STOPPED,
+                detail=pending.reason,
+            )
+            self.record.note_rejection(RejectionReason.STREAM_STOPPED)
+            return SessionOutcome(decision=decision, watchdog=pending)
+
         decision = self._boundary.evaluate(setpoint, now)
         if not decision.approved:
             assert decision.reason is not None, "The boundary guarantees a reason."
@@ -137,7 +155,10 @@ class OffboardSession:
             return SessionOutcome(decision=decision, watchdog=self._watchdog.evaluate(now))
 
         self.record.approved += 1
-        self._watchdog.record_accepted(now, setpoint.ttl_s)
+        # Expiry is the contract's own instant, not "ttl_s from arrival": a
+        # setpoint that spent most of its window in transit keeps the deadline
+        # it was issued with.
+        self._watchdog.record_accepted(now, setpoint.issued_at + timedelta(seconds=setpoint.ttl_s))
         delivered = False
         if not self._shadow:
             assert self._adapter is not None, "An active session was constructed with an adapter."
@@ -171,14 +192,23 @@ class OffboardSession:
         return SessionOutcome(decision=decision, watchdog=watchdog, delivered=False)
 
     def _note_fallback(self, watchdog: WatchdogDecision) -> None:
+        """Record one fallback and clear the session it ended.
+
+        Recorded unconditionally, and deduplicated by the reset rather than by
+        comparing against the last entry. Every permitted sequence begins with
+        ``zero_velocity``, so comparing steps suppressed a genuine *second*
+        failure just as readily as a repeated poll, and the artifact undercounted
+        exactly the events it exists to count.
+
+        Resetting both halves is what stops a control loop polling at 20 Hz from
+        writing the same event forever: after this the watchdog supervises
+        nothing, and whatever restarts must prove itself as a new stream.
+        """
         if not watchdog.requires_fallback:
             return
-        step = watchdog.fallback[0]
-        if not self.record.fallbacks or self.record.fallbacks[-1] != step:
-            # Recorded once per fallback, not once per poll: a control loop
-            # polling at 20 Hz would otherwise write the same event forever.
-            self.record.fallbacks.append(step)
+        self.record.fallbacks.append(watchdog.fallback[0])
         self._boundary.reset()
+        self._watchdog.reset()
 
     def stop(self) -> None:
         """End the session deliberately, so nothing outlives it."""

@@ -148,14 +148,66 @@ class ActivationTests(unittest.TestCase):
 class WatchdogIntegrationTests(unittest.TestCase):
     def test_a_rejected_setpoint_does_not_keep_the_stream_alive(self) -> None:
         # Otherwise a producer flooding the boundary with refused commands would
-        # look like a healthy stream while commanding nothing at all.
+        # look like a healthy stream while commanding nothing at all. The
+        # rejection happens inside the timeout window, so it is the boundary
+        # refusing it and not the watchdog; the silence is measured afterwards.
         session = OffboardSession(_profile())
         session.offer(_setpoint(sequence=1), NOW)
 
-        much_later = NOW + timedelta(seconds=1.5)
-        session.offer(_setpoint(sequence=2, at=much_later, frame="body_frd"), much_later)
+        refused_at = NOW + timedelta(seconds=0.5)
+        outcome = session.offer(_setpoint(sequence=2, at=refused_at, frame="body_frd"), refused_at)
+        self.assertIs(outcome.decision.reason, RejectionReason.WRONG_FRAME)
 
-        self.assertIs(session.poll(much_later).state, StreamState.STOPPED)
+        self.assertIs(session.poll(NOW + timedelta(seconds=1.5)).state, StreamState.STOPPED)
+
+    def test_a_silent_stream_cannot_resume_without_falling_back_first(self) -> None:
+        # A caller whose loop stalled may hand over a fresh setpoint after the
+        # stream has already been silent past its timeout. Accepting it would
+        # overwrite the evidence of the gap and resume -- in active mode --
+        # without ever producing the fallback that silence had earned.
+        session = OffboardSession(_profile())
+        session.offer(_setpoint(sequence=1), NOW)
+
+        after_the_gap = NOW + timedelta(seconds=3)
+        outcome = session.offer(_setpoint(sequence=2, at=after_the_gap), after_the_gap)
+
+        self.assertFalse(outcome.approved)
+        self.assertIs(outcome.decision.reason, RejectionReason.STREAM_STOPPED)
+        self.assertEqual(session.record.fallbacks, ["zero_velocity"])
+
+        # What restarts afterwards is a new stream, and it is allowed.
+        resumed_at = after_the_gap + timedelta(seconds=0.1)
+        resumed = session.offer(
+            _setpoint(stream_id="stream-b", sequence=1, at=resumed_at), resumed_at
+        )
+        self.assertTrue(resumed.approved)
+
+    def test_a_setpoint_keeps_the_expiry_it_was_issued_with(self) -> None:
+        # 0.19 s of a 0.2 s ttl spent in transit. Restarting the clock on
+        # arrival would keep the command in force until 0.39 s after it was
+        # computed -- nearly twice as long as it was ever valid for.
+        session = OffboardSession(_profile())
+        session.offer(_setpoint(), NOW + timedelta(seconds=0.19))
+
+        self.assertIs(
+            session.poll(NOW + timedelta(seconds=0.35)).state,
+            StreamState.EXPIRED,
+            "the contract's issued_at + ttl_s decides expiry, not the arrival time",
+        )
+
+    def test_two_separate_failures_are_both_recorded(self) -> None:
+        # Every permitted sequence begins with zero_velocity, so deduplicating
+        # by comparing steps suppressed a genuine second failure exactly as
+        # readily as a repeated poll.
+        session = OffboardSession(_profile())
+        session.offer(_setpoint(sequence=1), NOW)
+        session.poll(NOW + timedelta(seconds=3))
+
+        recovered_at = NOW + timedelta(seconds=10)
+        session.offer(_setpoint(stream_id="stream-b", sequence=1, at=recovered_at), recovered_at)
+        session.poll(recovered_at + timedelta(seconds=3))
+
+        self.assertEqual(session.record.fallbacks, ["zero_velocity", "zero_velocity"])
 
     def test_silence_produces_the_twin_s_fallback(self) -> None:
         session = OffboardSession(_profile())

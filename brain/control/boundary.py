@@ -51,6 +51,9 @@ class RejectionReason(Enum):
     EXPIRED = "expired"
     TTL_TOO_LONG = "ttl_exceeds_policy"
     STALE_STREAM = "superseded_stream"
+    #: The stream fell silent past its timeout and has already fallen back.
+    #: Whatever arrives next must start a new stream rather than resume this one.
+    STREAM_STOPPED = "stream_stopped"
     OUT_OF_ORDER = "out_of_order"
     RATE_TOO_HIGH = "rate_exceeds_policy"
     SPEED_TOO_HIGH = "speed_exceeds_limit"

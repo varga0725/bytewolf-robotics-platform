@@ -70,14 +70,22 @@ class OffboardWatchdog:
     def __init__(self, limits: OffboardLimits) -> None:
         self._limits = limits
         self._last_accepted_at: datetime | None = None
-        self._last_ttl_s: float | None = None
+        self._expires_at: datetime | None = None
         self._adapter_failed = False
         self._failure_reason = ""
 
-    def record_accepted(self, accepted_at: datetime, ttl_s: float) -> None:
-        """Note that the boundary approved a setpoint, restarting both clocks."""
+    def record_accepted(self, accepted_at: datetime, expires_at: datetime) -> None:
+        """Note an approved setpoint: when it arrived, and when it stops counting.
+
+        Two instants, because they answer different questions. Silence is
+        measured from arrival -- that is when the producer was last heard from.
+        Expiry is the contract's own ``issued_at + ttl_s``, passed in rather than
+        recomputed from arrival: a setpoint that spent most of its ttl in transit
+        must not get a fresh full window on landing, or a command could stay in
+        force for nearly twice as long as it was ever valid for.
+        """
         self._last_accepted_at = accepted_at
-        self._last_ttl_s = ttl_s
+        self._expires_at = expires_at
 
     def record_adapter_failure(self, reason: str) -> None:
         """Note that the thing carrying setpoints to the vehicle broke.
@@ -92,7 +100,7 @@ class OffboardWatchdog:
     def reset(self) -> None:
         """Forget this stream entirely, after a fallback or a deliberate stop."""
         self._last_accepted_at = None
-        self._last_ttl_s = None
+        self._expires_at = None
         self._adapter_failed = False
         self._failure_reason = ""
 
@@ -104,7 +112,7 @@ class OffboardWatchdog:
                 fallback=self._limits.fallback_sequence,
                 reason=self._failure_reason,
             )
-        if self._last_accepted_at is None or self._last_ttl_s is None:
+        if self._last_accepted_at is None or self._expires_at is None:
             # Never commanded, so there is nothing to fall back from. Starting a
             # fallback here would land a vehicle that is sitting on the ground.
             return WatchdogDecision(state=StreamState.IDLE)
@@ -127,12 +135,12 @@ class OffboardWatchdog:
                     f"{self._limits.watchdog_timeout_s:g} s timeout."
                 ),
             )
-        if silence_s > self._last_ttl_s:
+        if now > self._expires_at:
+            overdue_s = (now - self._expires_at).total_seconds()
             return WatchdogDecision(
                 state=StreamState.EXPIRED,
                 reason=(
-                    f"The last setpoint outlived its {self._last_ttl_s:g} s ttl "
-                    f"{silence_s:.2f} s ago; nothing is commanded."
+                    f"The last setpoint expired {overdue_s:.2f} s ago; nothing is commanded."
                 ),
             )
         return WatchdogDecision(state=StreamState.STREAMING)

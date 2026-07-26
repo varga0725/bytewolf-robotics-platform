@@ -45,7 +45,7 @@ class SilenceTests(unittest.TestCase):
 
     def test_a_recent_setpoint_is_still_in_force(self) -> None:
         watchdog = OffboardWatchdog(_limits())
-        watchdog.record_accepted(NOW, ttl_s=0.2)
+        watchdog.record_accepted(NOW, NOW + timedelta(seconds=0.2))
 
         decision = watchdog.evaluate(NOW + timedelta(seconds=0.1))
 
@@ -56,7 +56,7 @@ class SilenceTests(unittest.TestCase):
         # The window between the two clocks: nothing is commanded, but the
         # producer may still recover with its next setpoint.
         watchdog = OffboardWatchdog(_limits(max_setpoint_ttl_s=0.5, watchdog_timeout_s=1.0))
-        watchdog.record_accepted(NOW, ttl_s=0.2)
+        watchdog.record_accepted(NOW, NOW + timedelta(seconds=0.2))
 
         decision = watchdog.evaluate(NOW + timedelta(seconds=0.5))
 
@@ -66,7 +66,7 @@ class SilenceTests(unittest.TestCase):
 
     def test_silence_past_the_timeout_stops_the_stream(self) -> None:
         watchdog = OffboardWatchdog(_limits())
-        watchdog.record_accepted(NOW, ttl_s=0.2)
+        watchdog.record_accepted(NOW, NOW + timedelta(seconds=0.2))
 
         decision = watchdog.evaluate(NOW + timedelta(seconds=1.5))
 
@@ -76,7 +76,7 @@ class SilenceTests(unittest.TestCase):
 
     def test_the_fallback_stops_the_vehicle_before_anything_else(self) -> None:
         watchdog = OffboardWatchdog(_limits())
-        watchdog.record_accepted(NOW, ttl_s=0.2)
+        watchdog.record_accepted(NOW, NOW + timedelta(seconds=0.2))
 
         decision = watchdog.evaluate(NOW + timedelta(seconds=2))
 
@@ -86,7 +86,7 @@ class SilenceTests(unittest.TestCase):
         # Treating a negative age as freshness would extend the life of a
         # command that should already have expired.
         watchdog = OffboardWatchdog(_limits())
-        watchdog.record_accepted(NOW, ttl_s=0.2)
+        watchdog.record_accepted(NOW, NOW + timedelta(seconds=0.2))
 
         decision = watchdog.evaluate(NOW - timedelta(seconds=5))
 
@@ -98,25 +98,25 @@ class SilenceTests(unittest.TestCase):
         # of silence is past the 1.0 s timeout. Accepting one at 0.9 s leaves
         # only 0.3 s of silence, which is expired but very much alive.
         watchdog = OffboardWatchdog(_limits())
-        watchdog.record_accepted(NOW, ttl_s=0.2)
+        watchdog.record_accepted(NOW, NOW + timedelta(seconds=0.2))
         measured_at = NOW + timedelta(seconds=1.2)
         self.assertIs(watchdog.evaluate(measured_at).state, StreamState.STOPPED)
 
-        watchdog.record_accepted(NOW + timedelta(seconds=0.9), ttl_s=0.2)
+        watchdog.record_accepted(NOW + timedelta(seconds=0.9), NOW + timedelta(seconds=0.9) + timedelta(seconds=0.2))
 
         self.assertIs(watchdog.evaluate(measured_at).state, StreamState.EXPIRED)
 
     def test_the_deadline_is_readable_before_it_passes(self) -> None:
         watchdog = OffboardWatchdog(_limits(watchdog_timeout_s=1.0))
         self.assertIsNone(watchdog.deadline())
-        watchdog.record_accepted(NOW, ttl_s=0.2)
+        watchdog.record_accepted(NOW, NOW + timedelta(seconds=0.2))
         self.assertEqual(watchdog.deadline(), NOW + timedelta(seconds=1.0))
 
 
 class AdapterFailureTests(unittest.TestCase):
     def test_an_adapter_failure_stops_the_stream_at_once(self) -> None:
         watchdog = OffboardWatchdog(_limits())
-        watchdog.record_accepted(NOW, ttl_s=0.2)
+        watchdog.record_accepted(NOW, NOW + timedelta(seconds=0.2))
         watchdog.record_adapter_failure("serial link closed")
 
         decision = watchdog.evaluate(NOW)
@@ -129,7 +129,7 @@ class AdapterFailureTests(unittest.TestCase):
         # happened not to raise; recovery is an explicit reset.
         watchdog = OffboardWatchdog(_limits())
         watchdog.record_adapter_failure("bus error")
-        watchdog.record_accepted(NOW, ttl_s=0.2)
+        watchdog.record_accepted(NOW, NOW + timedelta(seconds=0.2))
 
         self.assertIs(watchdog.evaluate(NOW).state, StreamState.STOPPED)
 

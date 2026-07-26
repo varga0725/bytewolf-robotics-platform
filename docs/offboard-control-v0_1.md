@@ -103,6 +103,22 @@ dead producer sends nothing to raise the alarm with, which is why `poll()`
 exists and why a **rejected** setpoint does not restart the clock: a producer
 flooding the boundary with refused commands must not look alive.
 
+Three details that are easy to get wrong, and were:
+
+- **Expiry is `issued_at + ttl_s`, not `ttl_s` from arrival.** A setpoint that
+  spent most of its window in transit keeps the deadline it was issued with;
+  restarting the clock on arrival would keep a command in force for nearly twice
+  as long as it was ever valid for.
+- **The watchdog is asked before a setpoint is accepted.** A caller whose loop
+  stalled could otherwise hand over a fresh setpoint after the timeout had
+  already passed, overwrite the evidence of the gap, and resume without ever
+  producing the fallback that silence had earned. Such a setpoint is refused
+  with `stream_stopped`; what restarts afterwards is a new stream.
+- **Fallbacks are deduplicated by resetting, not by comparing steps.** Every
+  permitted sequence begins with `zero_velocity`, so comparing against the last
+  recorded step suppressed a genuine second failure exactly as readily as a
+  repeated poll.
+
 ## What the boundary refuses
 
 Rejection, never correction. A setpoint over the speed limit is not clamped and
@@ -110,7 +126,7 @@ forwarded — a producer that misunderstands the envelope would keep doing so,
 invisibly, for as long as its illegal requests were quietly made legal.
 
 `offboard_disabled` · `wrong_vehicle` · `wrong_frame` · `producer_declared_invalid` ·
-`expired` · `ttl_exceeds_policy` · `superseded_stream` · `out_of_order` ·
+`expired` · `ttl_exceeds_policy` · `superseded_stream` · `stream_stopped` · `out_of_order` ·
 `rate_exceeds_policy` · `speed_exceeds_limit` · `yaw_rate_exceeds_limit` ·
 `acceleration_exceeds_limit` · `uncertainty_exceeds_limit`
 
@@ -136,7 +152,7 @@ delivered, rejections by reason, and the fallbacks that fired.
 
 ## Status and what is not claimed
 
-**Proof level: unit/contract.** 58 deterministic tests, no PX4, no Gazebo, no
+**Proof level: unit/contract.** 79 deterministic tests, no PX4, no Gazebo, no
 MAVSDK.
 
 Not done, and not claimed:
