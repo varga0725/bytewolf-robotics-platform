@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.local/schemas/speech/transcript_v0_1",
+  "title": "ByteWolf Speech Transcript v0.1",
+  "description": "One recognised utterance, as the speech adapter publishes it to the Cognitive Runtime. Speech is an input, never an authority: a transcript may carry at most a command_suggestion, which still travels draft_flight_request -> reviewed MissionSpec -> SafetyGate -> explicit approval. There is deliberately no field for a structured command, mission or actuator, so a spoken instruction cannot be expressed as an executable one. Raw audio never enters the contract. See docs/speech-adapter-v0_1.md.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": [
+    "contract_version", "transcript_id", "source", "observed_at", "max_age_s",
+    "validity", "engine", "language", "text", "is_final"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "v0.1",
+      "description": "Pins the meaning of every field below. A consumer that does not know this version rejects the transcript rather than guess."
+    },
+    "transcript_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique id for this utterance, so a suggestion can be correlated with the turn and the audit record it produced."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Where the audio came from, e.g. 'mic:headset' or 'telegram:voice'. Free text for audit, never for dispatch."
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional opaque conversation key. A local development identity boundary, not authentication."
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, UTC, with an explicit offset. When the utterance was spoken -- age is measured from here, so a slow recogniser cannot pass an old instruction off as current."
+    },
+    "max_age_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "How long this transcript stays usable after observed_at. A spoken request that has aged out must not be acted on: the situation it referred to may be gone."
+    },
+    "validity": {
+      "enum": ["valid", "invalid", "missing"],
+      "description": "What the recogniser knows. 'valid': it trusts the text. 'invalid': it heard audio but does not trust the result. 'missing': no speech was recognised. 'stale' is not declared here; only the consumer knows the current time."
+    },
+    "engine": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["id", "version"],
+      "description": "Which recogniser produced this, so a regression is attributable and a consumer can pin.",
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1}
+      }
+    },
+    "language": {
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[A-Z][a-z]{3})?(-[A-Z]{2})?$",
+      "description": "BCP-47 language tag of the recognised speech, e.g. 'hu-HU'. Recorded because a wrong-language transcription is a common and quiet failure."
+    },
+    "language_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "How sure the recogniser is about the language, when it detects rather than is told."
+    },
+    "text": {
+      "type": "string",
+      "description": "The recognised words. May be empty when validity is 'missing'; an empty string is not silence-means-yes, it is nothing to act on."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "The recogniser's confidence in the text."
+    },
+    "is_final": {
+      "type": "boolean",
+      "description": "Whether this is the settled transcript rather than a streaming partial. A partial may never carry a command_suggestion."
+    },
+    "duration_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "How long the utterance lasted."
+    },
+    "audio_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque reference to locally retained audio evidence. The contract never carries the audio itself."
+    },
+    "command_suggestion": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["intent_text", "requires_approval"],
+      "description": "At most a suggestion that the user asked for something actionable. It is free text plus a confidence -- never a structured command, mission, waypoint or actuator instruction -- and it changes nothing on its own.",
+      "properties": {
+        "intent_text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the user appears to have asked for, in their own words. The Cognitive Runtime decides what, if anything, to draft from it."
+        },
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "requires_approval": {
+          "const": true,
+          "description": "Always true. A spoken request cannot be self-approving: it still goes through reviewed MissionSpec, the SafetyGate and an explicit human approval. A document claiming otherwise is invalid by this contract, so the boundary is enforced by the schema rather than by convention."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"required": ["command_suggestion"]},
+      "then": {
+        "properties": {"is_final": {"const": true}},
+        "description": "Only a settled transcript may suggest anything: a streaming partial is still changing, and acting on half an utterance is how 'ne szállj fel' becomes 'szállj fel'."
+      }
+    }
+  ]
+}

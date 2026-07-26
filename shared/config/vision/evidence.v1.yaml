@@ -1,0 +1,12 @@
+# P0 local evidence policy. Payload encryption is provided by the deployment's
+# injected writer; this declarative policy does not claim to implement crypto.
+version: v1
+recording:
+  default_mode: metadata_only
+  evidence_clip:
+    enabled: true
+    pre_event_seconds: 5
+    post_event_seconds: 10
+    retention_days: 7
+  full_session_recording:
+    enabled: false

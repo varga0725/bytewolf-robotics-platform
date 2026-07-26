@@ -1,0 +1,630 @@
+# Instincts generated from https://github.com/varga0725/bytewolf-robotics-platform
+# Generated: 2026-07-17T17:19:26.963Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: bytewolf-robotics-platform-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: feat, fix, docs, chore
+
+## Evidence
+
+- 84 commits analyzed
+- Detected conventional commit pattern
+- Examples: docs: align runtime documentation with current baseline, feat: load safety limits from versioned twin profile
+
+---
+id: bytewolf-robotics-platform-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Commit Length
+
+## Action
+
+Keep commit messages concise (~44 characters)
+
+## Evidence
+
+- Average commit message length: 44 chars
+- Based on 84 commits
+
+---
+id: bytewolf-robotics-platform-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Naming Files
+
+## Action
+
+Use kebab-case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: kebab-case
+
+---
+id: bytewolf-robotics-platform-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: bytewolf-robotics-platform-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: bytewolf-robotics-platform-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: bytewolf-robotics-platform-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: bytewolf-robotics-platform-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~14x per month
+- Files: **/*.test.*
+
+---
+id: bytewolf-robotics-platform-workflow-feature-implementation-with-tests
+trigger: "when doing feature implementation with tests"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Workflow Feature Implementation With Tests
+
+## Action
+
+Follow the feature-implementation-with-tests workflow:
+1. Implement feature in one or more module files (e.g., brain/..., simulation/..., apps/...)
+2. Create or update test files in tests/ to cover the new feature
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~10x per month
+- Files: brain/cli/*.py, brain/mission/*.py, brain/mission_spec/*.py
+
+---
+id: bytewolf-robotics-platform-workflow-add-or-update-simulation-scenario-with-tests
+trigger: "when doing add or update simulation scenario with tests"
+confidence: 0.8
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Workflow Add Or Update Simulation Scenario With Tests
+
+## Action
+
+Follow the add-or-update-simulation-scenario-with-tests workflow:
+1. Add or update scenario logic in simulation/headless/scenarios.py or simulation/scenarios/scenarios.py
+2. Update or create test in tests/test_headless_scenarios.py or tests/test_simulation_configuration.py
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~6x per month
+- Files: simulation/headless/scenarios.py, simulation/scenarios/scenarios.py, tests/test_headless_scenarios.py
+
+---
+id: bytewolf-robotics-platform-workflow-add-contract-or-schema-with-docs-and-tests
+trigger: "when doing add contract or schema with docs and tests"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Workflow Add Contract Or Schema With Docs And Tests
+
+## Action
+
+Follow the add-contract-or-schema-with-docs-and-tests workflow:
+1. Add or update schema/contract file (e.g., shared/schemas/..., interfaces/..., brain/telemetry/ros2_contract.py)
+2. Update or add documentation (docs/...)
+3. Update or add config files (platforms/..., shared/config/...)
+4. Create or update test files in tests/
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: brain/telemetry/ros2_contract.py, docs/ros2-telemetry-bridge-v0_1.md, shared/schemas/ros2_telemetry/*.json
+
+---
+id: bytewolf-robotics-platform-workflow-add-artifacts-or-persistence-to-missions-or-scenarios
+trigger: "when doing add artifacts or persistence to missions or scenarios"
+confidence: 0.7
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Workflow Add Artifacts Or Persistence To Missions Or Scenarios
+
+## Action
+
+Follow the add-artifacts-or-persistence-to-missions-or-scenarios workflow:
+1. Implement artifact logic in brain/mission/artifacts.py, brain/cli/artifacts.py, or simulation/headless/scenarios.py
+2. Update CLI mission scripts if needed (brain/cli/fly_*.py)
+3. Update or create tests (tests/test_cli_mission_artifacts.py, tests/test_mission_artifacts.py, tests/test_headless_scenarios.py)
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~4x per month
+- Files: brain/mission/artifacts.py, brain/cli/artifacts.py, brain/cli/fly_return_to_home.py
+
+---
+id: bytewolf-robotics-platform-workflow-update-documentation-with-code-changes
+trigger: "when doing update documentation with code changes"
+confidence: 0.75
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Workflow Update Documentation With Code Changes
+
+## Action
+
+Follow the update-documentation-with-code-changes workflow:
+1. Edit or add documentation files in docs/ or README.md
+2. Optionally update related config or schema files
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~5x per month
+- Files: README.md, docs/*.md
+
+---
+id: bytewolf-robotics-platform-workflow-fix-or-enhance-mission-cli-and-adapter
+trigger: "when doing fix or enhance mission cli and adapter"
+confidence: 0.8
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Workflow Fix Or Enhance Mission Cli And Adapter
+
+## Action
+
+Follow the fix-or-enhance-mission-cli-and-adapter workflow:
+1. Edit mission CLI scripts (brain/cli/fly_*.py)
+2. Edit adapter logic (brain/adapters/mavsdk_adapter.py)
+3. Update or create tests (tests/test_mavsdk_adapter.py, tests/test_cli_mission_artifacts.py)
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~6x per month
+- Files: brain/cli/fly_return_to_home.py, brain/cli/fly_takeoff_hover_land.py, brain/cli/fly_waypoint_land.py
+
+---
+id: bytewolf-robotics-platform-instinct-file-naming
+trigger: "When creating or renaming a file"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct File Naming
+
+## Action
+
+Use kebab-case for file names
+
+## Evidence
+
+- Pattern in namingConventions.files
+- Observed in brain/cli/fly_return_to_home.py
+
+---
+id: bytewolf-robotics-platform-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Function Naming
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in namingConventions.functions
+
+---
+id: bytewolf-robotics-platform-instinct-class-naming
+trigger: "When defining a new class"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Class Naming
+
+## Action
+
+Use PascalCase for class names
+
+## Evidence
+
+- Pattern in namingConventions.classes
+
+---
+id: bytewolf-robotics-platform-instinct-constant-naming
+trigger: "When defining a constant"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Constant Naming
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern in namingConventions.constants
+
+---
+id: bytewolf-robotics-platform-instinct-import-style
+trigger: "When importing modules within the repository"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Import Style
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- Pattern in importStyle
+- Seen in brain/cli/fly_return_to_home.py
+
+---
+id: bytewolf-robotics-platform-instinct-export-style
+trigger: "When exporting functions or classes"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle
+
+---
+id: bytewolf-robotics-platform-instinct-test-file-location
+trigger: "When adding or updating tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Test File Location
+
+## Action
+
+Place test files in the separate tests/ directory, using the pattern tests/test_*.py
+
+## Evidence
+
+- Pattern in testLocation
+- Pattern in filesInvolved for workflows
+- Seen in tests/test_headless_scenarios.py
+
+---
+id: bytewolf-robotics-platform-instinct-test-file-naming
+trigger: "When naming a test file"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Test File Naming
+
+## Action
+
+Use the pattern test_*.py for Python test files
+
+## Evidence
+
+- Pattern in filesInvolved for workflows
+- Seen in tests/test_mission_artifacts.py
+
+---
+id: bytewolf-robotics-platform-instinct-unit-test-type
+trigger: "When writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Unit Test Type
+
+## Action
+
+Write unit tests as the primary test type
+
+## Evidence
+
+- Pattern in testTypes
+
+---
+id: bytewolf-robotics-platform-instinct-commit-format
+trigger: "When making a git commit"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Commit Format
+
+## Action
+
+Use conventional commit prefixes (feat, fix, docs, chore, refactor, test) and a concise message (~44 characters)
+
+## Evidence
+
+- Pattern in commits.prefixes
+- Pattern in commits.averageLength
+- Seen in commit 'feat: load safety limits from versioned twin profile'
+
+---
+id: bytewolf-robotics-platform-instinct-feature-implementation-with-tests
+trigger: "When adding a new feature to a core module"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Feature Implementation With Tests
+
+## Action
+
+Implement the feature in module files and create or update corresponding test files in tests/
+
+## Evidence
+
+- Workflow: feature-implementation-with-tests
+- Files: brain/cli/*.py, tests/test_*.py
+
+---
+id: bytewolf-robotics-platform-instinct-add-or-update-simulation-scenario-with-tests
+trigger: "When adding or modifying a simulation scenario"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Add Or Update Simulation Scenario With Tests
+
+## Action
+
+Update scenario logic in simulation/headless/scenarios.py or simulation/scenarios/scenarios.py and update or create corresponding test files
+
+## Evidence
+
+- Workflow: add-or-update-simulation-scenario-with-tests
+- Files: simulation/headless/scenarios.py, tests/test_headless_scenarios.py
+
+---
+id: bytewolf-robotics-platform-instinct-add-contract-or-schema-with-docs-and-tests
+trigger: "When defining a new interface, contract, or schema"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Add Contract Or Schema With Docs And Tests
+
+## Action
+
+Add or update schema/contract files, update documentation, update config files, and create or update test files
+
+## Evidence
+
+- Workflow: add-contract-or-schema-with-docs-and-tests
+- Files: shared/schemas/ros2_telemetry/*.json, docs/ros2-telemetry-bridge-v0_1.md, tests/test_ros2_telemetry_contract.py
+
+---
+id: bytewolf-robotics-platform-instinct-add-artifacts-or-persistence-to-missions-or-scenarios
+trigger: "When persisting new types of artifacts or outcomes from missions or simulations"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Add Artifacts Or Persistence To Missions Or Scenarios
+
+## Action
+
+Implement artifact logic, update CLI mission scripts if needed, and update or create corresponding test files
+
+## Evidence
+
+- Workflow: add-artifacts-or-persistence-to-missions-or-scenarios
+- Files: brain/mission/artifacts.py, tests/test_mission_artifacts.py
+
+---
+id: bytewolf-robotics-platform-instinct-update-documentation-with-code-changes
+trigger: "When changing core workflows, contracts, or features that require updated documentation"
+confidence: 0.8
+domain: workflow
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Update Documentation With Code Changes
+
+## Action
+
+Edit or add documentation files in docs/ or README.md, and optionally update related config or schema files
+
+## Evidence
+
+- Workflow: update-documentation-with-code-changes
+- Files: docs/*.md, README.md
+
+---
+id: bytewolf-robotics-platform-instinct-fix-or-enhance-mission-cli-and-adapter
+trigger: "When fixing bugs or improving mission execution logic in CLI and adapters"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: varga0725/bytewolf-robotics-platform
+---
+
+# Bytewolf Robotics Platform Instinct Fix Or Enhance Mission Cli And Adapter
+
+## Action
+
+Edit mission CLI scripts, edit adapter logic, and update or create corresponding test files
+
+## Evidence
+
+- Workflow: fix-or-enhance-mission-cli-and-adapter
+- Files: brain/cli/fly_return_to_home.py, brain/adapters/mavsdk_adapter.py, tests/test_mavsdk_adapter.py
+

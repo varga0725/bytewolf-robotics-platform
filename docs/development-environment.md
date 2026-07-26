@@ -19,7 +19,7 @@ A projektmappában látható `PX4-Autopilot` erre mutató hivatkozás.
 ## Indítás
 
 ```zsh
-cd "/Users/vargaferenc/Documents/ByteWolf Robotics Platform"
+cd ~/bytewolf-robotics/platform
 ./simulation/gazebo/launch/validate_px4_gazebo.zsh
 ./simulation/gazebo/launch/run_px4_gazebo.zsh base
 ```
@@ -62,7 +62,7 @@ A következő automatizált tesztekhez nem kell PX4 SITL: fake MAVSDK/PX4
 együttműködőkkel futnak, így a mission- és adapterviselkedést ellenőrzik.
 
 ```zsh
-cd "/Users/vargaferenc/Documents/ByteWolf Robotics Platform"
+cd ~/bytewolf-robotics/platform
 .venv/bin/python -m unittest discover -s tests -v
 ```
 

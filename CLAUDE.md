@@ -10,6 +10,13 @@ Silicon macOS. `PX4-Autopilot` is a symlink to `~/bytewolf-robotics/PX4-Autopilo
 (the physical path must stay space-free — a PX4 subproject breaks on spaces in the
 build path) and is git-ignored third-party source.
 
+The checkout lives at `~/bytewolf-robotics/platform`, deliberately outside
+`~/Documents`. macOS syncs Documents to iCloud, and iCloud resolves a write
+conflict by keeping both sides — appending ` 2`, ` 3` to the filename. That
+produced dozens of stale duplicate sources here, and the same mechanism applied
+to `.git` internals corrupts a repository rather than merely cluttering it. The
+path is also space-free, which is the same constraint PX4 already imposes.
+
 Never add ad-hoc edits to PX4. It carries exactly one recorded change,
 `simulation/px4/macos-build.patch`, because v1.17.0 does not build on Apple Silicon
 as released; a patched tree reports `v1.17.0-dirty`, which is the baseline, not drift.
@@ -96,8 +103,11 @@ These constraints are the point of the project — preserve them in every change
   means no arm. Invalid in-flight GNSS may not become a navigation command.
 - **The MAVSDK client cannot act after it dies.** A stopped process commands nothing;
   PX4's own failsafe is the authority for that case. Never claim app-side coverage for it.
-- **Telemetry paths are read-only.** The dashboard (`apps/dashboard/`) and the ROS 2
-  bridge (`robots/drone/x500v2/ros2/`) have no control endpoint or topic — keep it that way.
+- **Telemetry and perception views are read-only.** The Control Room API's artefact
+  views (`apps/api/`) and the ROS 2 bridge (`robots/drone/x500v2/ros2/`) serve files and
+  never command. The API does carry mission endpoints, but they reach PX4 only through
+  MissionSpec validation, the SafetyGate and an explicit operator approval — no route
+  reaches the Offboard boundary (`brain/control/`), and a static test holds that line.
 
 ## Layout and flow
 
@@ -112,7 +122,9 @@ brain/navigation/    relative north/east waypoint → global GPS target conversi
 brain/telemetry/     ROS-independent domain events, contract loader, dashboard relay
 brain/cli/           one module per bounded mission; each writes an audit artifact
 robots/drone/x500v2/ optional ROS 2 Humble bridge (lazy rclpy import; no-op on macOS)
-apps/dashboard/      read-only local telemetry viewer
+apps/api/            Control Room API — read-only artefact views + SafetyGate-guarded missions
+apps/dashboard/frontend/  Control Room React app (operator view)
+apps/marketing/      public site; no auth, no telemetry, no camera, no control
 simulation/          gazebo/launch/*.zsh · scenarios/scenarios.py runner · evidence.py
 shared/              config/x500v2 (twin, runtime policy, bridge contracts) + JSON schemas
 ```

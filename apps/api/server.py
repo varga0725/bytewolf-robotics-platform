@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime
 import json
+from math import isfinite
 import os
 from pathlib import Path
 from uuid import UUID
@@ -74,6 +75,8 @@ def create_app(
     detections_path: Path | None = None,
     down_camera_path: Path | None = None,
     down_detections_path: Path | None = None,
+    vision_status_path: Path | None = None,
+    vision_frame_path: Path | None = None,
     map_view_path: Path | None = None,
     map_view_meta_path: Path | None = None,
     agent_artifact_dir: Path = Path("simulation/artifacts/agent-missions"),
@@ -182,6 +185,32 @@ def create_app(
     @app.get("/api/v1/detections")
     def detections() -> Response:
         return _detections_response(detections_path)
+
+    @app.get("/api/v1/vision")
+    def vision_status() -> dict[str, object]:
+        """The Vision producer's own status, allowlisted and aged on every read.
+
+        Two separate guards, and both matter. The allowlist keeps raw payloads,
+        embeddings, templates and evidence locations out of a view that only
+        needs counts and states. The ageing is why the state is recomputed here
+        rather than relayed: a producer writes this file and stops, so nothing
+        rewrites it when the producer dies, and serving its last `valid`
+        unchanged would show dead perception as live.
+        """
+        if vision_status_path is None or not vision_status_path.is_file():
+            raise HTTPException(status_code=404, detail="Vision status is unavailable")
+        try:
+            document = json.loads(vision_status_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise HTTPException(status_code=400, detail="Vision status is not valid JSON.") from error
+        try:
+            return _vision_read_model(document)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.get("/api/v1/vision/frame")
+    def vision_frame(if_none_match: str | None = Header(default=None)) -> Response:
+        return _camera_response(vision_frame_path, if_none_match=if_none_match)
 
     @app.get("/api/v1/cameras/{sensor}/detections")
     def selected_detections(sensor: str) -> Response:
@@ -710,3 +739,83 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
+
+
+_VISION_READ_MODEL_FIELDS = frozenset(
+    {
+        "contract_version", "state", "observed_at", "track_count", "detections",
+        "backlog_frames", "dropped_frames", "stream_state", "model_state", "gpu_state",
+    }
+)
+
+
+#: How long a published Vision status may be presented as live. The producer
+#: writes a file and stops; nothing rewrites it when the producer dies, so the
+#: consumer -- not the file -- has to decide the status has aged out. Chosen to
+#: be several frame intervals at any usable rate, so a healthy producer is never
+#: reported stale by a slow poll.
+VISION_STATUS_MAX_AGE_S = 5.0
+
+
+def _vision_read_model(document: object, *, now: datetime | None = None) -> dict[str, object]:
+    """Allowlist the dashboard's observation-only Vision read model.
+
+    The local artifact directory is still a producer boundary: never relay raw
+    payloads, embeddings, templates, evidence locations, or future command
+    fields merely because they happen to be JSON.
+    """
+    if not isinstance(document, dict):
+        raise ValueError("Vision status must be a JSON object.")
+    unknown = set(document) - _VISION_READ_MODEL_FIELDS
+    if unknown:
+        raise ValueError("Vision status contains fields outside the read-only contract.")
+    if document.get("contract_version") != "vision_dashboard.v1":
+        raise ValueError("Vision status must declare contract_version vision_dashboard.v1.")
+    if document.get("state") not in {"valid", "missing", "stale", "invalid"}:
+        raise ValueError("Vision status has an invalid state.")
+    detections = document.get("detections")
+    if not isinstance(detections, list) or not all(_is_dashboard_detection(item) for item in detections):
+        raise ValueError("Vision status detections do not match the read-only contract.")
+    read_model = {field: document.get(field) for field in _VISION_READ_MODEL_FIELDS if field in document}
+    if read_model.get("state") == "valid" and _is_stale(read_model.get("observed_at"), now):
+        # A producer that stalled or exited leaves its last valid file behind.
+        # Serving that state unchanged would show dead perception as live.
+        read_model["state"] = "stale"
+    return read_model
+
+
+def _is_stale(observed_at: object, now: datetime | None) -> bool:
+    """Whether a published observation has outlived its freshness budget."""
+    if not isinstance(observed_at, str):
+        return True
+    try:
+        published = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if published.tzinfo is None:
+        return True
+    age = ((now or datetime.now(UTC)).astimezone(UTC) - published.astimezone(UTC)).total_seconds()
+    # A future timestamp is a broken clock, not freshness to be trusted.
+    return age > VISION_STATUS_MAX_AGE_S or age < -VISION_STATUS_MAX_AGE_S
+
+
+def _is_dashboard_detection(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    allowed = {"label", "confidence", "tracker_id", "bounding_box"}
+    box = value.get("bounding_box")
+    confidence = value.get("confidence")
+    return (
+        set(value) <= allowed
+        and isinstance(value.get("label"), str)
+        and type(confidence) in (int, float)
+        and isfinite(confidence)
+        and 0.0 <= confidence <= 1.0
+        and (value.get("tracker_id") is None or isinstance(value.get("tracker_id"), str))
+        and isinstance(box, dict)
+        and set(box) == {"x_px", "y_px", "width_px", "height_px"}
+        and type(box["x_px"]) is int and box["x_px"] >= 0
+        and type(box["y_px"]) is int and box["y_px"] >= 0
+        and type(box["width_px"]) is int and box["width_px"] > 0
+        and type(box["height_px"]) is int and box["height_px"] > 0
+    )

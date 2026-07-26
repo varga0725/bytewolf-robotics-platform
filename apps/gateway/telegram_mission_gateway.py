@@ -25,8 +25,8 @@ from urllib.request import Request, urlopen
 
 from apps.gateway.nim_mission_agent import DEFAULT_NIM_BASE_URL, NIMMissionAgent
 from brain.telemetry.link_lease import (
-    DEFAULT_LEASE_PATH,
     claim_link,
+    default_lease_path,
     release_link,
     wait_for_free_link,
 )
@@ -37,7 +37,6 @@ _MAX_MESSAGE_CHARS = 2_000
 _PLAN_NAME = re.compile(r"^[0-9a-f-]{36}\.mission-spec\.json$")
 _DIRECT_VERTICAL_FLIGHT = re.compile(r"\b(emelkedj|szállj\s+fel|szallj\s+fel|lebegj|szállj\s+le|szallj\s+le)\b", re.IGNORECASE)
 _DEFAULT_PLAN_DIRECTORY = Path("simulation/artifacts/agent-missions")
-_LINK_LEASE_PATH = DEFAULT_LEASE_PATH
 # The flying subprocess's own account of itself. It used to go to DEVNULL, so a
 # mission that failed to reach PX4 left nothing at all behind to read.
 _MISSION_LOG_PATH = Path("simulation/artifacts/agent-missions/last-execution.log")
@@ -330,13 +329,14 @@ def _execute_with_cli(plan_name: str) -> str:
         # bind. Both used to take the same socket, and the mission was the one
         # that lost — into a DEVNULL pipe, so the operator was told a mission
         # had been submitted and nothing moved.
-        _LINK_LEASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        lease_path = default_lease_path()
+        lease_path.parent.mkdir(parents=True, exist_ok=True)
         # Claimed before the process exists, and — crucially — waited on. Asking
         # the bridge to leave is not the same as it having left, and MAVSDK's
         # server does not retry a failed bind.
-        claim_link("mission", pid=os.getpid(), path=_LINK_LEASE_PATH)
+        claim_link("mission", pid=os.getpid(), path=lease_path)
         if not wait_for_free_link():
-            release_link(_LINK_LEASE_PATH)
+            release_link(lease_path)
             raise TelegramGatewayError(
                 "The PX4 link is still held by another process, so no mission was started."
             )
@@ -349,16 +349,18 @@ def _execute_with_cli(plan_name: str) -> str:
             stdout=log,
             stderr=subprocess.STDOUT,
         )
-        claim_link("mission", pid=_active_execution.pid, path=_LINK_LEASE_PATH)
+        claim_link("mission", pid=_active_execution.pid, path=lease_path)
         threading.Thread(
             target=_release_link_when_finished,
-            args=(_active_execution, log),
+            # The path the claim used, not one resolved again later: claim and
+            # release must name the same file even if the override moves.
+            args=(_active_execution, log, lease_path),
             daemon=True,
         ).start()
     return "submitted after local safety validation"
 
 
-def _release_link_when_finished(process: subprocess.Popen[bytes], log) -> None:
+def _release_link_when_finished(process: subprocess.Popen[bytes], log, lease_path: Path) -> None:
     """Give the link back however the mission ends, including badly.
 
     A lease that outlives its mission would leave the dashboard blind until
@@ -368,7 +370,7 @@ def _release_link_when_finished(process: subprocess.Popen[bytes], log) -> None:
     try:
         process.wait()
     finally:
-        release_link(_LINK_LEASE_PATH)
+        release_link(lease_path)
         try:
             log.close()
         except OSError:

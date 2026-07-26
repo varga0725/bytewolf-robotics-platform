@@ -1,0 +1,13 @@
+{
+  "contract_version": "v0.1",
+  "transcript_id": "utt-0043-partial",
+  "source": "mic:headset",
+  "observed_at": "2026-07-25T12:00:01+00:00",
+  "max_age_s": 5.0,
+  "validity": "valid",
+  "engine": {"id": "nvidia/parakeet-tdt-0.6b-v3", "version": "v3"},
+  "language": "hu-HU",
+  "text": "Nézd meg kér",
+  "confidence": 0.41,
+  "is_final": false
+}

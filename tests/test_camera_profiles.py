@@ -11,9 +11,10 @@ import unittest
 
 from simulation.gazebo.camera_profiles import (
     create_camera_overlay,
+    declared_camera_fov,
     declared_camera_resolution,
     CameraProfileError,
-    create_camera_overlay,
+    render_camera_horizontal_fov,
     render_named_camera_model,
     render_high_res_mono_cam,
 )
@@ -50,6 +51,33 @@ class RenderTests(unittest.TestCase):
 
         self.assertIn("<model name='bytewolf_front_cam'>", rendered)
         self.assertIn('<link name="front_camera_link">', rendered)
+
+    def test_raises_only_the_fov(self) -> None:
+        rendered = render_camera_horizontal_fov(_SOURCE, 2.793)
+
+        self.assertIn("<horizontal_fov>2.793</horizontal_fov>", rendered)
+        self.assertNotIn("<horizontal_fov>1.74</horizontal_fov>", rendered)
+        # Resolution and structure are untouched.
+        self.assertIn("<width>1280</width>", rendered)
+        self.assertIn("<update_rate>30</update_rate>", rendered)
+
+    def test_rejects_a_source_without_exactly_one_fov(self) -> None:
+        with self.assertRaisesRegex(CameraProfileError, "exactly one horizontal_fov"):
+            render_camera_horizontal_fov("<sdf/>", 2.793)
+
+    def test_rejects_a_non_physical_fov(self) -> None:
+        with self.assertRaisesRegex(CameraProfileError, r"\(0, pi\)"):
+            render_camera_horizontal_fov(_SOURCE, 4.0)
+
+
+class DeclaredFovTests(unittest.TestCase):
+    def test_the_front_camera_declares_the_hawkeye_fov(self) -> None:
+        # The twin front_rgb is the Hawkeye 4K Split V5 at 160 degrees.
+        self.assertAlmostEqual(declared_camera_fov(), 2.793, places=3)
+
+    def test_a_camera_without_a_usable_fov_fails_closed(self) -> None:
+        with self.assertRaisesRegex(CameraProfileError, "usable horizontal FOV"):
+            declared_camera_fov(camera="no_such_camera")
 
 
 class CreateOverlayTests(unittest.TestCase):

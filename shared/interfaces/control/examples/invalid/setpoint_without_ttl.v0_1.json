@@ -1,0 +1,16 @@
+{
+  "contract_version": "v0.1",
+  "vehicle_id": "x500v2_reference_01",
+  "stream_id": "s",
+  "sequence": 1,
+  "issued_at": "2026-07-26T12:00:00Z",
+  "frame": "local_ned",
+  "kind": "velocity",
+  "validity": "valid",
+  "velocity": {
+    "x_m_s": 0.0,
+    "y_m_s": 0.0,
+    "z_m_s": 0.0,
+    "yaw_rate_deg_s": 0.0
+  }
+}
