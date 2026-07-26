@@ -8,6 +8,7 @@ always stops are both broken, in opposite ways.
 
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 
 from simulation.control.shield_scenario import (
@@ -222,3 +223,65 @@ class GeometryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StreamedCaptureTests(unittest.TestCase):
+    """Reading the newest complete message out of a live gz capture.
+
+    gz writes pretty-printed JSON, so the file is a stream of multi-line objects
+    and the control loop is always reading it mid-write. Getting this wrong does
+    not fail loudly: it hands the shield a scan that was never published.
+    """
+
+    def setUp(self) -> None:
+        import tempfile
+
+        from simulation.control.shield_run import _last_json_object
+
+        self._read = _last_json_object
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "scans.jsonl"
+
+    def _sec(self, text: str):
+        self.path.write_text(text, encoding="utf-8")
+        document = self._read(self.path)
+        if not isinstance(document, dict) or "header" not in document:
+            return None
+        return document["header"]["stamp"]["sec"]
+
+    @staticmethod
+    def _message(sec: int) -> str:
+        return (
+            "{\n"
+            f'  "header": {{"stamp": {{"sec": {sec}}}}},\n'
+            '  "ranges": [1.0, 2.0]\n'
+            "}\n"
+        )
+
+    def test_the_newest_complete_message_wins(self) -> None:
+        self.assertEqual(self._sec(self._message(5) + self._message(9)), 9)
+
+    def test_a_half_written_tail_falls_back_to_the_last_complete_one(self) -> None:
+        # The defect this pins: scanning backwards for the first balanced pair
+        # of braces returns a *nested* fragment of the truncated tail -- the
+        # header's stamp object rather than the message -- and the shield then
+        # reasons about a scan nobody published.
+        partial = '{\n  "header": {"stamp": {"sec": 9}},\n  "ran'
+
+        self.assertEqual(self._sec(self._message(5) + partial), 5)
+
+    def test_nothing_complete_yet_reads_as_nothing(self) -> None:
+        self.assertIsNone(self._sec('{\n  "header": {"stamp"'))
+
+    def test_an_empty_capture_reads_as_nothing(self) -> None:
+        self.assertIsNone(self._sec(""))
+
+    def test_a_brace_inside_a_string_does_not_unbalance_the_scan(self) -> None:
+        self.assertEqual(
+            self._sec('{"note": "a } brace", "header": {"stamp": {"sec": 7}}}'), 7
+        )
+
+    def test_a_capture_that_began_mid_object_recovers(self) -> None:
+        # The subprocess may be started while gz is already writing.
+        self.assertEqual(self._sec('"ranges": [1.0]}\n' + self._message(4)), 4)

@@ -283,33 +283,59 @@ def _ground_truth_clearance(pose_path: Path) -> float | None:
 
 
 def _last_json_object(path: Path) -> dict | None:
-    """The most recent complete JSON object in a streamed capture.
+    """The most recent *complete top-level* object in a streamed capture.
 
     gz writes pretty-printed JSON, so the file is a stream of multi-line
-    objects rather than one per line. Scanning back for the last balanced
-    object is what makes a partially written tail harmless.
+    objects. Scanning backwards for the first balanced pair of braces looks
+    like the obvious way to find the newest one, and it is wrong: with a
+    complete object followed by a half-written one, it returns a nested
+    fragment of the tail -- `{"stamp": ...}` rather than the message. A caller
+    then reasons about a scan that was never published.
+
+    Scanning forward and remembering the last object that closed at depth zero
+    cannot do that. Braces inside strings are skipped, because a quoted brace
+    would otherwise unbalance the count.
     """
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return None
+
     depth = 0
-    end = None
-    for index in range(len(text) - 1, -1, -1):
-        character = text[index]
-        if character == "}":
-            if end is None:
-                end = index
-            depth += 1
+    start = None
+    latest: dict | None = None
+    in_string = False
+    escaped = False
+    for index, character in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
         elif character == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif character == "}":
+            if depth == 0:
+                # A stray closing brace: the capture began mid-object.
+                start = None
+                continue
             depth -= 1
-            if depth == 0 and end is not None:
+            if depth == 0 and start is not None:
                 try:
-                    return json.loads(text[index : end + 1])
+                    candidate = json.loads(text[start : index + 1])
                 except json.JSONDecodeError:
-                    end = None
-                    depth = 0
-    return None
+                    candidate = None
+                if isinstance(candidate, dict):
+                    latest = candidate
+                start = None
+    return latest
 
 
 def _stream_topic(topic: str, destination: Path, environment: dict) -> subprocess.Popen:
