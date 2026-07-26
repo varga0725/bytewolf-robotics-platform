@@ -1,0 +1,1 @@
+{"events":[],"failure_reason":"MissionPreflightError: Preflight rejected: health indicates global position or home position is not ready.","outcome":"failed","recorded_at":"2026-07-16T15:07:40.703642Z","run_id":"80b92703-2063-4841-ac34-8d64c5312f76","safety_decision":"approved","telemetry":null,"version":"v0.2"}

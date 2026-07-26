@@ -1,0 +1,14 @@
+# Versioned runtime safety policy. Actuation commands are never retried.
+version: v0.1
+timeouts:
+  waypoint_s: 30
+  landing_confirmation_s: 60
+failure_handling:
+  # A single controlled land command is permitted only after an airborne failure
+  # that occurred before a normal landing command was issued.
+  fallback_land_attempts: 1
+runtime_watchdog:
+  # The in-flight reserve may be lower than the arm threshold, but never skips
+  # telemetry validation. A live controller requests one LAND on violation.
+  minimum_battery_percent_to_continue: 35
+  telemetry_sample_timeout_s: 5

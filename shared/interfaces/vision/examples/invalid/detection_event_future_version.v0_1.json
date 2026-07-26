@@ -1,0 +1,14 @@
+{
+  "contract_version": "v0.2",
+  "event_id": "front:1042:0",
+  "source": "camera:front_rgb",
+  "observed_at": "2026-07-24T09:00:00+00:00",
+  "max_age_s": 0.5,
+  "validity": "valid",
+  "frame": {"width_px": 1280, "height_px": 720},
+  "model_id": "yolo",
+  "model_version": "v8n",
+  "label": "person",
+  "confidence": 0.9,
+  "bounding_box": {"x_px": 320.0, "y_px": 180.0, "width_px": 96.0, "height_px": 220.0}
+}

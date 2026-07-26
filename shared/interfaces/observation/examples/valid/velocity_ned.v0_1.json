@@ -1,0 +1,13 @@
+{
+  "contract_version": "v0.1",
+  "kind": "velocity",
+  "vehicle_id": "x500v2_reference_01",
+  "observed_at": "2026-07-17T12:00:00.250000Z",
+  "max_age_s": 0.5,
+  "validity": "valid",
+  "payload": {
+    "frame": "ned",
+    "north_m_s": 1.20, "east_m_s": 0.04, "down_m_s": -0.31,
+    "stddev_north_m_s": 0.08, "stddev_east_m_s": 0.08, "stddev_down_m_s": 0.12
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "contract_version": "v0.1",
+  "kind": "position",
+  "vehicle_id": "x500v2_reference_01",
+  "observed_at": "2026-07-17T12:00:00Z",
+  "max_age_s": 0.5,
+  "validity": "valid",
+  "payload": {
+    "frame": "ned",
+    "origin": {"latitude_deg": 47.397971, "longitude_deg": 8.546164, "absolute_altitude_m": 488.0},
+    "east_m": -1.03, "north_m": 4.82, "up_m": 2.01
+  }
+}

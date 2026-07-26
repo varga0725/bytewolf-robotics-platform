@@ -1,0 +1,166 @@
+{
+  "started_at": "2026-07-16T15:03:48.006276+00:00",
+  "overall_status": "failed",
+  "results": [
+    {
+      "identifier": "takeoff-hover-land",
+      "module": "brain.cli.fly_takeoff_hover_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_takeoff_hover_land",
+        "--preflight-wait-seconds",
+        "60",
+        "--artifact-dir",
+        "simulation/artifacts/headless/mission-artifacts/takeoff-hover-land"
+      ],
+      "status": "failed",
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-not-bypass-safety-gate",
+      "fallback_expectation": "land-once-after-airborne-failure",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/mission-artifacts/takeoff-hover-land"
+    },
+    {
+      "identifier": "waypoint-land",
+      "module": "brain.cli.fly_waypoint_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_waypoint_land",
+        "--preflight-wait-seconds",
+        "60",
+        "--artifact-dir",
+        "simulation/artifacts/headless/mission-artifacts/waypoint-land"
+      ],
+      "status": "failed",
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-reject-out-of-bounds-waypoint",
+      "fallback_expectation": "land-once-after-airborne-failure",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/mission-artifacts/waypoint-land"
+    },
+    {
+      "identifier": "return-to-home",
+      "module": "brain.cli.fly_return_to_home",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_return_to_home",
+        "--preflight-wait-seconds",
+        "60",
+        "--artifact-dir",
+        "simulation/artifacts/headless/mission-artifacts/return-to-home"
+      ],
+      "status": "failed",
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-not-bypass-safety-gate",
+      "fallback_expectation": "px4-rtl-then-land-once-on-failure",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/mission-artifacts/return-to-home"
+    },
+    {
+      "identifier": "reject-unsafe-altitude",
+      "module": "brain.cli.fly_takeoff_hover_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_takeoff_hover_land",
+        "--altitude",
+        "21",
+        "--artifact-dir",
+        "simulation/artifacts/headless/mission-artifacts/reject-unsafe-altitude"
+      ],
+      "status": "passed",
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-reject-over-max-altitude",
+      "fallback_expectation": "no-flight-command",
+      "expected_returncode": 1,
+      "artifact_directory": "simulation/artifacts/headless/mission-artifacts/reject-unsafe-altitude"
+    },
+    {
+      "identifier": "waypoint-timeout-fallback",
+      "module": "brain.cli.fly_waypoint_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_waypoint_land",
+        "--waypoint-timeout",
+        "0.01",
+        "--preflight-wait-seconds",
+        "60",
+        "--artifact-dir",
+        "simulation/artifacts/headless/mission-artifacts/waypoint-timeout-fallback"
+      ],
+      "status": "passed",
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-record-timeout-and-fallback",
+      "fallback_expectation": "land-once-after-waypoint-timeout",
+      "expected_returncode": 1,
+      "artifact_directory": "simulation/artifacts/headless/mission-artifacts/waypoint-timeout-fallback"
+    },
+    {
+      "identifier": "link-unavailable",
+      "module": "brain.cli.fly_takeoff_hover_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_takeoff_hover_land",
+        "--endpoint",
+        "udpin://0.0.0.0:14541",
+        "--connection-timeout",
+        "2",
+        "--artifact-dir",
+        "simulation/artifacts/headless/mission-artifacts/link-unavailable"
+      ],
+      "status": "passed",
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-fail-closed-before-arm-on-link-loss",
+      "fallback_expectation": "no-flight-command",
+      "expected_returncode": 1,
+      "artifact_directory": "simulation/artifacts/headless/mission-artifacts/link-unavailable"
+    }
+  ]
+}

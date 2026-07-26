@@ -1,0 +1,166 @@
+{
+  "started_at": "2026-07-16T17:38:31.749570+00:00",
+  "overall_status": "passed",
+  "results": [
+    {
+      "identifier": "takeoff-hover-land",
+      "module": "brain.cli.fly_takeoff_hover_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_takeoff_hover_land",
+        "--preflight-wait-seconds",
+        "60",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/takeoff-hover-land"
+      ],
+      "status": "passed",
+      "returncode": 0,
+      "stdout": "Connecting to PX4 at udpin://0.0.0.0:14540...\nApproved: take off to 2 m, hover for 5 s, then land.\nMission completed: arming -> taking_off -> hovering -> landing -> completed\n",
+      "stderr": "",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-not-bypass-safety-gate",
+      "fallback_expectation": "land-once-after-airborne-failure",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/takeoff-hover-land"
+    },
+    {
+      "identifier": "waypoint-land",
+      "module": "brain.cli.fly_waypoint_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_waypoint_land",
+        "--preflight-wait-seconds",
+        "60",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/waypoint-land"
+      ],
+      "status": "passed",
+      "returncode": 0,
+      "stdout": "Connecting to PX4 at udpin://0.0.0.0:14540...\nApproved: take off to 2 m, move 5 m north and 0 m east, then land.\nMission completed: arming -> taking_off -> navigating -> hovering -> landing -> completed\n",
+      "stderr": "Received ack for not-existing command: 176! Ignoring... (mavlink_command_sender.cpp:304)\n",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-reject-out-of-bounds-waypoint",
+      "fallback_expectation": "land-once-after-airborne-failure",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/waypoint-land"
+    },
+    {
+      "identifier": "return-to-home",
+      "module": "brain.cli.fly_return_to_home",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_return_to_home",
+        "--preflight-wait-seconds",
+        "60",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/return-to-home"
+      ],
+      "status": "passed",
+      "returncode": 0,
+      "stdout": "Connecting to PX4 at udpin://0.0.0.0:14540...\nApproved: take off to 2 m, hover for 3 s, then PX4 returns to launch and lands.\nMission completed: arming -> taking_off -> hovering -> returning -> completed\n",
+      "stderr": "Received ack for not-existing command: 176! Ignoring... (mavlink_command_sender.cpp:304)\n",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-not-bypass-safety-gate",
+      "fallback_expectation": "px4-rtl-then-land-once-on-failure",
+      "expected_returncode": 0,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/return-to-home"
+    },
+    {
+      "identifier": "reject-unsafe-altitude",
+      "module": "brain.cli.fly_takeoff_hover_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_takeoff_hover_land",
+        "--altitude",
+        "21",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/reject-unsafe-altitude"
+      ],
+      "status": "passed",
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/fly_takeoff_hover_land.py\", line 105, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/fly_takeoff_hover_land.py\", line 101, in main\n    asyncio.run(run(parse_arguments(arguments)))\n    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/base_events.py\", line 725, in run_until_complete\n    return future.result()\n           ~~~~~~~~~~~~~^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/fly_takeoff_hover_land.py\", line 69, in run\n    mission = authorize_takeoff_hover_land(gate, arguments.altitude, arguments.hover_seconds)\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/mission/flight.py\", line 56, in authorize_takeoff_hover_land\n    gate.evaluate(command)\n    ~~~~~~~~~~~~~^^^^^^^^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/safety/gate.py\", line 42, in evaluate\n    self._validate_altitude(command.target_altitude_m, \"Takeoff\")\n    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/safety/gate.py\", line 62, in _validate_altitude\n    raise SafetyViolation(\n        f\"{command_name} altitude exceeds the {self._limits.max_altitude_m:g} m safety limit.\"\n    )\nbrain.safety.gate.SafetyViolation: Takeoff altitude exceeds the 20 m safety limit.\n",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-reject-over-max-altitude",
+      "fallback_expectation": "no-flight-command",
+      "expected_returncode": 1,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/reject-unsafe-altitude"
+    },
+    {
+      "identifier": "waypoint-timeout-fallback",
+      "module": "brain.cli.fly_waypoint_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_waypoint_land",
+        "--waypoint-timeout",
+        "0.01",
+        "--preflight-wait-seconds",
+        "60",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/waypoint-timeout-fallback"
+      ],
+      "status": "passed",
+      "returncode": 1,
+      "stdout": "Connecting to PX4 at udpin://0.0.0.0:14540...\nApproved: take off to 2 m, move 5 m north and 0 m east, then land.\n",
+      "stderr": "Received ack for not-existing command: 176! Ignoring... (mavlink_command_sender.cpp:304)\nTraceback (most recent call last):\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/tasks.py\", line 507, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/adapters/mavsdk_adapter.py\", line 127, in wait_for_match\n    async for position in self._drone.telemetry.position():\n    ...<8 lines>...\n            return\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/mavsdk/telemetry.py\", line 3267, in position\n    async for response in position_stream:\n        yield Position.translate_from_rpc(response.position)\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/grpc/aio/_call.py\", line 363, in _fetch_stream_responses\n    message = await self._read()\n              ^^^^^^^^^^^^^^^^^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/grpc/aio/_call.py\", line 380, in _read\n    raw_response = await self._cython_call.receive_serialized_message()\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"src/python/grpcio/grpc/_cython/_cygrpc/aio/call.pyx.pxi\", line 392, in receive_serialized_message\n  File \"src/python/grpcio/grpc/_cython/_cygrpc/aio/callback_common.pyx.pxi\", line 126, in _receive_message\n  File \"src/python/grpcio/grpc/_cython/_cygrpc/aio/callback_common.pyx.pxi\", line 99, in execute_batch\nasyncio.exceptions.CancelledError\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/fly_waypoint_land.py\", line 98, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/fly_waypoint_land.py\", line 94, in main\n    asyncio.run(run(parse_arguments(arguments)))\n    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/base_events.py\", line 725, in run_until_complete\n    return future.result()\n           ~~~~~~~~~~~~~^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/fly_waypoint_land.py\", line 73, in run\n    execution = await adapter.execute_waypoint_mission(mission)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/adapters/mavsdk_adapter.py\", line 157, in execute_waypoint_mission\n    await self.wait_until_waypoint_reached(\n    ...<3 lines>...\n    )\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/adapters/mavsdk_adapter.py\", line 139, in wait_until_waypoint_reached\n    await asyncio.wait_for(wait_for_match(), timeout=timeout_s)\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/tasks.py\", line 506, in wait_for\n    async with timeouts.timeout(timeout):\n               ~~~~~~~~~~~~~~~~^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/timeouts.py\", line 116, in __aexit__\n    raise TimeoutError from exc_val\nTimeoutError\nException ignored in: <function System.__del__ at 0x11213a020>\nTraceback (most recent call last):\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/mavsdk/system.py\", line 146, in __del__\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/mavsdk/system.py\", line 186, in _stop_mavsdk_server\nImportError: sys.meta_path is None, Python is likely shutting down\n",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-record-timeout-and-fallback",
+      "fallback_expectation": "land-once-after-waypoint-timeout",
+      "expected_returncode": 1,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/waypoint-timeout-fallback"
+    },
+    {
+      "identifier": "link-unavailable",
+      "module": "brain.cli.fly_takeoff_hover_land",
+      "command": [
+        "/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/bin/python",
+        "-m",
+        "brain.cli.fly_takeoff_hover_land",
+        "--endpoint",
+        "udpin://0.0.0.0:14541",
+        "--connection-timeout",
+        "2",
+        "--artifact-dir",
+        "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/link-unavailable"
+      ],
+      "status": "passed",
+      "returncode": 1,
+      "stdout": "Connecting to PX4 at udpin://0.0.0.0:14541...\n",
+      "stderr": "Traceback (most recent call last):\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/tasks.py\", line 507, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/adapters/mavsdk_adapter.py\", line 85, in connect\n    await self._drone.connect(system_address=system_address)\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/mavsdk/system.py\", line 180, in connect\n    await self._init_plugins(self._mavsdk_server_address, self._port)\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/mavsdk/system.py\", line 193, in _init_plugins\n    plugin_manager = await AsyncPluginManager.create(host=host, port=port)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/mavsdk/async_plugin_manager.py\", line 19, in create\n    await self._connect_backend()\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/mavsdk/async_plugin_manager.py\", line 37, in _connect_backend\n    await self._channel.channel_ready()\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/grpc/aio/_channel.py\", line 495, in channel_ready\n    await self.wait_for_state_change(state)\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/.venv/lib/python3.13/site-packages/grpc/aio/_channel.py\", line 483, in wait_for_state_change\n    resolved = await self._channel.watch_connectivity_state(\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        last_observed_state.value[0], None\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"src/python/grpcio/grpc/_cython/_cygrpc/aio/channel.pyx.pxi\", line 97, in watch_connectivity_state\nasyncio.exceptions.CancelledError\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/fly_takeoff_hover_land.py\", line 105, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/fly_takeoff_hover_land.py\", line 101, in main\n    asyncio.run(run(parse_arguments(arguments)))\n    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/base_events.py\", line 725, in run_until_complete\n    return future.result()\n           ~~~~~~~~~~~~~^^\n  File \"/Users/vargaferenc/Documents/ByteWolf Robotics Platform/brain/cli/fly_takeoff_hover_land.py\", line 75, in run\n    await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/tasks.py\", line 506, in wait_for\n    async with timeouts.timeout(timeout):\n               ~~~~~~~~~~~~~~~~^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.13/3.13.11_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/timeouts.py\", line 116, in __aexit__\n    raise TimeoutError from exc_val\nTimeoutError\n",
+      "version": "p0.v1",
+      "readiness_requirements": [
+        "mavsdk-connected",
+        "telemetry-healthy"
+      ],
+      "safety_rejection": "must-fail-closed-before-arm-on-link-loss",
+      "fallback_expectation": "no-flight-command",
+      "expected_returncode": 1,
+      "artifact_directory": "simulation/artifacts/headless/runs/20260716T173831Z-a6322dd8fe5f47e8be824936b7a990b7/mission-artifacts/link-unavailable"
+    }
+  ]
+}

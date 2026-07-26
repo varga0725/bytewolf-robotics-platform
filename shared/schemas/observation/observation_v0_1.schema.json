@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ByteWolf Observation Contract v0.1",
+  "description": "One observation of the vehicle's state or its surroundings. Observations describe what is; they never command. Consumers must resolve validity before use: see docs/observation-contract-v0_1.md.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["contract_version", "kind", "vehicle_id", "observed_at", "max_age_s", "validity"],
+  "properties": {
+    "contract_version": {
+      "const": "v0.1",
+      "description": "Pins the meaning of every field below. A consumer that does not know this version must reject the observation rather than guess."
+    },
+    "kind": {
+      "enum": ["position", "velocity", "attitude", "battery", "estimator", "obstacle"],
+      "description": "Which family this observation belongs to."
+    },
+    "vehicle_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The twin this observation is about; matches vehicle.id in twin.yaml."
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, UTC, with an explicit offset. When the measurement was taken, never when it was published or received: age is measured from this instant."
+    },
+    "max_age_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "How long this observation stays usable after observed_at. Past it the observation is stale and must not be acted on, even though its values are still present."
+    },
+    "validity": {
+      "enum": ["valid", "invalid", "missing"],
+      "description": "What the producer knows. 'valid': the payload is trustworthy at observed_at. 'invalid': the producer measured but does not trust the result. 'missing': the producer has no measurement, so the payload is absent. 'stale' is not declared here; it is derived from age, because only the consumer knows the current time."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What produced the observation, e.g. 'MAVSDK telemetry.position' or 'gz lidar_2d'. Free text for audit, never for dispatch."
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"validity": {"const": "missing"}}},
+      "then": {
+        "not": {"required": ["payload"]},
+        "description": "A missing observation carries no payload. Absence must not be readable as a measured zero."
+      },
+      "else": {"required": ["payload"]}
+    },
+    {"if": {"properties": {"kind": {"const": "position"}}, "required": ["kind"]}, "then": {"$ref": "#/$defs/position"}},
+    {"if": {"properties": {"kind": {"const": "velocity"}}, "required": ["kind"]}, "then": {"$ref": "#/$defs/velocity"}},
+    {"if": {"properties": {"kind": {"const": "attitude"}}, "required": ["kind"]}, "then": {"$ref": "#/$defs/attitude"}},
+    {"if": {"properties": {"kind": {"const": "battery"}}, "required": ["kind"]}, "then": {"$ref": "#/$defs/battery"}},
+    {"if": {"properties": {"kind": {"const": "estimator"}}, "required": ["kind"]}, "then": {"$ref": "#/$defs/estimator"}},
+    {"if": {"properties": {"kind": {"const": "obstacle"}}, "required": ["kind"]}, "then": {"$ref": "#/$defs/obstacle"}}
+  ],
+  "$defs": {
+    "finite": {
+      "type": "number",
+      "description": "JSON cannot express NaN or infinity, so any non-finite value arrives as a parse error or a string and is rejected by type."
+    },
+    "stddev": {
+      "type": "number",
+      "minimum": 0,
+      "description": "One standard deviation. Zero means the producer claims certainty, which is a claim, not an absence: omit the field instead if the uncertainty is unknown."
+    },
+    "local_origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["latitude_deg", "longitude_deg", "absolute_altitude_m"],
+      "description": "The WGS84 point a local frame is measured from. A local position without its origin is meaningless, so it is required, not implied by the launch point.",
+      "properties": {
+        "latitude_deg": {"type": "number", "minimum": -90, "maximum": 90},
+        "longitude_deg": {"type": "number", "minimum": -180, "maximum": 180},
+        "absolute_altitude_m": {"$ref": "#/$defs/finite", "description": "Metres above the WGS84 ellipsoid."}
+      }
+    },
+    "position": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "required": ["frame"],
+          "properties": {
+            "frame": {
+              "enum": ["ned", "enu", "wgs84"],
+              "description": "Axes are named per frame rather than as x/y/z, so a frame mismatch is a schema error instead of a silent sign error."
+            }
+          },
+          "allOf": [
+            {
+              "if": {"properties": {"frame": {"const": "ned"}}, "required": ["frame"]},
+              "then": {
+                "required": ["origin", "north_m", "east_m", "down_m"],
+                "properties": {
+                  "origin": {"$ref": "#/$defs/local_origin"},
+                  "north_m": {"$ref": "#/$defs/finite"},
+                  "east_m": {"$ref": "#/$defs/finite"},
+                  "down_m": {"$ref": "#/$defs/finite", "description": "Positive downwards. An airborne vehicle has a negative down_m."},
+                  "stddev_north_m": {"$ref": "#/$defs/stddev"},
+                  "stddev_east_m": {"$ref": "#/$defs/stddev"},
+                  "stddev_down_m": {"$ref": "#/$defs/stddev"}
+                }
+              }
+            },
+            {
+              "if": {"properties": {"frame": {"const": "enu"}}, "required": ["frame"]},
+              "then": {
+                "required": ["origin", "east_m", "north_m", "up_m"],
+                "properties": {
+                  "origin": {"$ref": "#/$defs/local_origin"},
+                  "east_m": {"$ref": "#/$defs/finite"},
+                  "north_m": {"$ref": "#/$defs/finite"},
+                  "up_m": {"$ref": "#/$defs/finite", "description": "Positive upwards. An airborne vehicle has a positive up_m."},
+                  "stddev_east_m": {"$ref": "#/$defs/stddev"},
+                  "stddev_north_m": {"$ref": "#/$defs/stddev"},
+                  "stddev_up_m": {"$ref": "#/$defs/stddev"}
+                }
+              }
+            },
+            {
+              "if": {"properties": {"frame": {"const": "wgs84"}}, "required": ["frame"]},
+              "then": {
+                "required": ["latitude_deg", "longitude_deg", "absolute_altitude_m"],
+                "properties": {
+                  "latitude_deg": {"type": "number", "minimum": -90, "maximum": 90},
+                  "longitude_deg": {"type": "number", "minimum": -180, "maximum": 180},
+                  "absolute_altitude_m": {"$ref": "#/$defs/finite", "description": "Metres above the WGS84 ellipsoid, as MAVSDK reports it."},
+                  "relative_altitude_m": {"$ref": "#/$defs/finite", "description": "Metres above the launch point."},
+                  "stddev_horizontal_m": {"$ref": "#/$defs/stddev"},
+                  "stddev_vertical_m": {"$ref": "#/$defs/stddev"}
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "velocity": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "required": ["frame"],
+          "properties": {
+            "frame": {"enum": ["ned", "enu"], "description": "Velocity is never expressed in wgs84: a rate has no meaning in a coordinate frame of degrees."}
+          },
+          "allOf": [
+            {
+              "if": {"properties": {"frame": {"const": "ned"}}, "required": ["frame"]},
+              "then": {
+                "required": ["north_m_s", "east_m_s", "down_m_s"],
+                "properties": {
+                  "north_m_s": {"$ref": "#/$defs/finite"},
+                  "east_m_s": {"$ref": "#/$defs/finite"},
+                  "down_m_s": {"$ref": "#/$defs/finite", "description": "Positive downwards; a climbing vehicle has a negative down_m_s."},
+                  "stddev_north_m_s": {"$ref": "#/$defs/stddev"},
+                  "stddev_east_m_s": {"$ref": "#/$defs/stddev"},
+                  "stddev_down_m_s": {"$ref": "#/$defs/stddev"}
+                }
+              }
+            },
+            {
+              "if": {"properties": {"frame": {"const": "enu"}}, "required": ["frame"]},
+              "then": {
+                "required": ["east_m_s", "north_m_s", "up_m_s"],
+                "properties": {
+                  "east_m_s": {"$ref": "#/$defs/finite"},
+                  "north_m_s": {"$ref": "#/$defs/finite"},
+                  "up_m_s": {"$ref": "#/$defs/finite", "description": "Positive upwards; a climbing vehicle has a positive up_m_s."},
+                  "stddev_east_m_s": {"$ref": "#/$defs/stddev"},
+                  "stddev_north_m_s": {"$ref": "#/$defs/stddev"},
+                  "stddev_up_m_s": {"$ref": "#/$defs/stddev"}
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "attitude": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["frame", "roll_deg", "pitch_deg", "yaw_deg"],
+          "properties": {
+            "frame": {"const": "frd_to_ned", "description": "Body forward-right-down relative to the local NED frame, matching PX4."},
+            "roll_deg": {"type": "number", "minimum": -180, "maximum": 180},
+            "pitch_deg": {"type": "number", "minimum": -90, "maximum": 90},
+            "yaw_deg": {"type": "number", "minimum": -180, "maximum": 180, "description": "Zero is north, positive clockwise seen from above."},
+            "stddev_roll_deg": {"$ref": "#/$defs/stddev"},
+            "stddev_pitch_deg": {"$ref": "#/$defs/stddev"},
+            "stddev_yaw_deg": {"$ref": "#/$defs/stddev"}
+          }
+        }
+      }
+    },
+    "battery": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["remaining_percent"],
+          "properties": {
+            "remaining_percent": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "Percent, 0-100, on MAVSDK's documented scale. Reading it as a 0-1 fraction once made every value look invalid and silently disabled the battery watchdog."
+            },
+            "voltage_v": {"type": "number", "exclusiveMinimum": 0},
+            "current_a": {"$ref": "#/$defs/finite", "description": "Positive while discharging."}
+          }
+        }
+      }
+    },
+    "estimator": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["global_position_ok", "local_position_ok", "home_position_ok"],
+          "description": "What the flight controller's estimator itself claims. A consumer must not infer these from the presence of a position observation.",
+          "properties": {
+            "global_position_ok": {"type": "boolean"},
+            "local_position_ok": {"type": "boolean"},
+            "home_position_ok": {"type": "boolean"},
+            "failsafe_active": {"type": "boolean", "description": "PX4 is in a failsafe reaction. Reported for audit; PX4 remains the authority."}
+          }
+        }
+      }
+    },
+    "obstacle": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["frame", "sensor", "sectors"],
+          "properties": {
+            "frame": {"const": "body_frd", "description": "Sector bearings are relative to the vehicle's forward axis, not to north, so a yaw error cannot rotate the obstacle map."},
+            "sensor": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "min_range_m", "max_range_m"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "min_range_m": {"type": "number", "exclusiveMinimum": 0, "description": "Below this the sensor cannot measure; a nearer obstacle reads as unobserved, not as clear."},
+                "max_range_m": {"type": "number", "exclusiveMinimum": 0, "description": "Beyond this the sector is unobserved, not clear."}
+              }
+            },
+            "sectors": {
+              "type": "array",
+              "minItems": 1,
+              "description": "Sectors the sensor reports on. A bearing absent from this array is unobserved: it is never free space.",
+              "items": {
+                "type": "object",
+                "unevaluatedProperties": false,
+                "required": ["yaw_deg", "width_deg", "coverage"],
+                "properties": {
+                  "yaw_deg": {"type": "number", "minimum": -180, "maximum": 180, "description": "Sector centre, zero straight ahead, positive clockwise seen from above."},
+                  "width_deg": {"type": "number", "exclusiveMinimum": 0, "maximum": 360},
+                  "coverage": {
+                    "enum": ["measured", "clear", "unobserved"],
+                    "description": "'measured': an obstacle at distance_m. 'clear': the sensor saw all the way to max_range_m and found nothing. 'unobserved': the sensor cannot speak for this sector -- occluded, out of range, or failed. Unobserved is not clear."
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {"properties": {"coverage": {"const": "measured"}}, "required": ["coverage"]},
+                    "then": {
+                      "required": ["distance_m"],
+                      "properties": {
+                        "distance_m": {"type": "number", "exclusiveMinimum": 0, "description": "Nearest obstacle in this sector, within the sensor's range."},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "stddev_m": {"$ref": "#/$defs/stddev"}
+                      }
+                    },
+                    "else": {
+                      "not": {"required": ["distance_m"]},
+                      "description": "Only a measured sector has a distance. A clear or unobserved sector carrying one would invite reading max_range_m as an obstacle."
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

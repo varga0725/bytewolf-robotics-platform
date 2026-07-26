@@ -1,0 +1,10 @@
+{
+  "contract_version": "v0.1",
+  "kind": "battery",
+  "vehicle_id": "x500v2_reference_01",
+  "observed_at": "2026-07-17T12:00:00Z",
+  "max_age_s": 5.0,
+  "validity": "valid",
+  "source": "MAVSDK telemetry.battery",
+  "payload": {"remaining_percent": 87.5, "voltage_v": 15.8, "current_a": 11.2}
+}

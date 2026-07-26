@@ -1,0 +1,15 @@
+{
+  "contract_version": "v0.1",
+  "source": "camera:front_rgb",
+  "observed_at": "2026-07-25T07:48:01.448513+00:00",
+  "max_age_s": 1.0,
+  "validity": "valid",
+  "frame": {
+    "width_px": 1920,
+    "height_px": 1080
+  },
+  "model_id": "yolo",
+  "model_version": "yolo11n",
+  "detections": [],
+  "detection_count": 0
+}

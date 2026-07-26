@@ -1,0 +1,11 @@
+{
+  "contract_version": "v0.1",
+  "plugin_id": "telemetry.read",
+  "granted": [
+    {"capability_id": "world_memory.query", "version": "v0.1"}
+  ],
+  "denied": [
+    {"capability_id": "mission.replay", "reason": "not on allowlist"}
+  ],
+  "limits": {"timeout_ms": 2000, "rate_per_min": 120, "max_concurrent": 4}
+}

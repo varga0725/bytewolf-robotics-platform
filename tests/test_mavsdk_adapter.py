@@ -1,13 +1,18 @@
 import asyncio
+from dataclasses import replace
 import unittest
 
-from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
+from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter, MissionPreflightError
+from brain.safety.profile import SafetyProfile, load_safety_profile
+from brain.mission.runtime_policy import RuntimePolicy
 from brain.mission.commands import TakeoffCommand, WaypointCommand
 from brain.mission.execution import MissionPhase
 from brain.mission.flight import (
     TakeoffHoverLandMission,
     TakeoffReturnToHomeMission,
+    TakeoffTargetApproachLandMission,
     TakeoffWaypointLandMission,
+    TakeoffWaypointsReturnToHomeMission,
 )
 
 
@@ -60,14 +65,40 @@ class FakeTelemetry:
 
     async def position(self):
         self._calls += 1
-        if self._calls == 1:
-            yield Position()
+        if self._calls <= 2:
+            while True:
+                yield Position()
+                await asyncio.sleep(0)
         else:
-            yield Position(latitude=47.5000449)
+            while True:
+                yield Position(latitude=47.5000449)
+                await asyncio.sleep(0)
 
     async def in_air(self):
         yield True
         yield False
+
+    async def health(self):
+        yield Health(global_position_ok=True, home_position_ok=True)
+
+    async def home(self):
+        yield Position()
+
+    async def battery(self):
+        while True:
+            yield Battery(remaining_percent=75.0)
+            await asyncio.sleep(0)
+
+
+class Battery:
+    def __init__(self, remaining_percent: float) -> None:
+        self.remaining_percent = remaining_percent
+
+
+class Health:
+    def __init__(self, global_position_ok: bool, home_position_ok: bool) -> None:
+        self.is_global_position_ok = global_position_ok
+        self.is_home_position_ok = home_position_ok
 
 
 class FakeDrone:
@@ -94,7 +125,343 @@ class NeverLandingDrone(FakeDrone):
         self.telemetry = NeverLandingTelemetry()
 
 
+class FailingWaypointAction(FakeAction):
+    async def goto_location(self, latitude: float, longitude: float, altitude: float, yaw: float) -> None:
+        self._events.append(("goto_location", latitude, longitude, altitude, yaw))
+        raise RuntimeError("navigation command rejected")
+
+
+class FailingWaypointDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.action = FailingWaypointAction(self.events)
+
+
+class ArrivingTelemetry(FakeTelemetry):
+    """Report the launch point until the vehicle has been told where to go.
+
+    `FakeTelemetry` starts reporting arrival on its third `position()` call,
+    which is one sample too early here: the route-and-return path samples home
+    first, so the third call is the one that converts the relative waypoint into
+    a target. Reporting arrival there would place the target five metres beyond
+    a vehicle that had already 'arrived', and the wait would never end.
+    """
+
+    _SAMPLES_BEFORE_ARRIVAL = 3
+
+    async def position(self):
+        self._calls += 1
+        arrived = self._calls > self._SAMPLES_BEFORE_ARRIVAL
+        while True:
+            yield Position(latitude=47.5000449) if arrived else Position()
+            await asyncio.sleep(0)
+
+
+class ArrivingDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = ArrivingTelemetry()
+
+
+class UnhealthyTelemetry(FakeTelemetry):
+    async def health(self):
+        yield Health(global_position_ok=False, home_position_ok=True)
+
+    async def home(self):
+        yield Position(latitude=float("nan"))
+
+
+class SilentHealthTelemetry(FakeTelemetry):
+    async def health(self):
+        await asyncio.sleep(60)
+        if False:
+            yield Health(global_position_ok=True, home_position_ok=True)
+
+
+class SilentHealthDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = SilentHealthTelemetry()
+
+
+class UnhealthyDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = UnhealthyTelemetry()
+
+
+class BecomingHealthyTelemetry(FakeTelemetry):
+    def __init__(self) -> None:
+        super().__init__()
+        self.health_calls = 0
+
+    async def health(self):
+        self.health_calls += 1
+        yield Health(global_position_ok=False, home_position_ok=False)
+        yield Health(global_position_ok=True, home_position_ok=True)
+
+
+class BecomingHealthyDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = BecomingHealthyTelemetry()
+
+
+class MissingHomeTelemetry(FakeTelemetry):
+    async def home(self):
+        if False:
+            yield Position()
+
+
+class MissingHomeDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = MissingHomeTelemetry()
+
+
+class GnssDropoutTelemetry(FakeTelemetry):
+    """Reports a valid preflight fix, then loses the position estimate in flight."""
+
+    async def position(self):
+        self._calls += 1
+        if self._calls == 1:
+            yield Position()
+        else:
+            yield Position(latitude=float("nan"))
+
+
+class GnssDropoutDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = GnssDropoutTelemetry()
+
+
+class RuntimeLowBatteryTelemetry(FakeTelemetry):
+    def __init__(self) -> None:
+        super().__init__()
+        self._battery_calls = 0
+
+    async def battery(self):
+        self._battery_calls += 1
+        if self._battery_calls == 1:
+            yield Battery(remaining_percent=75.0)
+            return
+        while True:
+            yield Battery(remaining_percent=34.0)
+            await asyncio.sleep(0)
+
+    async def position(self):
+        while True:
+            yield Position()
+            await asyncio.sleep(0)
+
+
+class RuntimeLowBatteryDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = RuntimeLowBatteryTelemetry()
+
+
+class RuntimeTelemetryDropoutTelemetry(FakeTelemetry):
+    def __init__(self) -> None:
+        super().__init__()
+        self._battery_calls = 0
+
+    async def battery(self):
+        self._battery_calls += 1
+        if self._battery_calls == 1:
+            yield Battery(remaining_percent=75.0)
+        return
+
+    async def position(self):
+        while True:
+            yield Position()
+            await asyncio.sleep(0)
+
+
+class RuntimeTelemetryDropoutDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = RuntimeTelemetryDropoutTelemetry()
+
+
+class UnknownBatteryThenZeroTelemetry(FakeTelemetry):
+    """Models an unreadable preflight battery followed by a zero sample."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._battery_calls = 0
+
+    async def battery(self):
+        self._battery_calls += 1
+        if self._battery_calls == 1:
+            yield Battery(remaining_percent=float("nan"))
+            return
+        while True:
+            yield Battery(remaining_percent=0.0)
+            await asyncio.sleep(0)
+
+    async def position(self):
+        while True:
+            yield Position()
+            await asyncio.sleep(0)
+
+
+class UnknownBatteryThenZeroDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.telemetry = UnknownBatteryThenZeroTelemetry()
+
+
+class FailingArmAction(FakeAction):
+    async def arm(self) -> None:
+        self._events.append("arm")
+        raise RuntimeError("arm command rejected")
+
+
+class FailingArmDrone(FakeDrone):
+    def __init__(self) -> None:
+        super().__init__()
+        self.action = FailingArmAction(self.events)
+
+
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unreadable_battery_fails_closed_before_arming(self) -> None:
+        """The X500 profile no longer permits an unknown battery: PX4 SITL does model one."""
+        drone = UnknownBatteryThenZeroDrone()
+        adapter = MavsdkMissionAdapter(drone, sleep=asyncio.sleep)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.01)
+
+        with self.assertRaisesRegex(RuntimeError, "battery telemetry is invalid"):
+            await adapter.execute(mission)
+
+        self.assertNotIn("arm", drone.events)
+
+    async def test_a_profile_that_permits_an_unknown_battery_does_not_read_zero_as_low(self) -> None:
+        """The escape hatch survives for profiles whose battery really is unmodelled."""
+        drone = UnknownBatteryThenZeroDrone()
+        adapter = MavsdkMissionAdapter(
+            drone,
+            sleep=asyncio.sleep,
+            safety_profile=replace(load_safety_profile(), allow_missing_battery_telemetry=True),
+        )
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.01)
+
+        await adapter.execute(mission)
+
+        self.assertEqual(drone.events.count("land"), 1)
+
+    async def test_lands_once_when_live_battery_crosses_the_runtime_reserve(self) -> None:
+        drone = RuntimeLowBatteryDrone()
+        adapter = MavsdkMissionAdapter(drone)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        with self.assertRaisesRegex(RuntimeError, "low_battery"):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events.count("land"), 1)
+
+    async def test_lands_once_when_live_battery_telemetry_stops(self) -> None:
+        drone = RuntimeTelemetryDropoutDrone()
+        adapter = MavsdkMissionAdapter(drone)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        with self.assertRaisesRegex(RuntimeError, "telemetry_unavailable"):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events.count("land"), 1)
+
+    async def test_waits_on_one_health_stream_until_navigation_is_ready(self) -> None:
+        drone = BecomingHealthyDrone()
+        adapter = MavsdkMissionAdapter(drone, preflight_wait_s=1.0)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.0)
+
+        await adapter.execute(mission)
+
+        self.assertEqual(drone.events[0], ("set_takeoff_altitude", 2.0))
+        self.assertEqual(drone.telemetry.health_calls, 1)
+
+    async def test_rejects_unhealthy_vehicle_before_any_action(self) -> None:
+        drone = UnhealthyDrone()
+        adapter = MavsdkMissionAdapter(drone)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        with self.assertRaisesRegex(MissionPreflightError, "ready to arm"):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events, [])
+
+    async def test_rejects_unhealthy_navigation_even_when_position_values_are_finite(self) -> None:
+        drone = FakeDrone()
+
+        async def unhealthy_health():
+            yield Health(global_position_ok=False, home_position_ok=True)
+
+        drone.telemetry.health = unhealthy_health
+        adapter = MavsdkMissionAdapter(drone)
+
+        with self.assertRaisesRegex(MissionPreflightError, "ready to arm"):
+            await adapter.verify_preflight()
+
+        self.assertEqual(drone.events, [])
+
+    async def test_uses_current_home_and_position_when_health_stream_is_silent(self) -> None:
+        drone = SilentHealthDrone()
+        adapter = MavsdkMissionAdapter(drone, preflight_wait_s=0.01, sleep=asyncio.sleep)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.0)
+
+        await adapter.execute(mission)
+
+        self.assertIn("arm", drone.events)
+
+    async def test_rejects_battery_below_the_safety_profile_before_any_action(self) -> None:
+        drone = FakeDrone()
+        profile = SafetyProfile(
+            vehicle_id="test",
+            max_altitude_m=20.0,
+            max_speed_m_s=3.0,
+            max_radius_m=50.0,
+            minimum_battery_percent_to_start=80.0,
+            loss_of_link_action="RTL",
+        )
+        adapter = MavsdkMissionAdapter(drone, safety_profile=profile)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        with self.assertRaisesRegex(MissionPreflightError, "battery"):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events, [])
+
+    async def test_rejects_when_home_telemetry_is_unavailable_before_any_action(self) -> None:
+        drone = MissingHomeDrone()
+        adapter = MavsdkMissionAdapter(drone)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        with self.assertRaisesRegex(MissionPreflightError, "home"):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events, [])
+
+    async def test_runs_telemetry_preflight_before_the_first_action(self) -> None:
+        drone = FakeDrone()
+        adapter = MavsdkMissionAdapter(drone)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=1.0)
+
+        await adapter.execute(mission)
+
+        self.assertEqual(drone.events[0], ("set_takeoff_altitude", 2.0))
+        self.assertIsNotNone(adapter.preflight_telemetry)
+        self.assertEqual(adapter.preflight_telemetry.battery_percent, 75.0)
+
+    async def test_verifies_preflight_without_sending_an_actuation_command(self) -> None:
+        drone = FakeDrone()
+        adapter = MavsdkMissionAdapter(drone)
+
+        telemetry = await adapter.verify_preflight()
+
+        self.assertEqual(telemetry.battery_percent, 75.0)
+        self.assertEqual(drone.events, [])
+
     async def test_connects_before_executing_the_expected_command_sequence(self) -> None:
         drone = FakeDrone()
 
@@ -128,6 +495,162 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
                 MissionPhase.COMPLETED,
             ),
         )
+
+    async def test_confirms_normal_hover_land_with_telemetry(self) -> None:
+        drone = NeverLandingDrone()
+        policy = RuntimePolicy("v0.1", waypoint_timeout_s=30.0, landing_confirmation_timeout_s=0.01, fallback_land_attempts=1)
+        adapter = MavsdkMissionAdapter(drone, runtime_policy=policy)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.0)
+
+        with self.assertRaises(TimeoutError):
+            await adapter.execute(mission)
+
+        self.assertEqual(drone.events.count("land"), 1)
+
+    async def test_target_approach_moves_to_the_proposed_target_then_lands(self) -> None:
+        drone = FakeDrone()
+
+        async def fake_sleep(seconds: float) -> None:
+            drone.events.append(("wait", seconds))
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        # A wide arrival tolerance decouples this from the fake telemetry's fixed
+        # convergence point; the point here is that a proposed move is flown and
+        # confirmed, not the exact geometry (that is checked against ground truth).
+        mission = TakeoffTargetApproachLandMission(
+            takeoff=TakeoffCommand(6.0), hover_duration_s=3.0, capture_settle_seconds=4.0,
+            waypoint_tolerance_m=1_000_000.0,
+        )
+
+        async def propose_move():
+            return WaypointCommand(north_m=2.0, east_m=1.0, target_altitude_m=5.0)
+
+        execution = await adapter.execute_target_approach_mission(mission, propose_move)
+
+        self.assertEqual(drone.events.count("arm"), 1)
+        self.assertEqual(drone.events.count("takeoff"), 1)
+        self.assertEqual(sum(1 for event in drone.events if event[0] == "goto_location"), 1)
+        self.assertEqual(drone.events.count("land"), 1)
+        self.assertIn(MissionPhase.NAVIGATING, tuple(event.phase for event in execution.events))
+        self.assertEqual(execution.events[-1].phase, MissionPhase.COMPLETED)
+
+    async def test_target_approach_makes_no_move_when_perception_proposes_none(self) -> None:
+        drone = FakeDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffTargetApproachLandMission(takeoff=TakeoffCommand(6.0), hover_duration_s=1.0)
+
+        async def propose_no_move():
+            return None
+
+        execution = await adapter.execute_target_approach_mission(mission, propose_no_move)
+
+        # No target was proposed, so no navigation command is ever emitted, but the
+        # vehicle still lands and completes rather than being left airborne.
+        self.assertFalse(any(event[0] == "goto_location" for event in drone.events if isinstance(event, tuple)))
+        self.assertEqual(drone.events.count("land"), 1)
+        self.assertNotIn(MissionPhase.NAVIGATING, tuple(event.phase for event in execution.events))
+        self.assertEqual(execution.events[-1].phase, MissionPhase.COMPLETED)
+
+    async def test_target_approach_lands_once_when_the_proposed_move_fails(self) -> None:
+        drone = FailingWaypointDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffTargetApproachLandMission(takeoff=TakeoffCommand(6.0), hover_duration_s=1.0)
+
+        async def propose_move():
+            return WaypointCommand(north_m=2.0, east_m=1.0, target_altitude_m=5.0)
+
+        with self.assertRaisesRegex(RuntimeError, "navigation command rejected"):
+            await adapter.execute_target_approach_mission(mission, propose_move)
+
+        self.assertEqual(drone.events.count("land"), 1)
+
+    async def test_lands_once_after_an_airborne_waypoint_failure(self) -> None:
+        drone = FailingWaypointDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffWaypointLandMission(
+            takeoff=TakeoffCommand(2.0),
+            waypoint=WaypointCommand(north_m=5.0, east_m=0.0, target_altitude_m=2.0),
+            hover_duration_s=1.0,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "navigation command rejected"):
+            await adapter.execute_waypoint_mission(mission)
+
+        self.assertEqual(drone.events.count("land"), 1)
+
+    async def test_retains_the_phases_reached_when_an_airborne_mission_fails(self) -> None:
+        """A raising mission returns no execution, so the trail must survive on the adapter."""
+        drone = FailingWaypointDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffWaypointLandMission(
+            takeoff=TakeoffCommand(2.0),
+            waypoint=WaypointCommand(north_m=5.0, east_m=0.0, target_altitude_m=2.0),
+            hover_duration_s=1.0,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "navigation command rejected"):
+            await adapter.execute_waypoint_mission(mission)
+
+        self.assertEqual(
+            tuple(event.phase for event in adapter.execution.events),
+            (
+                MissionPhase.ARMING,
+                MissionPhase.TAKING_OFF,
+                MissionPhase.NAVIGATING,
+                MissionPhase.LANDING,
+                MissionPhase.FAILED,
+            ),
+        )
+
+    async def test_reports_the_original_failure_when_the_vehicle_never_left_the_ground(self) -> None:
+        """A pre-airborne failure records FAILED directly; it must not claim a landing."""
+        drone = FailingArmDrone()
+        adapter = MavsdkMissionAdapter(drone, sleep=asyncio.sleep)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.01)
+
+        with self.assertRaisesRegex(RuntimeError, "arm command rejected"):
+            await adapter.execute(mission)
+
+        self.assertEqual(
+            tuple(event.phase for event in adapter.execution.events),
+            (MissionPhase.ARMING, MissionPhase.FAILED),
+        )
+        self.assertNotIn("land", drone.events)
+
+    async def test_lands_once_when_gnss_becomes_invalid_during_waypoint_navigation(self) -> None:
+        drone = GnssDropoutDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffWaypointLandMission(
+            takeoff=TakeoffCommand(2.0),
+            waypoint=WaypointCommand(north_m=5.0, east_m=0.0, target_altitude_m=2.0),
+            hover_duration_s=1.0,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Runtime position telemetry rejected"):
+            await adapter.execute_waypoint_mission(mission)
+
+        self.assertNotIn("goto_location", [event[0] if isinstance(event, tuple) else event for event in drone.events])
+        self.assertEqual(drone.events.count("land"), 1)
 
     async def test_converts_and_sends_an_authorized_relative_waypoint(self) -> None:
         drone = FakeDrone()
@@ -215,3 +738,118 @@ class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("return_to_launch", drone.events)
         self.assertEqual(drone.events[-1], "land")
+
+    async def test_flies_every_route_point_then_returns_home(self) -> None:
+        """The shape an area sweep needs: go there, then come home from there.
+
+        Landing at the end of the route would put the vehicle wherever the
+        sweep happened to finish.
+        """
+        drone = ArrivingDrone()
+
+        async def fake_sleep(seconds: float) -> None:
+            drone.events.append(("wait", seconds))
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffWaypointsReturnToHomeMission(
+            takeoff=TakeoffCommand(2.0),
+            waypoints=(WaypointCommand(north_m=5.0, east_m=0.0, target_altitude_m=2.0),),
+            hover_duration_s=0.0,
+        )
+
+        execution = await adapter.execute_waypoints_return_to_home_mission(mission)
+
+        self.assertEqual(
+            tuple(event.phase for event in execution.events),
+            (
+                MissionPhase.ARMING,
+                MissionPhase.TAKING_OFF,
+                MissionPhase.NAVIGATING,
+                MissionPhase.HOVERING,
+                MissionPhase.RETURNING,
+                MissionPhase.COMPLETED,
+            ),
+        )
+        self.assertIn("return_to_launch", drone.events)
+        self.assertNotIn("land", drone.events)
+
+    async def test_a_route_that_returns_home_still_lands_once_on_failure(self) -> None:
+        """One bounded land fallback, exactly as on every other airborne path.
+
+        Two landing attempts would be a bug; none would leave a vehicle in the
+        air after the controller gave up on it.
+        """
+        drone = FailingWaypointDrone()
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        adapter = MavsdkMissionAdapter(drone, sleep=fake_sleep)
+        mission = TakeoffWaypointsReturnToHomeMission(
+            takeoff=TakeoffCommand(2.0),
+            waypoints=(WaypointCommand(north_m=5.0, east_m=0.0, target_altitude_m=2.0),),
+            hover_duration_s=0.0,
+        )
+
+        with self.assertRaises(Exception):
+            await adapter.execute_waypoints_return_to_home_mission(mission)
+
+        self.assertEqual(drone.events[-1], "land")
+        self.assertEqual(drone.events.count("land"), 1)
+        self.assertNotIn("return_to_launch", drone.events)
+
+
+class ArmingReadinessTests(unittest.TestCase):
+    """Preflight must ask the question PX4 answers, not a narrower one.
+
+    Position and home alone are not PX4's arming check; it also wants
+    calibration and EKF convergence, and until those pass it answers arm with
+    COMMAND_DENIED. Two of six scenarios failed exactly that way in the first
+    repetition of `p0-repeatability-20260721T103416Z.json`, and none in the nine
+    after it — a vehicle armed before it was ready.
+    """
+
+    def _health(self, **overrides):
+        values = {
+            "is_global_position_ok": True,
+            "is_home_position_ok": True,
+            "is_armable": True,
+        }
+        values.update(overrides)
+        return type("Health", (), values)()
+
+    def test_a_vehicle_px4_will_not_arm_is_not_ready(self) -> None:
+        ready = MavsdkMissionAdapter._has_required_navigation_health(
+            self._health(is_armable=False)
+        )
+
+        self.assertFalse(ready, "arming here is a COMMAND_DENIED waiting to happen")
+
+    def test_a_vehicle_px4_will_arm_is_ready(self) -> None:
+        self.assertTrue(
+            MavsdkMissionAdapter._has_required_navigation_health(self._health())
+        )
+
+    def test_navigation_health_is_still_required_on_top(self) -> None:
+        for field in ("is_global_position_ok", "is_home_position_ok"):
+            with self.subTest(field=field):
+                self.assertFalse(
+                    MavsdkMissionAdapter._has_required_navigation_health(
+                        self._health(**{field: False})
+                    )
+                )
+
+    def test_a_health_message_without_a_verdict_does_not_stall_every_flight(self) -> None:
+        """Absence of the field is not a refusal to arm.
+
+        Older MAVSDK Health messages have no `is_armable`; reading that as
+        "not armable" would wait out every preflight for a field that will
+        never arrive.
+        """
+        legacy = type("Health", (), {"is_global_position_ok": True, "is_home_position_ok": True})()
+
+        self.assertTrue(MavsdkMissionAdapter._has_required_navigation_health(legacy))
+
+    def test_health_without_navigation_fields_is_refused_rather_than_assumed(self) -> None:
+        with self.assertRaises(MissionPreflightError):
+            MavsdkMissionAdapter._has_required_navigation_health(object())

@@ -1,0 +1,9 @@
+{
+  "contract_version": "v0.1",
+  "kind": "battery",
+  "vehicle_id": "x500v2_reference_01",
+  "observed_at": "2026-07-17T12:00:00",
+  "max_age_s": 5.0,
+  "validity": "valid",
+  "payload": {"remaining_percent": 87.5}
+}

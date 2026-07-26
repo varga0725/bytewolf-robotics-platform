@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.local/schemas/vision/vision_health_v0_1",
+  "title": "ByteWolf Vision Health v0.1",
+  "description": "A snapshot of one camera/vision stream's health, so a consumer can tell a live, healthy feed from a stalled or degraded one before trusting its detections. Observation-only; carries its own freshness. See brain/vision/canonical.py.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["contract_version", "source", "observed_at", "max_age_s", "validity", "state"],
+  "properties": {
+    "contract_version": {"const": "v0.1", "description": "Pins the meaning of every field below."},
+    "source": {"type": "string", "minLength": 1, "description": "The stream this health is about, e.g. 'camera:front_rgb'."},
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, UTC, with an offset. When this snapshot was taken; age is measured from here."
+    },
+    "max_age_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "How long this snapshot stays usable. Past it the health is stale and must not be treated as current."
+    },
+    "validity": {
+      "enum": ["valid", "invalid", "missing"],
+      "description": "'valid': the producer trusts this snapshot. 'invalid': measured but not trusted. 'missing': the stream could not be probed."
+    },
+    "state": {
+      "enum": ["healthy", "degraded", "unhealthy", "unknown"],
+      "description": "The stream's health. 'unknown' is a legitimate answer before a probe runs; it is safe to state, a false 'healthy' is not."
+    },
+    "fps": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Frames per second the stream is currently delivering, if known."
+    },
+    "backlog_frames": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Frames queued and not yet processed. A growing backlog means the consumer is seeing the past, not the present."
+    },
+    "dropped_frames": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Frames dropped since the last snapshot. Dropped frames are reported, never silently hidden, because a gap in coverage is not free space."
+    },
+    "model_id": {"type": "string", "minLength": 1, "description": "The detector model attached to the stream, if any."},
+    "model_version": {"type": "string", "minLength": 1},
+    "detail": {"type": "string", "description": "Free text for audit, e.g. the reason for 'degraded'. Never parsed for dispatch."}
+  }
+}

@@ -12,6 +12,7 @@ class MissionPhase(StrEnum):
     TAKING_OFF = "taking_off"
     NAVIGATING = "navigating"
     HOVERING = "hovering"
+    HOLDING = "holding"
     RETURNING = "returning"
     LANDING = "landing"
     COMPLETED = "completed"
@@ -52,15 +53,31 @@ class MissionExecution:
         return MissionExecution(events=(*self.events, event))
 
 
+# FAILED terminates any phase that has begun: a mission can fail before it is
+# airborne, and recording that is never a claim that a landing was commanded.
 _ALLOWED_TRANSITIONS: dict[MissionPhase | None, frozenset[MissionPhase]] = {
     None: frozenset({MissionPhase.ARMING}),
-    MissionPhase.ARMING: frozenset({MissionPhase.TAKING_OFF, MissionPhase.LANDING}),
-    MissionPhase.TAKING_OFF: frozenset(
-        {MissionPhase.NAVIGATING, MissionPhase.HOVERING, MissionPhase.LANDING}
+    MissionPhase.ARMING: frozenset(
+        {MissionPhase.TAKING_OFF, MissionPhase.LANDING, MissionPhase.FAILED}
     ),
-    MissionPhase.NAVIGATING: frozenset({MissionPhase.HOVERING, MissionPhase.LANDING}),
-    MissionPhase.HOVERING: frozenset({MissionPhase.RETURNING, MissionPhase.LANDING}),
-    MissionPhase.RETURNING: frozenset({MissionPhase.LANDING, MissionPhase.COMPLETED}),
+    MissionPhase.TAKING_OFF: frozenset(
+        {MissionPhase.NAVIGATING, MissionPhase.HOVERING, MissionPhase.LANDING, MissionPhase.FAILED}
+    ),
+    MissionPhase.NAVIGATING: frozenset(
+        {MissionPhase.HOVERING, MissionPhase.LANDING, MissionPhase.FAILED}
+    ),
+    MissionPhase.HOVERING: frozenset(
+        {
+            MissionPhase.HOLDING,
+            MissionPhase.RETURNING,
+            MissionPhase.LANDING,
+            MissionPhase.FAILED,
+        }
+    ),
+    MissionPhase.HOLDING: frozenset({MissionPhase.LANDING, MissionPhase.FAILED}),
+    MissionPhase.RETURNING: frozenset(
+        {MissionPhase.LANDING, MissionPhase.COMPLETED, MissionPhase.FAILED}
+    ),
     MissionPhase.LANDING: frozenset({MissionPhase.COMPLETED, MissionPhase.FAILED}),
     MissionPhase.COMPLETED: frozenset(),
     MissionPhase.FAILED: frozenset(),

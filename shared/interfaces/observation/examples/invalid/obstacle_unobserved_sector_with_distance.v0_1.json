@@ -1,0 +1,13 @@
+{
+  "contract_version": "v0.1",
+  "kind": "obstacle",
+  "vehicle_id": "x500v2_reference_01",
+  "observed_at": "2026-07-17T12:00:00Z",
+  "max_age_s": 0.3,
+  "validity": "valid",
+  "payload": {
+    "frame": "body_frd",
+    "sensor": {"id": "lidar_2d", "min_range_m": 0.2, "max_range_m": 12.0},
+    "sectors": [{"yaw_deg": 30, "width_deg": 15, "coverage": "unobserved", "distance_m": 12.0}]
+  }
+}

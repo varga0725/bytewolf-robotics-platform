@@ -1,0 +1,14 @@
+{
+  "contract_version": "v0.1",
+  "source": "camera:front_rgb",
+  "observed_at": "2026-07-24T09:00:00+00:00",
+  "max_age_s": 2.0,
+  "validity": "valid",
+  "state": "healthy",
+  "fps": 29.7,
+  "backlog_frames": 0,
+  "dropped_frames": 1,
+  "model_id": "yolo",
+  "model_version": "v8n-aerial-2026-07",
+  "detail": "Front RGB stream nominal."
+}

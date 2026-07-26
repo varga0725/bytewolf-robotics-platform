@@ -1,0 +1,18 @@
+{
+  "started_at": "2026-07-18T12:16:16.458129Z",
+  "verification_level": "px4-gazebo-fault-injection",
+  "sensor": "gz_x500_mono_cam_down",
+  "marker_world_xy_m": [
+    1.0,
+    2.0
+  ],
+  "estimated_north_m": 1.91,
+  "estimated_east_m": 0.995,
+  "ground_truth_north_m": 2.006,
+  "ground_truth_east_m": 1.048,
+  "error_m": 0.11,
+  "tolerance_m": 1.5,
+  "altitude_m": 6.734,
+  "verdict": "matched",
+  "detail": "Estimated (1.91 N, 0.99 E) against true (2.01 N, 1.05 E); error 0.11 m (tolerance 1.50 m)."
+}
