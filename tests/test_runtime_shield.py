@@ -192,6 +192,75 @@ class UnobservedTests(unittest.TestCase):
         self.assertIs(decision.verdict, ShieldVerdict.CLEAR)
 
 
+class UninterpretableCoverageTests(unittest.TestCase):
+    """A coverage value the shield cannot read is not free space."""
+
+    def _sector(self, **overrides) -> dict:
+        return {"yaw_deg": 0.0, "width_deg": 5.0} | overrides
+
+    def _verdict(self, sector: dict, *, unobserved_is_blocked: bool = True):
+        # Built directly rather than through load_observation: the contract
+        # already refuses these shapes, which is exactly why the shield's own
+        # guard needs testing by another route. If it only ever ran behind the
+        # schema, nothing would show whether it protects itself.
+        from brain.telemetry.observation import Observation
+
+        observation = Observation(
+            kind="obstacle",
+            vehicle_id="x500v2_reference_01",
+            observed_at=NOW,
+            max_age_s=1.0,
+            declared_validity="valid",
+            payload={
+                "frame": "body_frd",
+                "sensor": {"id": "lidar_2d_v2", "min_range_m": 0.1, "max_range_m": 30.0},
+                "sectors": [sector],
+            },
+            source=None,
+        )
+        shield = _shield(unobserved_is_blocked=unobserved_is_blocked)
+        return shield.evaluate(FORWARD_SLOW, observation, NOW).verdict
+
+    def test_an_unreadable_coverage_stops_the_vehicle(self) -> None:
+        # The shield used to recognise "unobserved" and "measured" and let
+        # everything else fall through to CLEAR -- failing open in the one
+        # component whose premise is that it fails closed. The observation
+        # schema rejects these today, but the shield must not rely on someone
+        # else's validation for its own central rule.
+        for coverage in (None, "", "unobservd", "degraded", "CLEAR", 0, True):
+            with self.subTest(coverage=coverage):
+                self.assertIs(
+                    self._verdict(self._sector(coverage=coverage)),
+                    ShieldVerdict.UNUSABLE_OBSERVATION,
+                )
+
+    def test_a_sector_without_any_coverage_stops_the_vehicle(self) -> None:
+        self.assertIs(self._verdict(self._sector()), ShieldVerdict.UNUSABLE_OBSERVATION)
+
+    def test_allowing_unobserved_does_not_allow_the_uninterpretable(self) -> None:
+        # A twin may choose to trust unobserved sectors. That is a decision
+        # about a value the shield understands, and it must not become blanket
+        # permission for values it does not.
+        self.assertIs(
+            self._verdict(self._sector(coverage="unobserved"), unobserved_is_blocked=False),
+            ShieldVerdict.CLEAR,
+        )
+        self.assertIs(
+            self._verdict(self._sector(coverage="degraded"), unobserved_is_blocked=False),
+            ShieldVerdict.UNUSABLE_OBSERVATION,
+        )
+
+    def test_the_three_recognised_values_still_behave(self) -> None:
+        self.assertIs(self._verdict(self._sector(coverage="clear")), ShieldVerdict.CLEAR)
+        self.assertIs(
+            self._verdict(self._sector(coverage="unobserved")), ShieldVerdict.UNOBSERVED_SECTOR
+        )
+        self.assertIs(
+            self._verdict(self._sector(coverage="measured", distance_m=1.0)),
+            ShieldVerdict.INSUFFICIENT_CLEARANCE,
+        )
+
+
 class FreshnessTests(unittest.TestCase):
     def test_no_observation_at_all_stops_the_vehicle(self) -> None:
         decision = _shield().evaluate(FORWARD_SLOW, None, NOW)

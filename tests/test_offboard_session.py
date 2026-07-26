@@ -317,6 +317,90 @@ class AdapterRecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class StaleApprovalTests(unittest.IsolatedAsyncioTestCase):
+    """Approval is a judgement about an instant; delivery happens at a later one."""
+
+    async def test_an_outcome_held_past_its_ttl_is_not_delivered(self) -> None:
+        # An approved outcome can sit in a queue, behind an await, or behind a
+        # slow adapter. The frozen `approved` flag would still say yes long
+        # after the setpoint it describes stopped being obeyable.
+        adapter = _RecordingAdapter()
+        session = OffboardSession(_profile(), adapter, shadow=False)
+        outcome = session.offer(_setpoint(), NOW)
+
+        delivered = await session.deliver(outcome, NOW + timedelta(seconds=0.5))
+
+        self.assertFalse(delivered.delivered)
+        self.assertIs(delivered.decision.reason, RejectionReason.EXPIRED)
+        self.assertEqual(adapter.sent, [], "an expired approval must not reach the vehicle")
+
+    async def test_an_outcome_from_a_stream_that_since_died_is_not_delivered(self) -> None:
+        adapter = _RecordingAdapter()
+        session = OffboardSession(_profile(), adapter, shadow=False)
+        outcome = session.offer(_setpoint(), NOW)
+        session.poll(NOW + timedelta(seconds=2))  # the stream is declared dead
+
+        delivered = await session.deliver(outcome, NOW + timedelta(seconds=2))
+
+        self.assertFalse(delivered.delivered)
+        self.assertEqual(adapter.sent, [])
+
+    async def test_a_fresh_outcome_still_goes_through(self) -> None:
+        adapter = _RecordingAdapter()
+        session = OffboardSession(_profile(), adapter, shadow=False)
+
+        delivered = await session.deliver(session.offer(_setpoint(), NOW), NOW)
+
+        self.assertTrue(delivered.delivered)
+        self.assertEqual(len(adapter.sent), 1)
+
+
+class ExpiredSetpointTests(unittest.TestCase):
+    """An expired setpoint must stop being applied, not merely stop being fresh."""
+
+    def test_expiry_asks_the_caller_to_stop_applying_the_last_command(self) -> None:
+        # MAVSDK re-sends the last body setpoint at its own rate, so the
+        # producer going quiet does not make the link go quiet. Between the ttl
+        # and the longer watchdog timeout nothing used to replace the expired
+        # velocity, and the vehicle flew a command already declared void.
+        session = OffboardSession(_profile())
+        session.offer(_setpoint(), NOW)
+
+        decision = session.poll(NOW + timedelta(seconds=0.35))
+
+        self.assertIs(decision.state, StreamState.EXPIRED)
+        self.assertEqual(decision.fallback, ("zero_velocity",))
+
+    def test_the_stop_is_asked_for_once_not_on_every_poll(self) -> None:
+        session = OffboardSession(_profile())
+        session.offer(_setpoint(), NOW)
+        session.poll(NOW + timedelta(seconds=0.35))
+
+        self.assertEqual(session.poll(NOW + timedelta(seconds=0.4)).fallback, ())
+
+    def test_a_new_setpoint_re_arms_the_notice(self) -> None:
+        session = OffboardSession(_profile())
+        session.offer(_setpoint(sequence=1), NOW)
+        session.poll(NOW + timedelta(seconds=0.35))
+
+        resumed = NOW + timedelta(seconds=0.4)
+        session.offer(_setpoint(sequence=2, at=resumed), resumed)
+
+        self.assertEqual(
+            session.poll(resumed + timedelta(seconds=0.35)).fallback, ("zero_velocity",)
+        )
+
+    def test_the_full_fallback_still_follows_the_watchdog_timeout(self) -> None:
+        session = OffboardSession(_profile())
+        session.offer(_setpoint(), NOW)
+        session.poll(NOW + timedelta(seconds=0.35))
+
+        self.assertEqual(
+            session.poll(NOW + timedelta(seconds=2)).fallback,
+            ("zero_velocity", "hold", "land"),
+        )
+
+
 class ControlBoundaryTests(unittest.TestCase):
     """What this package cannot do, asserted statically.
 

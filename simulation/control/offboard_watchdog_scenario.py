@@ -77,6 +77,11 @@ class OffboardWatchdogReport:
     mode_at_silence: str | None = None
     mode_after_silence: str | None = None
     px4_left_offboard_at_s: float | None = None
+    #: The instant the producer went quiet. Persisted because the scorer needs
+    #: it to derive mode_at_silence and px4_left_offboard_at_s: without it the
+    #: artifact records only conclusions, and a verdict nobody can re-derive is
+    #: a claim rather than evidence.
+    silence_began_at_s: float | None = None
     #: When this process next commanded anything of its own. Everything at or
     #: after it is our doing, not PX4's, and cannot count as the vehicle
     #: reacting to the lost stream.
@@ -168,6 +173,7 @@ def evaluate_offboard_watchdog(
         mode_at_silence=at_silence,
         mode_after_silence=after,
         px4_left_offboard_at_s=left_at,
+        silence_began_at_s=silence_began_at_s,
         intervened_at_s=intervened_at_s,
         fallback_executed_at_s=fallback_executed_at_s,
         fallback_steps=fallback_steps,

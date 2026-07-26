@@ -92,6 +92,7 @@ The passing run records:
 
 ```
  0.9 s  TAKEOFF
+ 7.9 s  HOLD                  PX4's own auto-hold on reaching takeoff altitude
  8.9 s  OFFBOARD              40 setpoints offered, 40 approved, 40 delivered
 12.9 s  (silence begins)
 13.1 s  watchdog: STOPPED     fallback executed: zero_velocity ✓ hold ✓ land ✓
@@ -99,6 +100,11 @@ The passing run records:
 20.9 s  HOLD                  settled
 32.2 s  (cleanup, discounted)
 ```
+
+Every transition in the artifact is here, including the auto-hold at 7.9 s that
+an earlier draft of this table skipped as uninteresting. It is uninteresting --
+and a table that quietly tidies a timeline is not evidence, because a reader
+cannot tell which omissions were judgement and which were mistakes.
 
 Zero rejections: every setpoint the scenario produced was inside the envelope,
 which is what makes the interruption the only variable.

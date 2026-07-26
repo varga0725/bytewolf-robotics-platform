@@ -60,6 +60,10 @@ class SessionOutcome:
     #: The frame the approved velocity is expressed in, carried so ``deliver``
     #: needs nothing but the outcome.
     frame: str | None = None
+    #: When the approved setpoint stops being obeyable. Carried rather than
+    #: recomputed so ``deliver`` can tell a stale approval from a fresh one
+    #: without holding the setpoint that produced it.
+    expires_at: datetime | None = None
 
     @property
     def approved(self) -> bool:
@@ -121,6 +125,7 @@ class OffboardSession:
         self._watchdog = OffboardWatchdog(profile.offboard)
         self._adapter = adapter
         self._shadow = shadow
+        self._expiry_handled = False
         self.record = SessionRecord()
 
     @property
@@ -161,11 +166,13 @@ class OffboardSession:
         # Expiry is the contract's own instant, not "ttl_s from arrival": a
         # setpoint that spent most of its window in transit keeps the deadline
         # it was issued with.
+        self._expiry_handled = False
         self._watchdog.record_accepted(now, setpoint.issued_at + timedelta(seconds=setpoint.ttl_s))
         return SessionOutcome(
             decision=decision,
             watchdog=self._watchdog.evaluate(now),
             frame=setpoint.frame.value,
+            expires_at=setpoint.issued_at + timedelta(seconds=setpoint.ttl_s),
         )
 
     async def deliver(self, outcome: SessionOutcome, now: datetime) -> SessionOutcome:
@@ -186,6 +193,35 @@ class OffboardSession:
         assert self._adapter is not None, "An active session was constructed with an adapter."
         assert outcome.decision.velocity is not None, "An approved decision carries its velocity."
         assert outcome.frame is not None, "An approved outcome carries its frame."
+
+        # Approval is a judgement about an instant, and this runs at a later
+        # one. An outcome held across an await, a queue or a slow adapter can
+        # reach here after its own ttl has run out, or after a poll declared the
+        # stream dead and reset it -- and the frozen `approved` flag would still
+        # say yes. Both are rechecked against `now` rather than trusted.
+        if outcome.expires_at is not None and now > outcome.expires_at:
+            return replace(
+                outcome,
+                decision=BoundaryDecision(
+                    approved=False,
+                    reason=RejectionReason.EXPIRED,
+                    detail="The setpoint expired between approval and delivery.",
+                ),
+                delivered=False,
+            )
+        watchdog_now = self._watchdog.evaluate(now)
+        if watchdog_now.requires_fallback:
+            self._note_fallback(watchdog_now)
+            return replace(
+                outcome,
+                decision=BoundaryDecision(
+                    approved=False,
+                    reason=RejectionReason.STREAM_STOPPED,
+                    detail="The stream stopped between approval and delivery.",
+                ),
+                watchdog=watchdog_now,
+                delivered=False,
+            )
         try:
             await self._adapter.send_velocity_async(outcome.decision.velocity, outcome.frame)
         except OffboardAdapterError as error:
@@ -206,6 +242,23 @@ class OffboardSession:
         watchdog = self._watchdog.evaluate(now)
         if watchdog.requires_fallback:
             self._note_fallback(watchdog)
+        elif watchdog.state is StreamState.EXPIRED and not self._expiry_handled:
+            # The contract says an expired setpoint is no longer obeyed. Until
+            # now nothing enforced that between the ttl and the longer watchdog
+            # timeout: MAVSDK keeps re-sending the last body setpoint on its
+            # own, so the vehicle went on flying a command this platform had
+            # already declared void -- for up to the difference between the two
+            # clocks. The caller is told to stop applying it now, not when the
+            # stream is finally declared dead.
+            self._expiry_handled = True
+            return replace(
+                watchdog,
+                fallback=("zero_velocity",),
+                reason=(
+                    f"{watchdog.reason} The last setpoint must stop being applied, "
+                    "because nothing else stops the link re-sending it."
+                ),
+            )
         return watchdog
 
     def _note_fallback(self, watchdog: WatchdogDecision) -> None:

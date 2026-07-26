@@ -101,6 +101,11 @@ def _stopped(velocity: Velocity) -> Velocity:
     return Velocity(0.0, 0.0, 0.0, velocity.yaw_rate_deg_s)
 
 
+#: Coverage values this shield knows how to reason about. Anything else is
+#: uninterpretable, and an uninterpretable sector is not free space.
+_KNOWN_COVERAGE = frozenset({"clear", "measured", "unobserved"})
+
+
 class RuntimeSafetyShield:
     """Refuse velocities that would carry the vehicle into or past what it sees."""
 
@@ -242,6 +247,27 @@ class RuntimeSafetyShield:
                         float(distance),
                         centre,
                     )
+            elif coverage not in _KNOWN_COVERAGE:
+                # Anything this shield does not recognise is not free space.
+                # Handling "unobserved" and "measured" and letting the rest fall
+                # through made the module fail *open*: a missing, misspelled or
+                # later-added coverage value read as clear, in the one component
+                # whose whole premise is that a sector it cannot interpret is
+                # never free space. The observation schema rejects such values
+                # today, but the shield must not depend on someone else's
+                # validation for its own central rule, and a future contract
+                # version adding one would otherwise pass silently.
+                #
+                # "unobserved" is deliberately *not* here: it is recognised, and
+                # a twin may choose to allow it. Only the uninterpretable is
+                # refused on these grounds.
+                return (
+                    ShieldVerdict.UNUSABLE_OBSERVATION,
+                    f"The sector at {centre:.0f} deg reports coverage {coverage!r}, "
+                    "which this shield cannot interpret; it is not free space.",
+                    None,
+                    centre,
+                )
         return ShieldVerdict.CLEAR, "Every sector on this heading is clear.", None, None
 
 

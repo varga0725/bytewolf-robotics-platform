@@ -213,10 +213,21 @@ async def _watch_modes(drone, modes: list[ModeSample], started_at: float) -> Non
             modes.append(ModeSample(at_s=round(time.monotonic() - started_at, 3), mode=name))
 
 
-async def _await_connection(drone) -> None:
+async def _await_connection(drone, *, timeout_s: float = 60.0) -> None:
+    """Wait for PX4 to appear, or say so. An unbounded wait is not patience.
+
+    A scenario that hangs here produces no artifact and no error -- it simply
+    never finishes, and in a forty-run matrix that is indistinguishable from a
+    slow run until the whole gate has stalled. _await_armable already had a
+    deadline; this had none.
+    """
+    deadline = time.monotonic() + timeout_s
     async for state in drone.core.connection_state():
         if state.is_connected:
             return
+        if time.monotonic() > deadline:
+            break
+    raise TimeoutError(f"PX4 never connected on {_ENDPOINT} within {timeout_s:g} s.")
 
 
 async def _land(drone) -> None:
