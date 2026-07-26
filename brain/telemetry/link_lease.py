@@ -31,12 +31,37 @@ import json
 import os
 from pathlib import Path
 import socket
+import tempfile
 import time
 
 
-DEFAULT_LEASE_PATH = Path("simulation/artifacts/dashboard/mavlink-link.lease")
+#: Anchored to the repository rather than to the caller's working directory. A
+#: relative default meant the lease landed wherever the process happened to be
+#: started from, so a CLI run from another directory claimed a *different* link
+#: than the bridge was watching -- and neither would have noticed.
+_REPO_LEASE_PATH = (
+    Path(__file__).resolve().parents[2] / "simulation/artifacts/dashboard/mavlink-link.lease"
+)
+
+#: Relocates the lease for a run that must not share the repository's. Two
+#: checkouts on one machine contend for the same PX4 port and should keep
+#: sharing it, but a test process contends for nothing real and needs its own.
+LEASE_PATH_ENV = "BYTEWOLF_LINK_LEASE"
+
+DEFAULT_LEASE_PATH = _REPO_LEASE_PATH
 # PX4's onboard MAVLink port, and the one both readers compete for.
 DEFAULT_MAVLINK_PORT = 14540
+
+
+def default_lease_path() -> Path:
+    """Where the lease lives for this process, resolved per call.
+
+    Read at call time, not bound as a default argument: a default argument is
+    evaluated once when the module is imported, which would make the override
+    below depend on import order.
+    """
+    override = os.environ.get(LEASE_PATH_ENV)
+    return Path(override) if override else _REPO_LEASE_PATH
 
 
 def _process_is_alive(pid: int) -> bool:
@@ -53,13 +78,14 @@ def _process_is_alive(pid: int) -> bool:
     return True
 
 
-def read_lease(path: Path = DEFAULT_LEASE_PATH) -> dict[str, object] | None:
+def read_lease(path: Path | None = None) -> dict[str, object] | None:
     """Return the live lease, or None when the link is free.
 
     A file naming a process that no longer exists is not a lease — it is
     litter from a crash, and treating it as binding would leave the dashboard
     dark until someone noticed the file.
     """
+    path = path if path is not None else default_lease_path()
     try:
         document = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
@@ -70,42 +96,62 @@ def read_lease(path: Path = DEFAULT_LEASE_PATH) -> dict[str, object] | None:
     return document
 
 
-def link_is_leased(path: Path = DEFAULT_LEASE_PATH) -> bool:
+def link_is_leased(path: Path | None = None) -> bool:
     return read_lease(path) is not None
 
 
-def claim_link(owner: str, *, pid: int | None = None, path: Path = DEFAULT_LEASE_PATH) -> Path:
-    """Record that `pid` owns the link. The caller must release it."""
+def claim_link(owner: str, *, pid: int | None = None, path: Path | None = None) -> Path:
+    """Record that `pid` owns the link. The caller must release it.
+
+    The temporary file gets a unique name. A fixed ``.tmp`` sibling was shared
+    by every process claiming the same lease, so two starting together wrote one
+    file and the first ``os.replace`` moved it out from under the second, which
+    then failed with FileNotFoundError instead of taking or losing the link
+    cleanly. It is created in the destination's own directory so the replace
+    stays on one filesystem, which is what makes it atomic.
+    """
+    path = path if path is not None else default_lease_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     document = {"owner": owner, "pid": int(pid if pid is not None else os.getpid())}
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(document) + "\n")
-    os.replace(temporary, path)
+    handle, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f"{path.name}.", suffix=".tmp"
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(document) + "\n")
+        os.replace(temporary, path)
+    except BaseException:
+        # A half-written claim must not be left behind: the next reader would
+        # find litter in the directory it scans for its own lease.
+        temporary.unlink(missing_ok=True)
+        raise
     return path
 
 
 @contextmanager
-def lease_link(owner: str, *, pid: int | None = None, path: Path = DEFAULT_LEASE_PATH) -> Iterator[Path]:
+def lease_link(owner: str, *, pid: int | None = None, path: Path | None = None) -> Iterator[Path]:
     """Hold the link for one mission, and give it back however the block ends.
 
     Released on the way out of the block whatever happened inside, because a
     lease that outlives its mission is exactly the failure this replaces.
     """
-    claim_link(owner, pid=pid, path=path)
+    claimed = claim_link(owner, pid=pid, path=path)
     try:
-        yield path
+        yield claimed
     finally:
-        release_link(path)
+        release_link(claimed)
 
 
-def release_link(path: Path = DEFAULT_LEASE_PATH) -> None:
+def release_link(path: Path | None = None) -> None:
+    path = path if path is not None else default_lease_path()
     try:
         path.unlink()
     except FileNotFoundError:
         pass
 
 
-def release_link_if_mine(path: Path = DEFAULT_LEASE_PATH) -> None:
+def release_link_if_mine(path: Path | None = None) -> None:
     """Give back only a lease this process took.
 
     Release points are shared with readers that never claim anything — the
@@ -113,6 +159,7 @@ def release_link_if_mine(path: Path = DEFAULT_LEASE_PATH) -> None:
     mission does. An unconditional release there would hand a flying mission's
     link to whoever asked next.
     """
+    path = path if path is not None else default_lease_path()
     lease = read_lease(path)
     if lease is not None and lease.get("pid") == os.getpid():
         release_link(path)

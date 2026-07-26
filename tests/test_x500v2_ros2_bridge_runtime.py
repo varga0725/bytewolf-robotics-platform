@@ -6,6 +6,7 @@ import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 import tempfile
+import time
 import unittest
 
 from robots.drone.x500v2.ros2.bridge_runtime import TelemetryBridgeRuntime
@@ -91,10 +92,13 @@ class TelemetryBridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 clock=lambda: datetime(2026, 7, 16, 19, 0, tzinfo=UTC),
             )
             task = asyncio.create_task(runtime.run(stopped))
-            for _ in range(20):
-                if len(node.events) == 3:
-                    break
-                await asyncio.sleep(0)
+            # Waits on a deadline, not on a number of event-loop turns.
+            # asyncio.sleep(0) only yields control; it does not let time pass, so
+            # a fixed count of yields is a bet on how many turns the runtime
+            # needs, and under scheduling pressure that bet loses.
+            deadline = time.monotonic() + 5.0
+            while len(node.events) < 3 and time.monotonic() < deadline:
+                await asyncio.sleep(0.005)
             stopped.set()
             await task
 

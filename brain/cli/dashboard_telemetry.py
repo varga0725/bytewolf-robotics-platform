@@ -21,7 +21,7 @@ from pathlib import Path
 import time
 
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
-from brain.telemetry.link_lease import DEFAULT_LEASE_PATH, link_is_leased
+from brain.telemetry.link_lease import default_lease_path, link_is_leased
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
 
 
@@ -37,7 +37,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--mavsdk-server-port", type=int, default=50051)
     parser.add_argument("--snapshot-file", type=Path, default=DEFAULT_SNAPSHOT_PATH)
     parser.add_argument(
-        "--link-lease", type=Path, default=DEFAULT_LEASE_PATH,
+        "--link-lease", type=Path, default=default_lease_path(),
         help="Lease file a flying mission claims; the bridge yields the PX4 link while it exists.",
     )
     parser.add_argument(
