@@ -147,11 +147,11 @@ describe("App view navigation", () => {
     expect(screen.getByRole("tabpanel", { name: "Kamera" })).toBeInTheDocument();
 
     fireEvent.keyDown(cameraTab, { key: "End" });
-    const replayTab = screen.getByRole("tab", { name: "Visszajátszás" });
-    expect(replayTab).toHaveFocus();
-    expect(replayTab).toHaveAttribute("aria-selected", "true");
+    const settingsTab = screen.getByRole("tab", { name: "Beállítások" });
+    expect(settingsTab).toHaveFocus();
+    expect(settingsTab).toHaveAttribute("aria-selected", "true");
 
-    fireEvent.keyDown(replayTab, { key: "Home" });
+    fireEvent.keyDown(settingsTab, { key: "Home" });
     expect(stateTab).toHaveFocus();
     expect(stateTab).toHaveAttribute("aria-selected", "true");
   });
@@ -188,7 +188,7 @@ describe("App view navigation", () => {
     const close = within(dialog).getByRole("button", { name: "Bezárás" });
     close.focus();
     fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
-    expect(within(dialog).getByRole("option", { name: "Visszajátszás" })).toHaveFocus();
+    expect(within(dialog).getByRole("option", { name: "Beállítások" })).toHaveFocus();
 
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(stateTab).toHaveFocus();
@@ -252,6 +252,21 @@ describe("App view navigation", () => {
     expect(within(dialog).getByRole("option", { name: "Robotok" })).toBeInTheDocument();
     expect(within(dialog).getByRole("option", { name: "Percepció" })).toBeInTheDocument();
     expect(within(dialog).getByRole("option", { name: "Kognitív futtatókörnyezet" })).toBeInTheDocument();
+  });
+
+  it("includes verified analytics, developer diagnostics, and settings in both navigation surfaces", () => {
+    render(<App />);
+
+    expect(screen.getByRole("tab", { name: "Analitika" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Fejlesztői diagnosztika" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Beállítások" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const dialog = screen.getByRole("dialog", { name: "Gyors nézetváltó" });
+    expect(within(dialog).getByRole("option", { name: "Analitika" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("option", { name: "Fejlesztői diagnosztika" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("option", { name: "Beállítások" })).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("Csak nézetváltás");
   });
 });
 

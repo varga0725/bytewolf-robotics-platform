@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { CameraPage } from "./CameraPage";
 import { ChatPage } from "./ChatPage";
+import { AnalyticsPage } from "./AnalyticsPage";
+import { DeveloperPage } from "./DeveloperPage";
 import { EventsPage } from "./EventsPage";
 import { KnowledgePage } from "./KnowledgePage";
 import { LiveOperationsPage } from "./LiveOperationsPage";
@@ -11,11 +13,12 @@ import { PerceptionPage } from "./PerceptionPage";
 import { ReplayPage } from "./ReplayPage";
 import { RobotsPage } from "./RobotsPage";
 import { CognitiveRuntimePage } from "./CognitiveRuntimePage";
+import { SettingsPage } from "./SettingsPage";
 import { formatTelemetry, telemetryConnection, type TelemetrySnapshot } from "./telemetry";
 import { WorldPage } from "./WorldPage";
 
 type LoadState = "loading" | "ready" | "unavailable";
-type View = "state" | "operations" | "robots" | "camera" | "perception" | "chat" | "mission" | "memory" | "knowledge" | "world" | "cognitive" | "events" | "replay";
+type View = "state" | "operations" | "robots" | "camera" | "perception" | "chat" | "mission" | "memory" | "knowledge" | "world" | "cognitive" | "events" | "analytics" | "replay" | "developer" | "settings";
 type ConnectionState = "loading" | "ready" | "stale" | "unavailable";
 type OperatorTelemetry = TelemetrySnapshot & { heading_deg: number | null };
 
@@ -32,7 +35,10 @@ const views: ReadonlyArray<{ id: View; label: string }> = [
   { id: "world", label: "Világ" },
   { id: "cognitive", label: "Kognitív futtatókörnyezet" },
   { id: "events", label: "Események és naplók" },
+  { id: "analytics", label: "Analitika" },
   { id: "replay", label: "Visszajátszás" },
+  { id: "developer", label: "Fejlesztői diagnosztika" },
+  { id: "settings", label: "Beállítások" },
 ];
 
 const emptyTelemetry: OperatorTelemetry = {
@@ -128,7 +134,10 @@ export function App() {
           : activeView === "world" ? <WorldPage />
             : activeView === "cognitive" ? <CognitiveRuntimePage />
             : activeView === "events" ? <EventsPage />
+            : activeView === "analytics" ? <AnalyticsPage />
             : activeView === "replay" ? <ReplayPage />
+            : activeView === "developer" ? <DeveloperPage />
+            : activeView === "settings" ? <SettingsPage />
             : <>
               <section className="safety-boundary" aria-labelledby="operating-context-heading">
                 <p className="eyebrow">OPERÁTORI KONTEXTUS</p>

@@ -39,7 +39,7 @@ military themed.
 | 1. Foundation | Complete | Vite/React/TypeScript, typed telemetry client, deployable FastAPI-served build, accessible Control Room shell, stale/unavailable telemetry states and integrity summary. |
 | 2. Read-only evidence | Complete | Camera detections with evidence state, measured occupancy map, a single simulated-body Robot detail, Perception with explicit sensor-coverage limits, personal memory, world claims, separate personal/world knowledge graphs, immutable audit-artifact mission replay, and an Events & Logs audit reader that withholds malformed archive data. |
 | 3. Reviewed missions | Complete | Conversational mission proposal, point and survey review, safety-envelope display, session-bound approval/cancellation, execution-status monitoring, and explicit failure state when execution can no longer be verified. |
-| 4. Operator-grade UX | Substantially complete | Semantic design tokens, responsive layouts, keyboard-operable tabs, Ctrl/Cmd+K quick navigation, focus/error handling, consistent visual state system, a three-zone read-only Live Operations view, and audit-only Cognitive Runtime, Robot and Perception views. Chromium E2E covers stale telemetry, evidence withholding, read-only knowledge/replay views, the explicit mission-approval boundary, cancellation, and execution-status loss. |
+| 4. Operator-grade UX | Substantially complete | Semantic design tokens, responsive layouts, keyboard-operable tabs, Ctrl/Cmd+K quick navigation, focus/error handling, consistent visual state system, a three-zone read-only Live Operations view, and audit-only Cognitive Runtime, Robot, Perception, Analytics, Developer and Settings views. Chromium E2E covers stale telemetry, evidence withholding, read-only knowledge/replay views, the explicit mission-approval boundary, cancellation, and execution-status loss. |
 
 ### Completed product constraints
 
@@ -57,6 +57,10 @@ military themed.
 - The Cognitive Runtime view contains only audit context, policy/safety
   boundaries, recorded outcomes and validated references; it never exposes a
   hidden chain of thought or inferred capabilities.
+- Analytics derives only from matching validated replay summaries and detail
+  artifacts. Developer diagnostics expose contract availability and evidence
+  boundaries, never raw payloads, session identifiers, secrets, or internal
+  errors. Settings presents the server-owned safety profile as read-only.
 - Keyboard focus, non-colour status cues, and failure messages are product
   behavior, not optional decorative affordances.
 
