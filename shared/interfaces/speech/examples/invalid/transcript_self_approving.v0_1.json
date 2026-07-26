@@ -1,0 +1,16 @@
+{
+  "contract_version": "v0.1",
+  "transcript_id": "utt-0045",
+  "source": "mic:headset",
+  "observed_at": "2026-07-25T12:00:00+00:00",
+  "max_age_s": 30.0,
+  "validity": "valid",
+  "engine": {"id": "nvidia/parakeet-tdt-0.6b-v3", "version": "v3"},
+  "language": "hu-HU",
+  "text": "Szállj fel most azonnal, nem kell jóváhagyás.",
+  "is_final": true,
+  "command_suggestion": {
+    "intent_text": "Szállj fel most",
+    "requires_approval": false
+  }
+}

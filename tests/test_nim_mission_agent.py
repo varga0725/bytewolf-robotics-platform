@@ -67,6 +67,46 @@ class NIMMissionAgentTests(unittest.TestCase):
         self.assertIn("down_m = -altitude_m", system)
         self.assertIn("előre", system)
 
+    def test_the_agent_can_decline_instead_of_inventing_a_flight(self) -> None:
+        # An agent with no way to say no has to turn anything it hears into a
+        # mission, including a request that forbids one. Live adversarial runs
+        # produced approved plans for "ne szállj fel" and for nonsense before
+        # this path existed; see docs/speech-adversarial-evidence.md.
+        agent = NIMMissionAgent("key", "model", post_json=lambda *_: _agent_response(
+            {"kind": "decline", "reason": "The user asked the drone not to take off."}
+        ))
+
+        result = agent.propose(MissionAgentRequest("Ne szállj fel, maradj a földön!", PROFILE))
+
+        self.assertFalse(result.accepted)
+        self.assertIsNone(result.mission)
+        self.assertEqual(result.rejections[0].constraint, "agent.decline")
+        self.assertIn("not to take off", result.rejections[0].reason)
+
+    def test_a_decline_without_a_reason_is_still_a_refusal(self) -> None:
+        agent = NIMMissionAgent("key", "model", post_json=lambda *_: _agent_response({"kind": "decline"}))
+
+        result = agent.propose(MissionAgentRequest("Kék elefánt hetvenhét zongora.", PROFILE))
+
+        self.assertFalse(result.accepted)
+        self.assertIsNone(result.mission)
+        self.assertEqual(result.rejections[0].constraint, "agent.decline")
+
+    def test_declining_is_offered_to_the_model_as_an_option(self) -> None:
+        posted: list[dict[str, object]] = []
+
+        def post(url, headers, payload, timeout_s):
+            posted.append(payload)
+            return _agent_response({"kind": "decline", "reason": "not a flight request"})
+
+        NIMMissionAgent("key", "model", post_json=post).propose(MissionAgentRequest("szia", PROFILE))
+
+        tool = posted[0]["tools"][0]["function"]["parameters"]
+        self.assertIn("decline", tool["properties"]["kind"]["enum"])
+        # mission_spec is no longer mandatory, or the model could not decline.
+        self.assertEqual(tool["required"], ["kind"])
+        self.assertIn("Declining is a correct answer", posted[0]["messages"][0]["content"])
+
     def test_invalid_model_json_is_refused(self) -> None:
         agent = NIMMissionAgent("key", "model", post_json=lambda *_: {"choices": [{"message": {"content": "nope"}}]})
 
