@@ -195,6 +195,8 @@ async def _fly(
                 verdict=decision.verdict.value,
                 commanded_speed_m_s=round(_speed(commanded), 3),
                 clearance_m=_ground_truth_clearance(pose_path) if scenario == "static-obstacle" else None,
+                sensed_distance_m=decision.clearance_m,
+                sensed_bearing_deg=decision.limiting_sector_deg,
             ))
             await asyncio.sleep(1.0 / _STREAM_HZ)
 

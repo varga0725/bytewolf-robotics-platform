@@ -35,6 +35,11 @@ class ShieldSample:
     commanded_speed_m_s: float
     #: Ground-truth distance to the obstacle at this instant, when there is one.
     clearance_m: float | None = None
+    #: What the shield itself measured, and the bearing it measured it on. Kept
+    #: separate from ground truth so a stop can be explained: without it a
+    #: false stop on an empty path is an event with no account of itself.
+    sensed_distance_m: float | None = None
+    sensed_bearing_deg: float | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,11 @@ class ShieldScenarioReport:
     #: question is whether the shield would have stopped it in time.
     clearance_at_first_intervention_m: float | None = None
     verdicts: dict[str, int] = field(default_factory=dict)
+    #: What the shield saw when it first objected, whatever the scenario. On a
+    #: clear path this is the whole explanation of a stop that should not have
+    #: happened.
+    first_intervention_sensed_m: float | None = None
+    first_intervention_bearing_deg: float | None = None
     passed: bool = False
     findings: list[str] = field(default_factory=list)
     proof_level: str = "app+SITL"
@@ -176,6 +186,7 @@ def evaluate_shield_run(
     ):
         findings.append("An active run kept commanding motion through a blocking verdict.")
 
+    first_blocking = next(iter(interventions), None)
     return ShieldScenarioReport(
         scenario=scenario,
         recorded_at=recorded_at,
@@ -191,6 +202,8 @@ def evaluate_shield_run(
         ),
         required_clearance_m=round(required_clearance_m, 3),
         verdicts=dict(sorted(verdicts.items())),
+        first_intervention_sensed_m=None if first_blocking is None else first_blocking.sensed_distance_m,
+        first_intervention_bearing_deg=None if first_blocking is None else first_blocking.sensed_bearing_deg,
         passed=not findings,
         findings=findings,
     )
