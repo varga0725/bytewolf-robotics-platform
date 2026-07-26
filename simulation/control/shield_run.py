@@ -57,6 +57,11 @@ _POSE_TOPIC = f"/world/{SCENARIO_WORLD}/dynamic_pose/info"
 _SENSOR_ID = "lidar_2d_v2"
 
 _STREAM_HZ = 5.0
+
+#: How much of a live capture to read per poll. Bounded work per iteration,
+#: whatever the run length: at ~14 KB per scan this still holds tens of
+#: messages, and the newest is all the shield ever wants.
+_TAIL_WINDOW_BYTES = 512 * 1024
 _NOMINAL_SPEED_M_S = 0.6
 #: Where the box goes, in Gazebo's world frame. Far enough that the run has a
 #: clear stretch first, so a stop can be attributed to the obstacle.
@@ -219,6 +224,7 @@ async def _fly(
         expect_intervention=scenario != "clear-path",
         requires_sensor=scenario in ("clear-path", "static-obstacle"),
         requires_ground_truth=scenario == "static-obstacle",
+        flown_seconds=round(time.monotonic() - started_at, 3),
         recorded_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     )
 
@@ -301,15 +307,38 @@ def _last_json_object(path: Path) -> dict | None:
     Scanning forward and remembering the last object that closed at depth zero
     cannot do that. Braces inside strings are skipped, because a quoted brace
     would otherwise unbalance the count.
+
+    Only the tail is read. Scanning the whole file was correct and ruinous: the
+    capture grows about 14 KB per scan, so it passed 18 MB inside twenty
+    seconds and the control loop slowed from roughly 5 Hz to 1.2 Hz. A shield
+    that decides less often protects less well, and the matrix measured exactly
+    that -- a run that first objected at 2.74 m instead of 3.61 m and let the
+    vehicle reach 1.79 m, inside the standoff it is there to hold.
     """
     try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        size = path.stat().st_size
+        # Binary, because a text stream cannot seek to a byte offset.
+        with path.open("rb") as stream:
+            if size > _TAIL_WINDOW_BYTES:
+                stream.seek(size - _TAIL_WINDOW_BYTES)
+            text = stream.read().decode("utf-8", errors="ignore")
     except OSError:
         return None
 
+    if size > _TAIL_WINDOW_BYTES:
+        # The window almost certainly begins inside an object. Starting the
+        # depth scan there would treat the first *nested* brace as a top-level
+        # one and hand back a fragment -- the very defect the forward scan
+        # exists to prevent. gz prints top-level braces at column zero, so the
+        # first line that begins with one is a real object start.
+        boundary = text.find("\n{")
+        if boundary < 0:
+            return None
+        text = text[boundary + 1 :]
+
     depth = 0
     start = None
-    latest: dict | None = None
+    bounds: tuple[int, int] | None = None
     in_string = False
     escaped = False
     for index, character in enumerate(text):
@@ -334,14 +363,19 @@ def _last_json_object(path: Path) -> dict | None:
                 continue
             depth -= 1
             if depth == 0 and start is not None:
-                try:
-                    candidate = json.loads(text[start : index + 1])
-                except json.JSONDecodeError:
-                    candidate = None
-                if isinstance(candidate, dict):
-                    latest = candidate
+                # Remember where it was; do not parse it. Only one of the tens
+                # of messages in the window is ever wanted, and decoding all of
+                # them costs the control loop more than finding them does.
+                bounds = (start, index + 1)
                 start = None
-    return latest
+
+    if bounds is None:
+        return None
+    try:
+        latest = json.loads(text[bounds[0] : bounds[1]])
+    except json.JSONDecodeError:
+        return None
+    return latest if isinstance(latest, dict) else None
 
 
 def _stream_topic(topic: str, destination: Path, environment: dict) -> subprocess.Popen:

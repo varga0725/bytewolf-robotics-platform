@@ -225,6 +225,47 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class LoopRateTests(unittest.TestCase):
+    """A starved loop must fail the run rather than quietly weaken it."""
+
+    def _run(self, count: int, flown_seconds: float):
+        from simulation.control.shield_scenario import ShieldSample, evaluate_shield_run
+
+        samples = [
+            ShieldSample(at_s=index * 0.2, nominal_speed_m_s=0.6, verdict="clear",
+                         commanded_speed_m_s=0.6, clearance_m=8.0)
+            for index in range(count)
+        ]
+        return evaluate_shield_run(
+            scenario="clear-path", mode="active", samples=samples,
+            required_clearance_m=2.0, expect_intervention=False,
+            recorded_at="2026-07-26T12:00:00Z", requires_sensor=True,
+            flown_seconds=flown_seconds,
+        )
+
+    def test_a_starved_loop_fails_the_run(self) -> None:
+        # The measured case: 26 decisions across 22 s is 1.2 Hz, and the run
+        # that produced it let the vehicle inside the standoff while every
+        # other number in the report looked ordinary.
+        report = self._run(26, 22.0)
+
+        self.assertAlmostEqual(report.sample_rate_hz, 1.18, places=2)
+        self.assertFalse(report.passed)
+        self.assertIn("starved loop", " ".join(report.findings))
+
+    def test_a_healthy_loop_passes(self) -> None:
+        report = self._run(110, 22.0)
+
+        self.assertGreater(report.sample_rate_hz, 4.0)
+        self.assertTrue(report.passed, report.findings)
+
+    def test_without_a_duration_the_rate_is_not_guessed(self) -> None:
+        report = self._run(26, None)
+
+        self.assertIsNone(report.sample_rate_hz)
+        self.assertNotIn("starved", " ".join(report.findings))
+
+
 class StreamedCaptureTests(unittest.TestCase):
     """Reading the newest complete message out of a live gz capture.
 

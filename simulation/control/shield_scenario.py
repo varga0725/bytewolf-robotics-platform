@@ -73,9 +73,19 @@ class ShieldScenarioReport:
     passed: bool = False
     findings: list[str] = field(default_factory=list)
     proof_level: str = "app+SITL"
+    #: Decisions per second actually achieved. A shield that decides rarely
+    #: protects poorly, and it does so silently -- the run still produces a
+    #: verdict, just a later one.
+    sample_rate_hz: float | None = None
 
     def as_document(self) -> dict:
         return asdict(self)
+
+
+#: The slowest the control loop may run and still be measuring the shield
+#: rather than the loop. Half the nominal 5 Hz: a margin for scheduling jitter,
+#: far above the rate at which a starved loop stops protecting.
+MINIMUM_SAMPLE_RATE_HZ = 2.5
 
 
 def evaluate_shield_run(
@@ -91,6 +101,10 @@ def evaluate_shield_run(
     requires_sensor: bool = False,
     #: True when the verdict depends on how close the vehicle actually came.
     requires_ground_truth: bool = False,
+    #: How long the vehicle was actually under the shield's supervision. With
+    #: it, a run can be checked against the rate the shield needs to protect
+    #: at; without it the check is skipped rather than guessed.
+    flown_seconds: float | None = None,
     #: Beyond this a stop cannot be explained by anything the sensor saw.
     false_stop_clearance_m: float = 15.0,
 ) -> ShieldScenarioReport:
@@ -119,6 +133,23 @@ def evaluate_shield_run(
         for sample in interventions
         if sample.clearance_m is not None and sample.clearance_m > false_stop_clearance_m
     ]
+
+    # A shield that decides rarely protects poorly, and it fails silently: the
+    # run still produces a verdict, only a later one. A matrix run measured
+    # exactly this -- 26 samples instead of 120, first objection at 2.74 m
+    # instead of 3.61 m, and the vehicle reaching 1.79 m -- because the loop
+    # had slowed to about 1.2 Hz. Nothing in the report said so.
+    sample_rate_hz = (
+        round(len(samples) / flown_seconds, 2)
+        if flown_seconds is not None and flown_seconds > 0
+        else None
+    )
+    if sample_rate_hz is not None and sample_rate_hz < MINIMUM_SAMPLE_RATE_HZ:
+        findings.append(
+            f"The shield decided at {sample_rate_hz:.2f} Hz, below the "
+            f"{MINIMUM_SAMPLE_RATE_HZ:g} Hz it needs; this run measured a starved loop, "
+            "not the shield's protection."
+        )
 
     if expect_intervention and not interventions:
         findings.append("The shield never intervened in a run that placed something in its way.")
@@ -192,6 +223,7 @@ def evaluate_shield_run(
         recorded_at=recorded_at,
         mode=mode,
         samples=len(samples),
+        sample_rate_hz=sample_rate_hz,
         interventions=len(interventions),
         intervention_rate=round(len(interventions) / len(samples), 4),
         false_stops=len(false_stops),
