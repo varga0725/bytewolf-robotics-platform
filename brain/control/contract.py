@@ -128,8 +128,21 @@ def _validator() -> Any:
         raise OffboardContractError(
             f"Cannot read the setpoint schema '{OFFBOARD_SETPOINT_SCHEMA_PATH}': {error.strerror}."
         ) from error
+    except json.JSONDecodeError as error:
+        # A corrupt schema is a refusal like any other. Letting the decode error
+        # escape would surface as something other than OffboardContractError,
+        # and a caller that catches the documented failure would not catch this
+        # one -- so an unreadable rulebook could end up looking like no rules.
+        raise OffboardContractError(
+            f"The setpoint schema '{OFFBOARD_SETPOINT_SCHEMA_PATH}' is not valid JSON: {error}."
+        ) from error
     validator_class = jsonschema.validators.validator_for(schema)
-    validator_class.check_schema(schema)
+    try:
+        validator_class.check_schema(schema)
+    except jsonschema.exceptions.SchemaError as error:
+        raise OffboardContractError(
+            f"The setpoint schema '{OFFBOARD_SETPOINT_SCHEMA_PATH}' is not a valid schema: {error.message}."
+        ) from error
     return validator_class(schema, format_checker=validator_class.FORMAT_CHECKER)
 
 

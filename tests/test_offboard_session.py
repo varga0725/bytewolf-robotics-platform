@@ -252,6 +252,41 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertTrue(outcome.approved, "a new stream may start after the old one died")
 
 
+class AdapterRecoveryTests(unittest.TestCase):
+    """An adapter failure latches until the fallback clears it, and no further."""
+
+    def test_a_recovered_adapter_never_reports_delivery_beside_a_stopped_stream(self) -> None:
+        # The failure latches in the watchdog, so if the fallback cleared only
+        # the boundary the next success would report delivered=True while the
+        # watchdog still demanded a fallback -- a caller deciding whether to
+        # trigger a failsafe would be reading two contradictory answers.
+        class _Flaky:
+            def __init__(self) -> None:
+                self.fail = True
+                self.sent = 0
+
+            def send_velocity(self, velocity: Velocity, frame: str) -> None:
+                if self.fail:
+                    raise OffboardAdapterError("link closed")
+                self.sent += 1
+
+        adapter = _Flaky()
+        session = OffboardSession(_profile(), adapter, shadow=False)
+        first = session.offer(_setpoint(sequence=1), NOW)
+        self.assertFalse(first.delivered)
+        self.assertIs(first.watchdog.state, StreamState.STOPPED)
+
+        adapter.fail = False
+        resumed_at = NOW + timedelta(seconds=0.1)
+        second = session.offer(_setpoint(stream_id="stream-b", sequence=1, at=resumed_at), resumed_at)
+
+        self.assertTrue(second.delivered)
+        self.assertFalse(
+            second.watchdog.requires_fallback,
+            "a delivered setpoint must not sit beside a stream still demanding a fallback",
+        )
+
+
 class ControlBoundaryTests(unittest.TestCase):
     """What this package cannot do, asserted statically.
 

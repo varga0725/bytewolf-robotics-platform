@@ -123,6 +123,48 @@ class NumericRefusalTests(unittest.TestCase):
                 load_setpoint(_document(ttl_s=ttl))
 
 
+class SchemaIntegrityTests(unittest.TestCase):
+    """An unreadable rulebook must not look like the absence of rules."""
+
+    def setUp(self) -> None:
+        from brain.control import contract
+
+        self._contract = contract
+        contract._validator.cache_clear()
+        self.addCleanup(contract._validator.cache_clear)
+
+    def _with_schema(self, text: str):
+        import tempfile
+        from unittest.mock import patch
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "schema.json"
+        path.write_text(text, encoding="utf-8")
+        return patch.object(self._contract, "OFFBOARD_SETPOINT_SCHEMA_PATH", path)
+
+    def test_a_corrupt_schema_is_a_contract_refusal(self) -> None:
+        # Not a bare JSONDecodeError: a caller catching the documented failure
+        # would not catch that one, and the setpoint would escape unjudged.
+        with self._with_schema("{ this is not json"):
+            with self.assertRaises(OffboardContractError):
+                load_setpoint(_document())
+
+    def test_a_schema_that_is_not_a_schema_is_a_contract_refusal(self) -> None:
+        with self._with_schema('{"type": "not-a-type"}'):
+            with self.assertRaises(OffboardContractError):
+                load_setpoint(_document())
+
+    def test_a_missing_schema_is_a_contract_refusal(self) -> None:
+        from unittest.mock import patch
+
+        with patch.object(
+            self._contract, "OFFBOARD_SETPOINT_SCHEMA_PATH", Path("/nonexistent/schema.json")
+        ):
+            with self.assertRaises(OffboardContractError):
+                load_setpoint(_document())
+
+
 class TimestampTests(unittest.TestCase):
     def test_a_timestamp_without_an_offset_is_refused(self) -> None:
         with self.assertRaises(OffboardContractError):

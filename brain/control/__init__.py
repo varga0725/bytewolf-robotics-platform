@@ -59,5 +59,6 @@ __all__ = [
     "StreamState",
     "VelocityAdapter",
     "Velocity",
+    "load_setpoint",
     "WatchdogDecision",
 ]
