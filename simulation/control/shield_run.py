@@ -397,11 +397,21 @@ def _stream_topic(topic: str, destination: Path, environment: dict) -> subproces
 
 
 def _spawn_obstacle(environment: dict) -> None:
+    """Place a wall across the path, not a post beside it.
+
+    The setpoint commands a zero yaw *rate*, which holds no heading: small
+    disturbances integrate freely, and over twenty seconds the ground track
+    turns enough to walk past a four-metre box. One run did exactly that and
+    reported a 0.49 m clearance the shield was never given a chance to
+    prevent. Twenty-four metres across the path removes the question -- this
+    scenario is about whether the shield stops for an obstacle, not about
+    whether the vehicle can fly straight.
+    """
     sdf = (
         f'<sdf version="1.9"><model name="shield_obstacle"><static>true</static>'
         f'<pose>{_OBSTACLE_XY[0]} {_OBSTACLE_XY[1]} 1.5 0 0 0</pose><link name="l">'
-        '<collision name="c"><geometry><box><size>2 4 3</size></box></geometry></collision>'
-        '<visual name="v"><geometry><box><size>2 4 3</size></box></geometry></visual>'
+        '<collision name="c"><geometry><box><size>2 24 3</size></box></geometry></collision>'
+        '<visual name="v"><geometry><box><size>2 24 3</size></box></geometry></visual>'
         "</link></model></sdf>"
     )
     result = subprocess.run(
