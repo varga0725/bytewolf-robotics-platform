@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ByteWolf Offboard Setpoint Contract v0.1",
+  "description": "One continuously streamed velocity setpoint offered to the Offboard control boundary. Unlike an observation, this IS a command -- which is exactly why every field that decides whether it may be obeyed is mandatory and explicit. This contract carries no arm, mode, actuator or motor field, and never will: those are PX4's, not this boundary's. Acceptance is decided by brain/control/boundary.py against shared/config/x500v2/twin.yaml; a document that merely satisfies this schema has not been approved for flight. See docs/offboard-control-v0_1.md.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": [
+    "contract_version",
+    "vehicle_id",
+    "stream_id",
+    "sequence",
+    "issued_at",
+    "ttl_s",
+    "frame",
+    "kind",
+    "validity",
+    "velocity"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "v0.1",
+      "description": "Pins the meaning of every field below. A consumer that does not know this version must reject the setpoint rather than guess what it commands."
+    },
+    "vehicle_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The twin this setpoint commands; must match vehicle.id in twin.yaml. A setpoint meant for another vehicle is refused, not adapted."
+    },
+    "stream_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One continuous control session. Sequence numbers are only comparable within a stream, so a restarted producer must issue a new stream_id instead of reusing sequence numbers the boundary has already seen."
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Strictly increasing within a stream. This is what makes a duplicated or reordered setpoint detectable: a network that delivers an old command late must not be able to reverse a newer one."
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, UTC, with an explicit offset. When the producer computed this command, never when it was sent or received: the age that decides expiry is measured from the instant the decision was made, so a slow link cannot hide behind a fresh transmit time."
+    },
+    "ttl_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "How long this setpoint may be acted on after issued_at. A producer may ask for less than the vehicle's configured maximum; asking for more is refused rather than clamped, because a producer that misunderstands its own freshness budget is not one to negotiate with."
+    },
+    "frame": {
+      "enum": ["local_ned", "body_frd"],
+      "description": "The coordinate frame the velocity is expressed in, stated rather than assumed. 'local_ned': north/east/down relative to the local origin. 'body_frd': forward/right/down relative to the airframe. The boundary accepts exactly the frame twin.yaml configures and rejects the other -- a frame mismatch is a sign error in a movement command, which is not something to infer."
+    },
+    "kind": {
+      "const": "velocity",
+      "description": "v0.1 carries velocity setpoints only. Trajectory setpoints are deliberately absent rather than declared-but-unimplemented: a contract that names a capability the boundary cannot validate would invite a producer to send one."
+    },
+    "validity": {
+      "enum": ["valid", "invalid"],
+      "description": "What the producer knows about its own command. 'invalid' means the producer computed something it does not trust; the boundary rejects it. There is no 'missing': a command that does not exist is simply not sent, and silence is the watchdog's business."
+    },
+    "velocity": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["x_m_s", "y_m_s", "z_m_s", "yaw_rate_deg_s"],
+      "description": "The commanded velocity, interpreted in the declared frame. Every component is mandatory: an omitted axis would have to default to something, and a silent zero is a command in its own right.",
+      "properties": {
+        "x_m_s": {
+          "type": "number",
+          "description": "North in local_ned, forward in body_frd. Metres per second."
+        },
+        "y_m_s": {
+          "type": "number",
+          "description": "East in local_ned, right in body_frd. Metres per second."
+        },
+        "z_m_s": {
+          "type": "number",
+          "description": "Down in both frames, positive downward, matching PX4's convention rather than inverting it here where the sign would be easy to lose. Metres per second."
+        },
+        "yaw_rate_deg_s": {
+          "type": "number",
+          "description": "Positive clockwise seen from above. Degrees per second."
+        }
+      }
+    },
+    "uncertainty_m_s": {
+      "type": "number",
+      "minimum": 0,
+      "description": "The producer's own estimate of how wrong this velocity could be. Optional, but a producer that can estimate it and stays silent gets no benefit of the doubt: the boundary applies its limit only when the field is present, so omitting it is a claim of confidence."
+    }
+  }
+}

@@ -20,6 +20,28 @@ class SafetyProfileError(ValueError):
 
 
 @dataclass(frozen=True)
+class OffboardLimits:
+    """What a streamed control setpoint may ask for, and for how long.
+
+    Defined here rather than in ``brain/control`` on purpose: these are twin
+    limits, they come from the same file as every other limit, and safety must
+    not import control. ``max_speed_m_s`` is absent because the profile already
+    carries it -- the boundary reads the vehicle's one speed limit rather than a
+    second copy that could drift looser than it.
+    """
+
+    enabled: bool
+    frame: str
+    max_setpoint_ttl_s: float
+    max_rate_hz: float
+    max_acceleration_m_s2: float
+    max_yaw_rate_deg_s: float
+    max_uncertainty_m_s: float
+    watchdog_timeout_s: float
+    fallback_sequence: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SafetyProfile:
     """The non-overridable safety values of one active vehicle twin."""
 
@@ -31,6 +53,7 @@ class SafetyProfile:
     loss_of_link_action: str
     allow_missing_battery_telemetry: bool = False
     allowed_geofence: LocalPolygonGeofence | None = None
+    offboard: OffboardLimits | None = None
 
     def flight_limits(self) -> FlightLimits:
         return FlightLimits(
@@ -71,7 +94,77 @@ def load_safety_profile(path: Path | str = DEFAULT_SAFETY_PROFILE_PATH) -> Safet
             simulation, "allow_missing_battery_telemetry", default=False
         ),
         allowed_geofence=_optional_geofence(safety),
+        offboard=_optional_offboard(safety),
     )
+
+
+_FALLBACK_STEPS = frozenset({"zero_velocity", "hold", "land", "rtl"})
+
+
+def _optional_offboard(source: Mapping[str, Any]) -> OffboardLimits | None:
+    """Read the Offboard limits, or none at all if the twin declares no boundary.
+
+    A twin without this block simply has no Offboard path, which is the safe
+    reading. What is *not* tolerated is a half-written block: every limit below
+    is required, because a missing one would have to fall back to a default, and
+    a default speed or timeout invented here is exactly the second source of
+    truth this project forbids.
+    """
+    value = source.get("offboard")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise SafetyProfileError("Safety profile field 'offboard' must be a mapping.")
+
+    frame = _required_string(value, "frame")
+    if frame not in {"local_ned", "body_frd"}:
+        raise SafetyProfileError(
+            f"Safety profile field 'offboard.frame' must be local_ned or body_frd, not '{frame}'."
+        )
+    limits = OffboardLimits(
+        enabled=_optional_boolean(value, "enabled", default=False),
+        frame=frame,
+        max_setpoint_ttl_s=_required_positive_number(value, "max_setpoint_ttl_s"),
+        max_rate_hz=_required_positive_number(value, "max_rate_hz"),
+        max_acceleration_m_s2=_required_positive_number(value, "max_acceleration_m_s2"),
+        max_yaw_rate_deg_s=_required_positive_number(value, "max_yaw_rate_deg_s"),
+        max_uncertainty_m_s=_required_positive_number(value, "max_uncertainty_m_s"),
+        watchdog_timeout_s=_required_positive_number(value, "watchdog_timeout_s"),
+        fallback_sequence=_required_fallback_sequence(value),
+    )
+    if limits.watchdog_timeout_s <= limits.max_setpoint_ttl_s:
+        # Otherwise the stream is declared dead before its last setpoint has even
+        # expired, and the vehicle would still be acting on a command the
+        # watchdog has already given up on.
+        raise SafetyProfileError(
+            "Safety profile field 'offboard.watchdog_timeout_s' must exceed 'max_setpoint_ttl_s'."
+        )
+    return limits
+
+
+def _required_fallback_sequence(source: Mapping[str, Any]) -> tuple[str, ...]:
+    value = source.get("fallback_sequence")
+    if not isinstance(value, list) or not value:
+        raise SafetyProfileError(
+            "Safety profile field 'offboard.fallback_sequence' must be a non-empty list."
+        )
+    steps = tuple(str(step) for step in value)
+    unknown = [step for step in steps if step not in _FALLBACK_STEPS]
+    if unknown:
+        raise SafetyProfileError(
+            f"Safety profile field 'offboard.fallback_sequence' has unknown steps: {unknown}."
+        )
+    if steps[0] != "zero_velocity":
+        # Anything else means the vehicle keeps its last commanded velocity for
+        # one more step while the fallback decides what to do.
+        raise SafetyProfileError(
+            "Safety profile field 'offboard.fallback_sequence' must begin with 'zero_velocity'."
+        )
+    if len(set(steps)) != len(steps):
+        raise SafetyProfileError(
+            "Safety profile field 'offboard.fallback_sequence' must not repeat a step."
+        )
+    return steps
 
 
 def _required_mapping(source: Mapping[str, Any], field: str) -> Mapping[str, Any]:
