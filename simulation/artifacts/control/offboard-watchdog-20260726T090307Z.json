@@ -1,0 +1,54 @@
+{
+  "scenario": "offboard-watchdog-interruption",
+  "recorded_at": "2026-07-26T09:03:07.804861Z",
+  "setpoints_offered": 40,
+  "setpoints_approved": 40,
+  "setpoints_delivered": 40,
+  "watchdog_stopped_at_s": 13.053,
+  "fallback": [
+    "zero_velocity"
+  ],
+  "rejections": {},
+  "mode_at_silence": "OFFBOARD",
+  "mode_after_silence": "HOLD",
+  "px4_left_offboard_at_s": 13.912,
+  "intervened_at_s": 32.153,
+  "fallback_executed_at_s": 13.053,
+  "fallback_steps": {
+    "completed": [
+      "zero_velocity",
+      "hold",
+      "land"
+    ],
+    "failed": {}
+  },
+  "mode_samples": [
+    {
+      "at_s": 0.913,
+      "mode": "TAKEOFF"
+    },
+    {
+      "at_s": 7.912,
+      "mode": "HOLD"
+    },
+    {
+      "at_s": 8.912,
+      "mode": "OFFBOARD"
+    },
+    {
+      "at_s": 13.912,
+      "mode": "LAND"
+    },
+    {
+      "at_s": 20.917,
+      "mode": "HOLD"
+    },
+    {
+      "at_s": 32.978,
+      "mode": "LAND"
+    }
+  ],
+  "passed": true,
+  "findings": [],
+  "proof_level": "app+SITL"
+}

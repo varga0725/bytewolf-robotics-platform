@@ -1,0 +1,39 @@
+{
+  "scenario": "offboard-watchdog-interruption",
+  "recorded_at": "2026-07-26T08:59:00.886583Z",
+  "setpoints_offered": 40,
+  "setpoints_approved": 40,
+  "setpoints_delivered": 40,
+  "watchdog_stopped_at_s": 13.09,
+  "fallback": [
+    "zero_velocity"
+  ],
+  "rejections": {},
+  "mode_at_silence": "OFFBOARD",
+  "mode_after_silence": "OFFBOARD",
+  "px4_left_offboard_at_s": null,
+  "intervened_at_s": 32.226,
+  "mode_samples": [
+    {
+      "at_s": 0.144,
+      "mode": "TAKEOFF"
+    },
+    {
+      "at_s": 8.143,
+      "mode": "OFFBOARD"
+    },
+    {
+      "at_s": 33.148,
+      "mode": "LAND"
+    },
+    {
+      "at_s": 40.154,
+      "mode": "HOLD"
+    }
+  ],
+  "passed": false,
+  "findings": [
+    "PX4 never left OFFBOARD on its own after the stream stopped. Our watchdog's fallback is a decision; if nothing executes it and PX4 does not intervene either, the vehicle keeps flying the last command it was given."
+  ],
+  "proof_level": "app+SITL"
+}

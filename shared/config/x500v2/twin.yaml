@@ -205,7 +205,16 @@ safety:
     # The frame a setpoint must declare. A producer using the other convention
     # is rejected rather than reinterpreted: a sign error in a velocity command
     # is not something to guess about.
-    frame: local_ned
+    #
+    # body_frd for two independent reasons that happen to agree. It is the frame
+    # the obstacle contract already uses, and for the same stated reason -- a
+    # yaw error cannot rotate the map, and must not rotate the command either,
+    # so a shield reading obstacles and writing velocities needs no conversion
+    # between them. It is also the only frame MAVSDK can carry this contract
+    # faithfully in: set_velocity_body takes a yaw *rate*, which is what a
+    # setpoint declares, while set_velocity_ned takes a yaw *angle*. Choosing
+    # local_ned would mean reinterpreting one as the other at the adapter.
+    frame: body_frd
     # How long a single setpoint may be acted on. A producer may ask for less;
     # asking for more is refused, so no stream can grant itself a longer window
     # than the vehicle's own policy allows.

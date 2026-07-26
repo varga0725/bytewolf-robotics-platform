@@ -20,7 +20,7 @@ velocity that the boundary has already approved.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Protocol
 
@@ -42,7 +42,7 @@ class VelocityAdapter(Protocol):
     deliberately unreachable from here.
     """
 
-    def send_velocity(self, velocity: Velocity, frame: str) -> None:
+    async def send_velocity_async(self, velocity: Velocity, frame: str) -> None:
         """Deliver one approved velocity, or raise ``OffboardAdapterError``."""
         ...
 
@@ -54,9 +54,12 @@ class SessionOutcome:
     decision: BoundaryDecision
     watchdog: WatchdogDecision
     #: True only when the velocity actually left the process. Always false in
-    #: shadow mode, so a reader can never mistake a validated setpoint for a
-    #: delivered one.
+    #: shadow mode, and false on every outcome ``offer`` returns, so a reader
+    #: can never mistake a validated setpoint for a delivered one.
     delivered: bool = False
+    #: The frame the approved velocity is expressed in, carried so ``deliver``
+    #: needs nothing but the outcome.
+    frame: str | None = None
 
     @property
     def approved(self) -> bool:
@@ -125,7 +128,7 @@ class OffboardSession:
         return self._shadow
 
     def offer(self, setpoint: OffboardSetpoint, now: datetime) -> SessionOutcome:
-        """Put one setpoint through the boundary, and deliver it if allowed."""
+        """Judge one setpoint. Delivery, if any, is ``deliver``'s job."""
         self.record.offered += 1
 
         # Ask the watchdog first. A caller that stopped polling -- a blocked
@@ -159,20 +162,39 @@ class OffboardSession:
         # setpoint that spent most of its window in transit keeps the deadline
         # it was issued with.
         self._watchdog.record_accepted(now, setpoint.issued_at + timedelta(seconds=setpoint.ttl_s))
-        delivered = False
-        if not self._shadow:
-            assert self._adapter is not None, "An active session was constructed with an adapter."
-            assert decision.velocity is not None, "An approved decision carries its velocity."
-            try:
-                self._adapter.send_velocity(decision.velocity, setpoint.frame.value)
-            except OffboardAdapterError as error:
-                self._watchdog.record_adapter_failure(str(error))
-                return self._with_fallback(decision, now)
-            delivered = True
-            self.record.delivered += 1
         return SessionOutcome(
-            decision=decision, watchdog=self._watchdog.evaluate(now), delivered=delivered
+            decision=decision,
+            watchdog=self._watchdog.evaluate(now),
+            frame=setpoint.frame.value,
         )
+
+    async def deliver(self, outcome: SessionOutcome, now: datetime) -> SessionOutcome:
+        """Send an approved velocity to the vehicle, if this session may.
+
+        Separate from ``offer`` because the two are different kinds of thing.
+        Deciding is pure, synchronous and deterministic -- which is what lets
+        the whole envelope be tested without an event loop. Delivering is I/O
+        against an async flight stack. Folding the second into the first would
+        have made every shadow-mode caller await something that, by definition,
+        never happens.
+
+        In shadow mode this returns the outcome untouched: the point of shadow
+        is that a fully exercised session delivers nothing.
+        """
+        if not outcome.approved or self._shadow:
+            return outcome
+        assert self._adapter is not None, "An active session was constructed with an adapter."
+        assert outcome.decision.velocity is not None, "An approved decision carries its velocity."
+        assert outcome.frame is not None, "An approved outcome carries its frame."
+        try:
+            await self._adapter.send_velocity_async(outcome.decision.velocity, outcome.frame)
+        except OffboardAdapterError as error:
+            self._watchdog.record_adapter_failure(str(error))
+            watchdog = self._watchdog.evaluate(now)
+            self._note_fallback(watchdog)
+            return replace(outcome, watchdog=watchdog, delivered=False)
+        self.record.delivered += 1
+        return replace(outcome, delivered=True)
 
     def poll(self, now: datetime) -> WatchdogDecision:
         """Ask the watchdog about the silence, with no setpoint on offer.
@@ -185,11 +207,6 @@ class OffboardSession:
         if watchdog.requires_fallback:
             self._note_fallback(watchdog)
         return watchdog
-
-    def _with_fallback(self, decision: BoundaryDecision, now: datetime) -> SessionOutcome:
-        watchdog = self._watchdog.evaluate(now)
-        self._note_fallback(watchdog)
-        return SessionOutcome(decision=decision, watchdog=watchdog, delivered=False)
 
     def _note_fallback(self, watchdog: WatchdogDecision) -> None:
         """Record one fallback and clear the session it ended.
