@@ -1,5 +1,7 @@
 .DS_Store
 .venv/
+.venv-vision/
+.venv-vision313/
 node_modules/
 .env
 __pycache__/

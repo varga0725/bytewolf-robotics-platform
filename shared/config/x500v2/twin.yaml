@@ -72,7 +72,10 @@ simulation:
   allow_missing_battery_telemetry: false
   profiles:
     base: gz_x500
-    vision: gz_x500_vision
+    # ``gz_x500_vision`` publishes odometry but has no camera sensor in the
+    # pinned PX4 v1.17 model set.  Vision Core needs image evidence, so the
+    # common Vision profile is the front mono-camera airframe.
+    vision: gz_x500_mono_cam
     depth: gz_x500_depth
     mono_front: gz_x500_mono_cam
     mono_down: gz_x500_mono_cam_down
