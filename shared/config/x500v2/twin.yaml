@@ -192,6 +192,45 @@ safety:
   minimum_battery_percent_to_start: 40
   loss_of_link_action: RTL
 
+  # The Offboard control boundary. This is the only path by which a continuously
+  # streamed setpoint could ever reach PX4, and it is disabled here until an
+  # architecture review says otherwise -- the roadmap's order is offline, then
+  # shadow, then controlled SITL, then physical, and nothing skips a step.
+  #
+  # Speed is deliberately absent: max_speed_m_s above is the single source of
+  # that limit and the boundary reads it from there. Adding a second speed here
+  # would let the two drift apart, and the looser one would win by accident.
+  offboard:
+    enabled: false
+    # The frame a setpoint must declare. A producer using the other convention
+    # is rejected rather than reinterpreted: a sign error in a velocity command
+    # is not something to guess about.
+    frame: local_ned
+    # How long a single setpoint may be acted on. A producer may ask for less;
+    # asking for more is refused, so no stream can grant itself a longer window
+    # than the vehicle's own policy allows.
+    max_setpoint_ttl_s: 0.5
+    # Flood protection. Setpoints arriving faster than this are rejected; the
+    # watchdog, not this limit, handles a stream that is too slow.
+    max_rate_hz: 50
+    # No measured X500 V2 dynamics exist yet (see provenance), so this is a
+    # conservative envelope, not an airframe capability figure. It bounds how
+    # sharply a stream may change the commanded velocity.
+    max_acceleration_m_s2: 2.0
+    max_yaw_rate_deg_s: 45
+    # A setpoint whose own producer reports worse uncertainty than this is not
+    # trustworthy enough to fly on.
+    max_uncertainty_m_s: 1.0
+    # Silence longer than this means the stream is gone, whatever the reason.
+    # Must exceed max_setpoint_ttl_s: a setpoint expires before the stream that
+    # produced it is declared dead, so the vehicle stops coasting first.
+    watchdog_timeout_s: 1.0
+    # What happens when the stream dies, a setpoint expires, or the adapter
+    # fails. Ordered, and every step is deterministic. PX4's own failsafe stays
+    # the authority for anything this process cannot reach -- a stopped process
+    # commands nothing.
+    fallback_sequence: [zero_velocity, hold, land]
+
 battery:
   chemistry: LiPo
   cells: null
