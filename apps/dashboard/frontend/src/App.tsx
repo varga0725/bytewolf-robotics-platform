@@ -7,12 +7,15 @@ import { KnowledgePage } from "./KnowledgePage";
 import { LiveOperationsPage } from "./LiveOperationsPage";
 import { MemoryPage } from "./MemoryPage";
 import { MissionPage } from "./MissionPage";
+import { PerceptionPage } from "./PerceptionPage";
 import { ReplayPage } from "./ReplayPage";
+import { RobotsPage } from "./RobotsPage";
+import { CognitiveRuntimePage } from "./CognitiveRuntimePage";
 import { formatTelemetry, telemetryConnection, type TelemetrySnapshot } from "./telemetry";
 import { WorldPage } from "./WorldPage";
 
 type LoadState = "loading" | "ready" | "unavailable";
-type View = "state" | "operations" | "camera" | "chat" | "mission" | "memory" | "knowledge" | "world" | "events" | "replay";
+type View = "state" | "operations" | "robots" | "camera" | "perception" | "chat" | "mission" | "memory" | "knowledge" | "world" | "cognitive" | "events" | "replay";
 type ConnectionState = "loading" | "ready" | "stale" | "unavailable";
 type OperatorTelemetry = TelemetrySnapshot & { heading_deg: number | null };
 
@@ -20,11 +23,14 @@ const views: ReadonlyArray<{ id: View; label: string }> = [
   { id: "state", label: "Állapot" },
   { id: "camera", label: "Kamera" },
   { id: "operations", label: "Élő műveletek" },
+  { id: "robots", label: "Robotok" },
+  { id: "perception", label: "Percepció" },
   { id: "chat", label: "Beszélgetés" },
   { id: "mission", label: "Küldetés" },
   { id: "memory", label: "Memória" },
   { id: "knowledge", label: "Tudás" },
   { id: "world", label: "Világ" },
+  { id: "cognitive", label: "Kognitív futtatókörnyezet" },
   { id: "events", label: "Események és naplók" },
   { id: "replay", label: "Visszajátszás" },
 ];
@@ -112,12 +118,15 @@ export function App() {
   const activeViewDetails = views.find((view) => view.id === activeView) ?? views[0];
   const quickNavResults = views.filter((view) => view.label.toLocaleLowerCase("hu").includes(quickNavQuery.trim().toLocaleLowerCase("hu")));
   const activeViewContent = activeView === "operations" ? <LiveOperationsPage />
+    : activeView === "robots" ? <RobotsPage />
     : activeView === "camera" ? <CameraPage />
+    : activeView === "perception" ? <PerceptionPage />
     : activeView === "chat" ? <ChatPage />
       : activeView === "mission" ? <MissionPage />
         : activeView === "memory" ? <MemoryPage />
           : activeView === "knowledge" ? <KnowledgePage />
           : activeView === "world" ? <WorldPage />
+            : activeView === "cognitive" ? <CognitiveRuntimePage />
             : activeView === "events" ? <EventsPage />
             : activeView === "replay" ? <ReplayPage />
             : <>
@@ -261,6 +270,11 @@ export function App() {
 
       <section className={`operation-status-strip operation-status-strip--${connection.state}`} role="region" aria-label="Operátori rendszerállapot">
         <div>
+          <p className="eyebrow">PLATFORM ÁLLAPOT</p>
+          <strong>{connection.label}</strong>
+          <span>Telemetria-alapú kapcsolati jelzés</span>
+        </div>
+        <div>
           <p className="eyebrow">BIZTONSÁGI MÓD</p>
           <strong>Jóváhagyás-köteles</strong>
           <span>Nincs közvetlen vezérlés</span>
@@ -269,6 +283,21 @@ export function App() {
           <p className="eyebrow">KÖRNYEZET</p>
           <strong>Szimuláció</strong>
           <span>Operátori megfigyelés</span>
+        </div>
+        <div>
+          <p className="eyebrow">KAPCSOLÓDÓ BODY</p>
+          <strong>1 SZIMULÁLT TEST</strong>
+          <span>Az egyetlen konfigurált szimulációs body</span>
+        </div>
+        <div>
+          <p className="eyebrow">AKTÍV KÜLDETÉS</p>
+          <strong>NEM ELLENŐRIZHETŐ</strong>
+          <span>Nincs ellenőrzött aktív küldetésadat</span>
+        </div>
+        <div>
+          <p className="eyebrow">RIASZTÁSOK</p>
+          <strong>NEM ELLENŐRIZHETŐ</strong>
+          <span>Nincs ellenőrzött riasztási feed</span>
         </div>
         <div>
           <p className="eyebrow">LEGUTÓBBI MINTA</p>

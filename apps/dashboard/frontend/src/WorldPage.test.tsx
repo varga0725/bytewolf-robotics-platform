@@ -81,7 +81,7 @@ describe("WorldPage", () => {
 
     expect(await screen.findByRole("img", { name: "Akadály-elfoglaltsági térkép" })).toBeInTheDocument();
     expect(screen.getByText(/Az üres terület ismeretlen/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Mért akadály: É 4 m, K -2 m")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Mért akadály: É 4 m, K -2 m")).toBeInTheDocument();
     expect(screen.getByLabelText("Vitatott akadálymérés: É -2 m, K 3 m")).toBeInTheDocument();
   });
 

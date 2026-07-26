@@ -239,6 +239,20 @@ describe("App view navigation", () => {
     expect(within(dialog).getByRole("option", { name: "Élő műveletek" })).toBeInTheDocument();
     expect(within(dialog).getByRole("option", { name: "Események és naplók" })).toBeInTheDocument();
   });
+
+  it("includes the fleet, perception, and cognitive runtime read-only views in both navigation surfaces", () => {
+    render(<App />);
+
+    expect(screen.getByRole("tab", { name: "Robotok" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Percepció" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Kognitív futtatókörnyezet" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const dialog = screen.getByRole("dialog", { name: "Gyors nézetváltó" });
+    expect(within(dialog).getByRole("option", { name: "Robotok" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("option", { name: "Percepció" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("option", { name: "Kognitív futtatókörnyezet" })).toBeInTheDocument();
+  });
 });
 
 describe("App overview context", () => {
@@ -253,7 +267,7 @@ describe("App overview context", () => {
     expect(context).toHaveTextContent("külön jóváhagyás");
   });
 
-  it("keeps safety, simulation, and latest-sample context together in the upper status strip", async () => {
+  it("keeps platform, safety, connected-body, mission, alert, and latest-sample context together in the upper status strip", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("offline"))));
 
     render(<App />);
@@ -262,6 +276,9 @@ describe("App overview context", () => {
     expect(strip).toHaveTextContent("Jóváhagyás-köteles");
     expect(strip).toHaveTextContent("Szimuláció");
     expect(strip).toHaveTextContent("NEM ELLENŐRIZHETŐ");
+    expect(strip).toHaveTextContent("1 SZIMULÁLT TEST");
+    expect(strip).toHaveTextContent("Nincs ellenőrzött aktív küldetésadat");
+    expect(strip).toHaveTextContent("Nincs ellenőrzött riasztási feed");
     expect(strip).toHaveTextContent("Nincs közvetlen vezérlés");
   });
 });
