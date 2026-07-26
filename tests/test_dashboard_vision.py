@@ -100,6 +100,57 @@ class VisionEndpointTests(unittest.TestCase):
             self.assertEqual(client.get("/api/v1/vision").status_code, 400)
 
 
+class DetectionContractTests(unittest.TestCase):
+    """Every detection in the view is checked, not just the document around it.
+
+    The allowlist above governs which top-level fields may be relayed; this
+    governs what may sit inside `detections`. A confidence the producer could
+    not compute, or a box that is not a box, must not reach an overlay that
+    draws it on a camera frame as though it were a measurement.
+    """
+
+    def _model(self, detection: object):
+        return _vision_read_model(_status_document() | {"detections": [detection]})
+
+    @staticmethod
+    def _detection(**overrides) -> dict:
+        detection = {
+            "label": "person",
+            "confidence": 0.9,
+            "tracker_id": "local-000001",
+            "bounding_box": {"x_px": 0, "y_px": 0, "width_px": 1, "height_px": 1},
+        }
+        return detection | overrides
+
+    def test_a_well_formed_detection_is_relayed(self) -> None:
+        self.assertEqual(len(self._model(self._detection())["detections"]), 1)
+
+    def test_a_confidence_that_is_not_a_probability_is_refused(self) -> None:
+        for confidence in (float("nan"), float("inf"), -0.1, 1.1, "0.9", None):
+            with self.subTest(confidence=confidence), self.assertRaises(ValueError):
+                self._model(self._detection(confidence=confidence))
+
+    def test_a_box_that_is_not_a_box_is_refused(self) -> None:
+        for box in (
+            {"x_px": -1, "y_px": 0, "width_px": 1, "height_px": 1},   # off-frame origin
+            {"x_px": 0, "y_px": 0, "width_px": 0, "height_px": 1},    # zero width
+            {"x_px": 0, "y_px": 0, "width_px": 1.5, "height_px": 1},  # not pixels
+            {"x_px": 0, "y_px": 0, "width_px": 1},                    # missing a side
+            "0,0,1,1",
+        ):
+            with self.subTest(box=box), self.assertRaises(ValueError):
+                self._model(self._detection(bounding_box=box))
+
+    def test_a_detection_carrying_more_than_the_contract_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            self._model(self._detection(embedding=[0.1, 0.2]))
+
+    def test_a_tracker_id_may_be_absent_but_not_a_number(self) -> None:
+        self.assertEqual(len(self._model(self._detection(tracker_id=None))["detections"]), 1)
+        with self.assertRaises(ValueError):
+            self._model(self._detection(tracker_id=7))
+
+
 class VisionFreshnessTests(unittest.TestCase):
     """A stalled producer leaves a valid file behind; it must not read as live."""
 
