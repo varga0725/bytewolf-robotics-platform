@@ -145,8 +145,8 @@ describe("MissionPage", () => {
     const cell = await screen.findByLabelText("Mért akadálybizonyíték: É 10 m, K 0 m");
     expect(Number(cell.getAttribute("y"))).toBeLessThan(160);
 
-    fireEvent.click(screen.getByLabelText("2 km"));
-    expect((screen.getByLabelText("2 km") as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByLabelText("500 m"));
+    expect((screen.getByLabelText("500 m") as HTMLInputElement).checked).toBe(true);
   });
 
 });

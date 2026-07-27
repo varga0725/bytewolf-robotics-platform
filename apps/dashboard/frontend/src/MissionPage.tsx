@@ -30,6 +30,11 @@ function isOccupancyCell(value: unknown): value is OccupancyCell {
     && (cell.disputed === undefined || typeof cell.disputed === "boolean");
 }
 
+//: The view distances offered, in metres of radius. 500 m shows the whole
+//: Baylands world (about 924 m across) rather than the 2 km safety radius,
+//: which is an envelope limit and not a place the simulated world extends to.
+const MAP_RANGES_M = [50, 200, 500] as const;
+
 export function MissionPage() {
   const [envelope, setEnvelope] = useState<Envelope | null>(null);
   const [north, setNorth] = useState("5");
@@ -52,7 +57,7 @@ export function MissionPage() {
   // pixel became ten metres, the aerial basemap shrank to 18 px, and a 2 m
   // obstacle cell to a fifth of a pixel. The radius is still drawn -- it is
   // just no longer what decides how much ground fits on screen.
-  const [mapRange, setMapRange] = useState(50);
+  const [mapRange, setMapRange] = useState(MAP_RANGES_M[0]);
   const mapScale = (mapSize / 2) / mapRange;
   const envelopeRadius = envelope?.max_radius_m ?? null;
   const proposalState = plan ? "ellenőrizve" : busy ? "ellenőrzés alatt" : "előkészítés alatt";
@@ -204,7 +209,7 @@ export function MissionPage() {
           <div className="mission-map-head">
             <p className="eyebrow">{envelope ? "KATTINTS A CÉLPONTRA" : "TÉRKÉPI SKÁLA BETÖLTÉSE"}</p>
             <fieldset className="map-range"><legend className="sr-only">Térképi látótávolság</legend>
-              {[50, 200, 2000].map((range) => <label key={range}>
+              {MAP_RANGES_M.map((range) => <label key={range}>
                 <input type="radio" name="map-range" value={range} checked={mapRange === range} onChange={() => setMapRange(range)} />
                 <span>{range >= 1000 ? `${range / 1000} km` : `${range} m`}</span>
               </label>)}
