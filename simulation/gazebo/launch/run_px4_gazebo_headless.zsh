@@ -81,10 +81,17 @@ elif [[ "$PROFILE" == "hawkeye-front" ]]; then
 fi
 
 # The Baylands mesh is offset inside its world and offers no safe collision
-# surface at the origin. The interactive launcher spawns above the park; the
-# daemon launcher did not, so it dropped the vehicle wherever the origin was.
+# surface at the origin, so the vehicle spawns over the park.
+#
+# The height matters more than it looks. At z=2 the vehicle fell 1.7 m onto
+# sloping ground and came to rest pitched 60 degrees nose-down -- which PX4
+# reports as "Preflight Fail: Attitude failure (pitch)" and refuses to arm,
+# with nothing in the message to suggest the vehicle is simply lying on its
+# face. Hours were spent reading that as thermal throttling. Spawning just
+# above the surface leaves it at 6 degrees, which is the slope itself, and it
+# arms.
 if [[ "$WORLD" == "baylands" ]]; then
-  export PX4_GZ_MODEL_POSE=${PX4_GZ_MODEL_POSE:-205,155,2,0,0,0}
+  export PX4_GZ_MODEL_POSE=${PX4_GZ_MODEL_POSE:-205,155,0.4,0,0,0}
 fi
 
 # A fixture may override the spawned model set (PX4_GZ_MODELS) and the loaded

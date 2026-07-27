@@ -46,10 +46,14 @@ fi
 
 export PX4_GZ_WORLD="$WORLD"
 # The Baylands mesh is offset inside the world and does not provide a safe
-# collision surface at world origin.  Spawn above the park, unless an operator
-# explicitly supplied a scenario-specific pose.
+# collision surface at world origin.  Spawn just above the park, unless an
+# operator explicitly supplied a scenario-specific pose.
+#
+# Just above, not two metres above: from z=2 the vehicle fell onto sloping
+# ground and settled 60 degrees nose-down, which PX4 refuses to arm from and
+# reports only as an attitude preflight failure.
 if [[ "$WORLD" == "baylands" ]]; then
-  export PX4_GZ_MODEL_POSE=${PX4_GZ_MODEL_POSE:-205,155,2,0,0,0}
+  export PX4_GZ_MODEL_POSE=${PX4_GZ_MODEL_POSE:-205,155,0.4,0,0,0}
 fi
 export CMAKE_PREFIX_PATH="$(brew --prefix qt@5):${CMAKE_PREFIX_PATH:-}"
 export PX4_GZ_MODELS="${PX4_GZ_MODELS:-$PX4_STOCK_MODELS}"

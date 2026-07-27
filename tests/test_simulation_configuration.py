@@ -36,11 +36,26 @@ class SimulationConfigurationTests(unittest.TestCase):
             self.assertIn(target, launcher)
         self.assertIn("WORLD=${PX4_GZ_WORLD:-baylands}", launcher)
 
-    def test_visual_baylands_launch_sets_a_safe_spawn_pose_and_isolates_px4_state(self) -> None:
-        """Baylands has no flat collision surface at the world origin."""
+    def test_both_launchers_spawn_the_vehicle_onto_its_feet(self) -> None:
+        """Baylands has no flat collision surface at the world origin.
+
+        The height is as load-bearing as the position. Spawned at z=2 the
+        vehicle fell onto sloping ground and settled sixty degrees nose-down;
+        PX4 then refuses to arm and says only "Preflight Fail: Attitude failure
+        (pitch)", which reads like an estimator problem rather than a vehicle
+        lying on its face. Both launchers must agree, because the two were
+        diverging silently and only one of them was ever run by hand.
+        """
+        for name in ("run_px4_gazebo.zsh", "run_px4_gazebo_headless.zsh"):
+            launcher = (ROOT / "simulation/gazebo/launch" / name).read_text()
+            with self.subTest(launcher=name):
+                self.assertIn(
+                    'PX4_GZ_MODEL_POSE=${PX4_GZ_MODEL_POSE:-205,155,0.4,0,0,0}', launcher
+                )
+
+    def test_the_visual_launcher_isolates_px4_state(self) -> None:
         launcher = (ROOT / "simulation/gazebo/launch/run_px4_gazebo.zsh").read_text()
 
-        self.assertIn('PX4_GZ_MODEL_POSE=${PX4_GZ_MODEL_POSE:-205,155,2,0,0,0}', launcher)
         self.assertIn('PX4_RUN_DIR=${PX4_RUN_DIR:-$(mktemp -d', launcher)
         self.assertIn('"$PX4_BINARY" -d -w "$PX4_RUN_DIR"', launcher)
 
