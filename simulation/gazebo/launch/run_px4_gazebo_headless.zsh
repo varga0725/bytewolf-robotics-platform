@@ -21,8 +21,12 @@ case "$PROFILE" in
   # The one airframe carrying front camera, down camera and 2D lidar at
   # once. It is an overlay rather than a PX4 model, rendered below.
   full-sensors) TARGET=gz_x500_mono_cam_down ;;
+  # The real payload: the front Hawkeye and nothing else. x500_mono_cam carries
+  # one camera, so the airframe is already right; what the overlay adds is the
+  # twin's declared geometry for it.
+  hawkeye-front) TARGET=gz_x500_mono_cam ;;
   -h|--help)
-    print "Használat: $0 [base|vision|depth|mono-front|mono-down|lidar-down|lidar-front|lidar-2d|full-sensors]"
+    print "Használat: $0 [base|vision|depth|mono-front|mono-down|lidar-down|lidar-front|lidar-2d|full-sensors|hawkeye-front]"
     print "Választható környezet: PX4_ROOT, PX4_GZ_WORLD, PX4_GZ_WORLD_FILE,"
     print "                      PX4_GZ_MODELS, PX4_GZ_SERVER_CONFIG"
     exit 0
@@ -60,6 +64,19 @@ if [[ "$PROFILE" == "full-sensors" ]]; then
   OVERLAY_ROOT="$PROJECT_ROOT/simulation/artifacts/full-sensors-overlay"
   "$PROJECT_ROOT/.venv/bin/python" -m simulation.gazebo.camera_profiles \
     --source-models "$PX4_STOCK_MODELS" --models-root "$OVERLAY_ROOT" --include-lidar-2d
+  export PX4_GZ_MODELS="$OVERLAY_ROOT"
+elif [[ "$PROFILE" == "hawkeye-front" ]]; then
+  # BYTEWOLF_CAMERA_PIXELS trades rendered resolution for simulation rate. The
+  # twin declares 4K because the Hawkeye is a 4K camera, and rendering it is
+  # four times the pixels of 1080p on a machine that has already starved PX4's
+  # accelerometer once. The FOV -- the part that decides what the camera can
+  # see -- is unaffected by this.
+  OVERLAY_ROOT="$PROJECT_ROOT/simulation/artifacts/hawkeye-front-overlay"
+  HAWKEYE_ARGS=(--source-models "$PX4_STOCK_MODELS" --models-root "$OVERLAY_ROOT" --front-only)
+  if [[ -n "${BYTEWOLF_CAMERA_PIXELS:-}" ]]; then
+    HAWKEYE_ARGS+=(--width "${BYTEWOLF_CAMERA_PIXELS%%x*}" --height "${BYTEWOLF_CAMERA_PIXELS##*x}")
+  fi
+  "$PROJECT_ROOT/.venv/bin/python" -m simulation.gazebo.camera_profiles "${HAWKEYE_ARGS[@]}"
   export PX4_GZ_MODELS="$OVERLAY_ROOT"
 fi
 

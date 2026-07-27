@@ -183,10 +183,23 @@ def create_camera_overlay(
     width: int | None = None,
     height: int | None = None,
     include_lidar_2d: bool = False,
+    front_only: bool = False,
 ) -> CameraOverlay:
-    """Write a mono_cam overlay at the twin's resolution, from PX4's model."""
+    """Write a mono_cam overlay at the twin's resolution, from PX4's model.
+
+    ``front_only`` renders the front camera as the twin declares the real
+    Hawkeye 4K Split V5: its resolution *and* its 160-degree field of view. The
+    FOV is the part that changes what the camera sees, and until now nothing
+    applied it -- the overlay carried PX4's stock 1.74 rad however the twin was
+    written, so `front_rgb` described a lens the simulation never rendered.
+
+    Gazebo's <camera> is a pinhole model, so 2.793 rad is a wide-pinhole
+    approximation of a fisheye rather than the lens itself. twin.yaml records
+    that caveat; this does not silently pretend otherwise.
+    """
+    camera = "front_rgb" if front_only else "down_rgb"
     if width is None or height is None:
-        declared_width, declared_height = declared_camera_resolution()
+        declared_width, declared_height = declared_camera_resolution(camera=camera)
         width = width if width is not None else declared_width
         height = height if height is not None else declared_height
     source_path = source_models / MONO_CAM_MODEL_NAME / "model.sdf"
@@ -196,6 +209,8 @@ def create_camera_overlay(
         raise CameraProfileError(f"Cannot read source mono_cam '{source_path}': {error.strerror}.") from error
 
     model = render_high_res_mono_cam(source, width, height)
+    if front_only:
+        model = render_camera_horizontal_fov(model, declared_camera_fov(camera=camera))
     model_dir = models_root / MONO_CAM_MODEL_NAME
     model_dir.mkdir(parents=True, exist_ok=True)
     (model_dir / "model.sdf").write_text(model, encoding="utf-8")
@@ -250,9 +265,14 @@ def main(arguments: tuple[str, ...] | None = None) -> None:
     parser.add_argument("--width", type=int, default=None, help="Overrides the twin's declared width.")
     parser.add_argument("--height", type=int, default=None, help="Overrides the twin's declared height.")
     parser.add_argument("--include-lidar-2d", action="store_true", help="Replace the down-camera airframe overlay with a camera + 2D lidar model.")
+    parser.add_argument(
+        "--front-only", action="store_true",
+        help="Render the front camera as the twin declares the Hawkeye: its resolution and its FOV.",
+    )
     parsed = parser.parse_args(arguments)
     overlay = create_camera_overlay(
         parsed.source_models, parsed.models_root, width=parsed.width, height=parsed.height,
+        front_only=parsed.front_only,
         include_lidar_2d=parsed.include_lidar_2d,
     )
     print(f"Camera overlay: {overlay.models_root}/{MONO_CAM_MODEL_NAME} at {overlay.width}x{overlay.height}")
