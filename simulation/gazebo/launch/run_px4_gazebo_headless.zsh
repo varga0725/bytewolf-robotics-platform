@@ -117,6 +117,7 @@ stop_child() {
 cleanup() {
   trap - EXIT INT TERM
   stop_child "$PX4_PID"
+  [[ -n "$GZ_GUI_PID" ]] && stop_child "$GZ_GUI_PID"
   stop_child "$GZ_SERVER_PID"
   wait "$PX4_PID" 2>/dev/null || true
   wait "$GZ_SERVER_PID" 2>/dev/null || true
@@ -129,8 +130,27 @@ print "Headless Gazebo szerver indítása: $WORLD"
 # ``-s`` alone starts a server without a rendering context, so camera sensors
 # never publish image evidence.  The Vision profile needs the renderer without
 # opening a GUI; Gazebo's explicit headless-rendering mode provides that.
+# BYTEWOLF_GZ_GUI=1 keeps Gazebo's window open while PX4 still runs in daemon
+# mode. That combination is what a human watching a flight needs, and it is not
+# reachable through the interactive launcher: without a real terminal PX4's pxh
+# prompt writes into an unread pipe and blocks before MAVLink comes up -- a
+# 144 MB log in two minutes and no flight. Opt-in, so the regression runner's
+# default path is untouched.
 gz sim -r -s --headless-rendering "$WORLD_FILE" &
 GZ_SERVER_PID=$!
+
+# On macOS `gz sim` refuses to be both server and GUI in one process
+# (gazebosim/gz-sim#44), so the window is a second process attaching to the
+# server above. The server keeps --headless-rendering either way: that is what
+# makes camera sensors publish, and it is orthogonal to whether a human is
+# watching.
+GZ_GUI_PID=""
+if [[ -n "${BYTEWOLF_GZ_GUI:-}" ]]; then
+  print "Gazebo GUI ablak indítása (BYTEWOLF_GZ_GUI); PX4 marad daemon módban."
+  sleep 3
+  gz sim -g &
+  GZ_GUI_PID=$!
+fi
 trap cleanup EXIT INT TERM
 
 sleep 2
