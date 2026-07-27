@@ -18,8 +18,11 @@ case "$PROFILE" in
   lidar-down) TARGET=gz_x500_lidar_down ;;
   lidar-front) TARGET=gz_x500_lidar_front ;;
   lidar-2d) TARGET=gz_x500_lidar_2d ;;
+  # The one airframe carrying front camera, down camera and 2D lidar at
+  # once. It is an overlay rather than a PX4 model, rendered below.
+  full-sensors) TARGET=gz_x500_mono_cam_down ;;
   -h|--help)
-    print "Használat: $0 [base|vision|depth|mono-front|mono-down|lidar-down|lidar-front|lidar-2d]"
+    print "Használat: $0 [base|vision|depth|mono-front|mono-down|lidar-down|lidar-front|lidar-2d|full-sensors]"
     print "Választható környezet: PX4_ROOT, PX4_GZ_WORLD, PX4_GZ_WORLD_FILE,"
     print "                      PX4_GZ_MODELS, PX4_GZ_SERVER_CONFIG"
     exit 0
@@ -45,6 +48,26 @@ WORLD_FILE=${WORLD_FILE:A}
 if [[ ! -f "$WORLD_FILE" ]]; then
   print -u2 "Nem található a Gazebo world: $WORLD_FILE"
   exit 2
+fi
+
+# full-sensors is not a PX4 model: it is an overlay this project renders, which
+# merges the front camera, the down camera and the 2D lidar onto one airframe.
+# The interactive launcher already built it; the daemon launcher did not, so the
+# only way to get all three sensors was through the launcher that stalls without
+# a terminal.
+PX4_STOCK_MODELS="$PX4_ROOT/Tools/simulation/gz/models"
+if [[ "$PROFILE" == "full-sensors" ]]; then
+  OVERLAY_ROOT="$PROJECT_ROOT/simulation/artifacts/full-sensors-overlay"
+  "$PROJECT_ROOT/.venv/bin/python" -m simulation.gazebo.camera_profiles \
+    --source-models "$PX4_STOCK_MODELS" --models-root "$OVERLAY_ROOT" --include-lidar-2d
+  export PX4_GZ_MODELS="$OVERLAY_ROOT"
+fi
+
+# The Baylands mesh is offset inside its world and offers no safe collision
+# surface at the origin. The interactive launcher spawns above the park; the
+# daemon launcher did not, so it dropped the vehicle wherever the origin was.
+if [[ "$WORLD" == "baylands" ]]; then
+  export PX4_GZ_MODEL_POSE=${PX4_GZ_MODEL_POSE:-205,155,2,0,0,0}
 fi
 
 # A fixture may override the spawned model set (PX4_GZ_MODELS) and the loaded

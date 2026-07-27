@@ -328,7 +328,7 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
     parser.add_argument("--format", choices=tuple(FRAME_ENCODERS), default="jpeg")
     parser.add_argument("--camera-file", type=Path, default=None)
     parser.add_argument(
-        "--detections-file", type=Path, default=Path("simulation/artifacts/dashboard/detections.json")
+        "--detections-file", type=Path, default=None
     )
     parser.add_argument(
         "--period-s", type=float, default=1 / 30,
@@ -343,12 +343,25 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
     topic = camera_topic(parsed.sensor, full_sensors=parsed.full_sensors)
     sensor_id = "down_rgb" if parsed.sensor == "down" else "front_rgb"
     suffix = "jpg" if parsed.format == "jpeg" else "png"
-    camera_path = parsed.camera_file or Path(f"simulation/artifacts/dashboard/camera.{suffix}")
+    # The destination follows the sensor. It did not, and both sensors defaulted
+    # to the front camera's files -- so running the two streams together had
+    # them overwrite each other several times a second. On the dashboard that
+    # looked like a flickering image that alternated between the two views, and
+    # the front camera panel showed down-camera frames. The API reads
+    # camera-down.jpg / detections-down.json for the down sensor; a tool given
+    # `--sensor down` should write there without being told twice.
+    suffixed = "-down" if parsed.sensor == "down" else ""
+    camera_path = parsed.camera_file or Path(
+        f"simulation/artifacts/dashboard/camera{suffixed}.{suffix}"
+    )
+    detections_path = parsed.detections_file or Path(
+        f"simulation/artifacts/dashboard/detections{suffixed}.json"
+    )
     detector = DetectorAdapter(ColourMarkerBackend(DEFAULT_MARKER, label="marker"), source=f"gz {sensor_id}")
-    print(f"Streaming {parsed.sensor} camera ({parsed.format}) to {camera_path} (Ctrl-C to stop)")
+    print(f"Streaming {parsed.sensor} camera ({parsed.format}) to {camera_path} + {detections_path} (Ctrl-C to stop)")
     try:
         run_camera_stream(
-            camera_topic=topic, camera_path=camera_path, detections_path=parsed.detections_file,
+            camera_topic=topic, camera_path=camera_path, detections_path=detections_path,
             sensor_id=sensor_id, detector=detector, period_s=parsed.period_s,
         detect_period_s=parsed.detect_period_s,
             encode=FRAME_ENCODERS[parsed.format],

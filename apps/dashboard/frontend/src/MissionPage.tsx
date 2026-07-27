@@ -47,8 +47,14 @@ export function MissionPage() {
   const [events, setEvents] = useState<string[]>([]);
   const statusTimer = useRef<number | null>(null);
   const mapSize = 400;
-  const mapRadius = envelope?.max_radius_m ?? 50;
-  const mapScale = (mapSize / 2) / mapRadius;
+  // The view is chosen, not derived from the safety radius. Deriving it meant
+  // the envelope's widening to 2 km silently made this map useless: one screen
+  // pixel became ten metres, the aerial basemap shrank to 18 px, and a 2 m
+  // obstacle cell to a fifth of a pixel. The radius is still drawn -- it is
+  // just no longer what decides how much ground fits on screen.
+  const [mapRange, setMapRange] = useState(50);
+  const mapScale = (mapSize / 2) / mapRange;
+  const envelopeRadius = envelope?.max_radius_m ?? null;
   const proposalState = plan ? "ellenőrizve" : busy ? "ellenőrzés alatt" : "előkészítés alatt";
 
   function logEvent(text: string) {
@@ -194,10 +200,19 @@ export function MissionPage() {
       {envelope && <p className="envelope">Aktív korlát: max. {envelope.max_altitude_m} m magasság · {envelope.max_radius_m} m sugár · indításhoz min. {envelope.minimum_battery_percent_to_start}% akkumulátor.</p>}
       <form className="mission-form" onSubmit={review}>
         <fieldset className="mission-kind"><legend>Küldetéstípus</legend><label><input type="radio" name="mission-kind" checked={kind === "point"} onChange={() => setKind("point")} /> Pontküldetés</label><label><input type="radio" name="mission-kind" checked={kind === "survey"} onChange={() => setKind("survey")} /> Terület felderítése</label></fieldset>
-        <div className="mission-map-panel"><p className="eyebrow">{envelope ? "KATTINTS A CÉLPONTRA" : "TÉRKÉPI SKÁLA BETÖLTÉSE"}</p><svg className="mission-map" viewBox={`0 0 ${mapSize} ${mapSize}`} role="img" aria-label="Küldetési térkép" aria-disabled={!envelope} onClick={pickOnMap}>
+        <div className="mission-map-panel">
+          <div className="mission-map-head">
+            <p className="eyebrow">{envelope ? "KATTINTS A CÉLPONTRA" : "TÉRKÉPI SKÁLA BETÖLTÉSE"}</p>
+            <fieldset className="map-range"><legend className="sr-only">Térképi látótávolság</legend>
+              {[50, 200, 2000].map((range) => <label key={range}>
+                <input type="radio" name="map-range" value={range} checked={mapRange === range} onChange={() => setMapRange(range)} />
+                <span>{range >= 1000 ? `${range / 1000} km` : `${range} m`}</span>
+              </label>)}
+            </fieldset>
+          </div><svg className="mission-map" viewBox={`0 0 ${mapSize} ${mapSize}`} role="img" aria-label="Küldetési térkép" aria-disabled={!envelope} onClick={pickOnMap}>
           {mapBackground && <image href={`/api/v1/map-view?v=${encodeURIComponent(mapBackground.captured_at ?? "")}`} x={mapSize / 2 + mapBackground.centre_east_m * mapScale - mapBackground.width * mapBackground.metres_per_pixel * mapScale / 2} y={mapSize / 2 - mapBackground.centre_north_m * mapScale - mapBackground.height * mapBackground.metres_per_pixel * mapScale / 2} width={mapBackground.width * mapBackground.metres_per_pixel * mapScale} height={mapBackground.height * mapBackground.metres_per_pixel * mapScale} opacity="0.72" preserveAspectRatio="none" />}
           <line x1={mapSize / 2} y1="0" x2={mapSize / 2} y2={mapSize} className="map-axis" /><line x1="0" y1={mapSize / 2} x2={mapSize} y2={mapSize / 2} className="map-axis" />
-          <circle cx={mapSize / 2} cy={mapSize / 2} r={mapRadius * mapScale} className="map-radius" />
+          {envelopeRadius !== null && envelopeRadius <= mapRange && <circle cx={mapSize / 2} cy={mapSize / 2} r={envelopeRadius * mapScale} className="map-radius" />}
           {envelope && (envelope.geofence_vertices_m ?? []).length > 2 && <polygon className="map-fence" points={(envelope.geofence_vertices_m ?? []).map((vertex) => `${mapSize / 2 + vertex.east_m * mapScale},${mapSize / 2 - vertex.north_m * mapScale}`).join(" ")} />}
           {occupancyCells.map((cell, index) => {
             const side = Math.max(3, cell.cell_size_m * mapScale);
@@ -208,7 +223,12 @@ export function MissionPage() {
           {kind === "survey" && Number(radius) > 0 && Number.isFinite(Number(north)) && Number.isFinite(Number(east)) && <circle className="map-survey-area" cx={mapSize / 2 + Number(east) * mapScale} cy={mapSize / 2 - Number(north) * mapScale} r={Number(radius) * mapScale} />}
           {Number.isFinite(Number(north)) && Number.isFinite(Number(east)) && <circle className="map-target" cx={mapSize / 2 + Number(east) * mapScale} cy={mapSize / 2 - Number(north) * mapScale} r="6" />}
           <text x={mapSize / 2 + 8} y="18" className="map-label">É</text><text x="8" y={mapSize - 10} className="map-label">kiindulópont</text>
-        </svg><p className="muted">A kör a szerver által szolgáltatott sugárkorlát; a sárga szaggatott alakzat a geofence; a rózsaszín cellák mért akadálybizonyítékok. A kattintás csak tervez, nem repül; billentyűzettel az alábbi koordinátamezők használhatók.</p></div>
+        </svg><p className="muted">
+          A látótávolság a fenti kapcsolóval állítható; a nézet {mapRange >= 1000 ? `${mapRange / 1000} km` : `${mapRange} m`} sugarú.
+          {envelopeRadius !== null && envelopeRadius > mapRange && ` A ${envelopeRadius >= 1000 ? `${envelopeRadius / 1000} km` : `${envelopeRadius} m`} sugárkorlát ezen a nézeten kívül esik, de érvényben van: a SafetyGate a terven ellenőrzi, nem a térképen.`}
+          {envelopeRadius !== null && envelopeRadius <= mapRange && " A kör a szerver által szolgáltatott sugárkorlát."}
+          {" A sárga szaggatott alakzat a geofence; a rózsaszín cellák mért akadálybizonyítékok. A kattintás csak tervez, nem repül; billentyűzettel az alábbi koordinátamezők használhatók."}
+        </p></div>
         <label>Észak (m)<input type="number" value={north} onChange={(event) => setNorth(event.target.value)} /></label>
         <label>Kelet (m)<input type="number" value={east} onChange={(event) => setEast(event.target.value)} /></label>
         <label>Magasság (m)<input type="number" min="0" step="0.1" value={altitude} onChange={(event) => setAltitude(event.target.value)} /></label>

@@ -120,4 +120,33 @@ describe("MissionPage", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Mért akadálybizonyíték: É 2 m, K 3 m")).toBeInTheDocument());
   });
+
+  it("scales the map to a chosen range rather than the safety radius", async () => {
+    // The regression this guards: the map used to size itself to max_radius_m,
+    // so the envelope widening to 2 km silently made one screen pixel worth ten
+    // metres. The aerial basemap shrank to 18 px, a 2 m obstacle cell to a fifth
+    // of one, and picking a target became meaningless -- with nothing failing.
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/v1/safety-envelope"
+        ? { max_altitude_m: 20, max_radius_m: 2000, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] }
+        : { occupancy_only: true, cells: [{ north_m: 10, east_m: 0, cell_size_m: 2 }] },
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MissionPage />);
+    await screen.findByText(/Aktív korlát/);
+
+    const near = screen.getByLabelText("50 m") as HTMLInputElement;
+    expect(near.checked).toBe(true);
+
+    // A cell 10 m out sits a quarter of the way to the edge at the near view.
+    // Scaled to the 2 km radius it would have been a fifth of a pixel from the
+    // centre, indistinguishable from home.
+    const cell = await screen.findByLabelText("Mért akadálybizonyíték: É 10 m, K 0 m");
+    expect(Number(cell.getAttribute("y"))).toBeLessThan(160);
+
+    fireEvent.click(screen.getByLabelText("2 km"));
+    expect((screen.getByLabelText("2 km") as HTMLInputElement).checked).toBe(true);
+  });
+
 });

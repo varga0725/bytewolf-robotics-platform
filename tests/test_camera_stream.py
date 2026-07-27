@@ -12,6 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
 import unittest
+from unittest.mock import patch
 
 from brain.perception.colour_marker_backend import ColourMarkerBackend, ColourTarget
 from brain.perception.detector import DetectorAdapter
@@ -23,6 +24,7 @@ from simulation.perception.camera_stream import (
     DetectionWorker,
     _PublishSchedule,
     camera_frame_from_gz_message,
+    main as camera_stream_main,
     run_camera_stream,
     camera_topic,
     camera_frame_from_gz_image,
@@ -117,9 +119,6 @@ class PublishTests(unittest.TestCase):
             self.assertEqual(leftovers, [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class PublishScheduleTests(unittest.TestCase):
     """The cadence decides which frames reach the dashboard, so it has to be right."""
@@ -162,7 +161,14 @@ class PublishScheduleTests(unittest.TestCase):
         self.assertGreaterEqual(detections, 8)
 
 
-class FrameDecodeTests(unittest.TestCase):
+class ProtobufFrameTests(unittest.TestCase):
+    """Renamed from a second FrameDecodeTests, which shadowed the first.
+
+    Two classes shared a name in this module, so Python kept only the later
+    definition and four tests -- topic selection and two dimension checks --
+    stopped running without anything reporting it.
+    """
+
     def test_a_protobuf_image_becomes_an_rgb_frame(self) -> None:
         class Message:
             width, height = 4, 3
@@ -238,3 +244,54 @@ class DetectionWorkerTests(unittest.TestCase):
             worker.stop()
 
         self.assertTrue(errors, "the failure is reported rather than swallowed or fatal")
+
+
+class DestinationTests(unittest.TestCase):
+    """Each sensor writes its own files, without being told twice."""
+
+    def _paths(self, *arguments: str) -> tuple[str, str]:
+        seen: dict[str, object] = {}
+
+        def capture(**kwargs):
+            seen.update(kwargs)
+
+        with patch("simulation.perception.camera_stream.run_camera_stream", capture):
+            camera_stream_main(arguments)
+        return str(seen["camera_path"]), str(seen["detections_path"])
+
+    def test_the_down_sensor_writes_the_down_files(self) -> None:
+        # The defect this pins: both sensors defaulted to the front camera's
+        # files, so running the two streams together had them overwrite each
+        # other several times a second. The dashboard showed a flickering image
+        # alternating between the views, and the front panel showed down-camera
+        # frames -- with nothing failing anywhere to say so.
+        camera, detections = self._paths("--sensor", "down")
+
+        self.assertTrue(camera.endswith("camera-down.jpg"), camera)
+        self.assertTrue(detections.endswith("detections-down.json"), detections)
+
+    def test_the_front_sensor_keeps_the_unsuffixed_files(self) -> None:
+        camera, detections = self._paths("--sensor", "front")
+
+        self.assertTrue(camera.endswith("camera.jpg"), camera)
+        self.assertTrue(detections.endswith("detections.json"), detections)
+
+    def test_the_two_sensors_never_share_a_destination(self) -> None:
+        down = self._paths("--sensor", "down")
+        front = self._paths("--sensor", "front")
+
+        self.assertNotEqual(down[0], front[0])
+        self.assertNotEqual(down[1], front[1])
+
+    def test_an_explicit_destination_still_wins(self) -> None:
+        camera, detections = self._paths(
+            "--sensor", "down", "--camera-file", "/tmp/a.jpg", "--detections-file", "/tmp/b.json"
+        )
+
+        self.assertEqual(camera, "/tmp/a.jpg")
+        self.assertEqual(detections, "/tmp/b.json")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
