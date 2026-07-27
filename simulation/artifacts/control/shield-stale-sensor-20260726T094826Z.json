@@ -1,0 +1,20 @@
+{
+  "scenario": "stale-sensor",
+  "recorded_at": "2026-07-26T09:48:24.797818Z",
+  "mode": "shadow",
+  "samples": 107,
+  "interventions": 52,
+  "intervention_rate": 0.486,
+  "false_stops": 0,
+  "false_stop_rate": 0.0,
+  "minimum_clearance_m": null,
+  "required_clearance_m": 2.0,
+  "clearance_at_first_intervention_m": null,
+  "verdicts": {
+    "clear": 55,
+    "stale_observation": 52
+  },
+  "passed": true,
+  "findings": [],
+  "proof_level": "app+SITL"
+}

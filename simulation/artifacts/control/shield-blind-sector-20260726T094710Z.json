@@ -1,0 +1,19 @@
+{
+  "scenario": "blind-sector",
+  "recorded_at": "2026-07-26T09:47:08.650057Z",
+  "mode": "shadow",
+  "samples": 106,
+  "interventions": 106,
+  "intervention_rate": 1.0,
+  "false_stops": 0,
+  "false_stop_rate": 0.0,
+  "minimum_clearance_m": null,
+  "required_clearance_m": 2.0,
+  "clearance_at_first_intervention_m": null,
+  "verdicts": {
+    "unobserved_sector": 106
+  },
+  "passed": true,
+  "findings": [],
+  "proof_level": "app+SITL"
+}

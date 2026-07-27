@@ -42,6 +42,23 @@ class OffboardLimits:
 
 
 @dataclass(frozen=True)
+class ShieldLimits:
+    """What the runtime shield needs to decide whether a velocity is safe.
+
+    Geometry and timing only. There is deliberately no dynamics model here,
+    because the twin has no measured dynamics to build one from -- the braking
+    figure below is a conservative stand-in, not a capability.
+    """
+
+    enabled: bool
+    minimum_clearance_m: float
+    braking_deceleration_m_s2: float
+    reaction_latency_s: float
+    max_observation_age_s: float
+    unobserved_is_blocked: bool
+
+
+@dataclass(frozen=True)
 class SafetyProfile:
     """The non-overridable safety values of one active vehicle twin."""
 
@@ -54,6 +71,7 @@ class SafetyProfile:
     allow_missing_battery_telemetry: bool = False
     allowed_geofence: LocalPolygonGeofence | None = None
     offboard: OffboardLimits | None = None
+    shield: ShieldLimits | None = None
 
     def flight_limits(self) -> FlightLimits:
         return FlightLimits(
@@ -95,6 +113,30 @@ def load_safety_profile(path: Path | str = DEFAULT_SAFETY_PROFILE_PATH) -> Safet
         ),
         allowed_geofence=_optional_geofence(safety),
         offboard=_optional_offboard(safety),
+        shield=_optional_shield(safety),
+    )
+
+
+def _optional_shield(source: Mapping[str, Any]) -> ShieldLimits | None:
+    """Read the shield limits, or none at all if the twin declares no shield.
+
+    Every field is required for the same reason the offboard block's are: a
+    missing clearance or braking figure would have to fall back to a default
+    invented in code, and a safety margin nobody wrote down is not one anybody
+    can review.
+    """
+    value = source.get("shield")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise SafetyProfileError("Safety profile field 'shield' must be a mapping.")
+    return ShieldLimits(
+        enabled=_optional_boolean(value, "enabled", default=False),
+        minimum_clearance_m=_required_positive_number(value, "minimum_clearance_m"),
+        braking_deceleration_m_s2=_required_positive_number(value, "braking_deceleration_m_s2"),
+        reaction_latency_s=_required_positive_number(value, "reaction_latency_s"),
+        max_observation_age_s=_required_positive_number(value, "max_observation_age_s"),
+        unobserved_is_blocked=_optional_boolean(value, "unobserved_is_blocked", default=True),
     )
 
 
