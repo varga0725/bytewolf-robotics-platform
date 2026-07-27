@@ -75,7 +75,7 @@ class _RecordingAdapter:
         self.sent: list[tuple[Velocity, str]] = []
         self._fail_with = fail_with
 
-    def send_velocity(self, velocity: Velocity, frame: str) -> None:
+    async def send_velocity_async(self, velocity: Velocity, frame: str) -> None:
         if self._fail_with is not None:
             raise OffboardAdapterError(self._fail_with)
         self.sent.append((velocity, frame))
@@ -124,11 +124,15 @@ class ActivationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             OffboardSession(_profile(), None, shadow=False)
 
-    def test_an_active_session_delivers_an_approved_setpoint(self) -> None:
+
+class ActiveDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    """Delivery is separate from the decision, and only active sessions do it."""
+
+    async def test_an_active_session_delivers_an_approved_setpoint(self) -> None:
         adapter = _RecordingAdapter()
         session = OffboardSession(_profile(), adapter, shadow=False)
 
-        outcome = session.offer(_setpoint(), NOW)
+        outcome = await session.deliver(session.offer(_setpoint(), NOW), NOW)
 
         self.assertTrue(outcome.delivered)
         self.assertEqual(len(adapter.sent), 1)
@@ -136,11 +140,32 @@ class ActivationTests(unittest.TestCase):
         self.assertEqual(velocity.x_m_s, 1.0)
         self.assertEqual(frame, "local_ned")
 
-    def test_a_rejected_setpoint_never_reaches_the_adapter(self) -> None:
+    async def test_offer_alone_never_delivers(self) -> None:
+        # The decision is pure: nothing leaves the process until deliver runs.
         adapter = _RecordingAdapter()
         session = OffboardSession(_profile(), adapter, shadow=False)
 
-        session.offer(_setpoint(frame="body_frd"), NOW)
+        outcome = session.offer(_setpoint(), NOW)
+
+        self.assertTrue(outcome.approved)
+        self.assertFalse(outcome.delivered)
+        self.assertEqual(adapter.sent, [])
+
+    async def test_a_shadow_session_delivers_nothing_even_when_asked(self) -> None:
+        adapter = _RecordingAdapter()
+        session = OffboardSession(_profile(), adapter)
+
+        outcome = await session.deliver(session.offer(_setpoint(), NOW), NOW)
+
+        self.assertFalse(outcome.delivered)
+        self.assertEqual(adapter.sent, [])
+
+    async def test_a_rejected_setpoint_never_reaches_the_adapter(self) -> None:
+        adapter = _RecordingAdapter()
+        session = OffboardSession(_profile(), adapter, shadow=False)
+
+        rejected = session.offer(_setpoint(frame="body_frd"), NOW)
+        await session.deliver(rejected, NOW)
 
         self.assertEqual(adapter.sent, [])
 
@@ -229,15 +254,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(session.record.fallbacks, ["zero_velocity"])
 
-    def test_an_adapter_failure_becomes_a_fallback_not_an_exception(self) -> None:
-        session = OffboardSession(_profile(), _RecordingAdapter(fail_with="link closed"), shadow=False)
 
-        outcome = session.offer(_setpoint(), NOW)
-
-        self.assertTrue(outcome.approved, "the boundary approved it before the adapter broke")
-        self.assertFalse(outcome.delivered)
-        self.assertIs(outcome.watchdog.state, StreamState.STOPPED)
-        self.assertEqual(session.record.fallbacks, ["zero_velocity"])
 
     def test_a_fallback_resets_the_stream_so_a_restart_proves_itself(self) -> None:
         session = OffboardSession(_profile())
@@ -252,10 +269,20 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertTrue(outcome.approved, "a new stream may start after the old one died")
 
 
-class AdapterRecoveryTests(unittest.TestCase):
+class AdapterRecoveryTests(unittest.IsolatedAsyncioTestCase):
     """An adapter failure latches until the fallback clears it, and no further."""
 
-    def test_a_recovered_adapter_never_reports_delivery_beside_a_stopped_stream(self) -> None:
+    async def test_an_adapter_failure_becomes_a_fallback_not_an_exception(self) -> None:
+        session = OffboardSession(_profile(), _RecordingAdapter(fail_with="link closed"), shadow=False)
+
+        outcome = await session.deliver(session.offer(_setpoint(), NOW), NOW)
+
+        self.assertTrue(outcome.approved, "the boundary approved it before the adapter broke")
+        self.assertFalse(outcome.delivered)
+        self.assertIs(outcome.watchdog.state, StreamState.STOPPED)
+        self.assertEqual(session.record.fallbacks, ["zero_velocity"])
+
+    async def test_a_recovered_adapter_never_reports_delivery_beside_a_stopped_stream(self) -> None:
         # The failure latches in the watchdog, so if the fallback cleared only
         # the boundary the next success would report delivered=True while the
         # watchdog still demanded a fallback -- a caller deciding whether to
@@ -265,25 +292,112 @@ class AdapterRecoveryTests(unittest.TestCase):
                 self.fail = True
                 self.sent = 0
 
-            def send_velocity(self, velocity: Velocity, frame: str) -> None:
+            async def send_velocity_async(self, velocity: Velocity, frame: str) -> None:
                 if self.fail:
                     raise OffboardAdapterError("link closed")
                 self.sent += 1
 
         adapter = _Flaky()
         session = OffboardSession(_profile(), adapter, shadow=False)
-        first = session.offer(_setpoint(sequence=1), NOW)
+        first = await session.deliver(session.offer(_setpoint(sequence=1), NOW), NOW)
         self.assertFalse(first.delivered)
         self.assertIs(first.watchdog.state, StreamState.STOPPED)
 
         adapter.fail = False
         resumed_at = NOW + timedelta(seconds=0.1)
-        second = session.offer(_setpoint(stream_id="stream-b", sequence=1, at=resumed_at), resumed_at)
+        second = await session.deliver(
+            session.offer(_setpoint(stream_id="stream-b", sequence=1, at=resumed_at), resumed_at),
+            resumed_at,
+        )
 
         self.assertTrue(second.delivered)
         self.assertFalse(
             second.watchdog.requires_fallback,
             "a delivered setpoint must not sit beside a stream still demanding a fallback",
+        )
+
+
+class StaleApprovalTests(unittest.IsolatedAsyncioTestCase):
+    """Approval is a judgement about an instant; delivery happens at a later one."""
+
+    async def test_an_outcome_held_past_its_ttl_is_not_delivered(self) -> None:
+        # An approved outcome can sit in a queue, behind an await, or behind a
+        # slow adapter. The frozen `approved` flag would still say yes long
+        # after the setpoint it describes stopped being obeyable.
+        adapter = _RecordingAdapter()
+        session = OffboardSession(_profile(), adapter, shadow=False)
+        outcome = session.offer(_setpoint(), NOW)
+
+        delivered = await session.deliver(outcome, NOW + timedelta(seconds=0.5))
+
+        self.assertFalse(delivered.delivered)
+        self.assertIs(delivered.decision.reason, RejectionReason.EXPIRED)
+        self.assertEqual(adapter.sent, [], "an expired approval must not reach the vehicle")
+
+    async def test_an_outcome_from_a_stream_that_since_died_is_not_delivered(self) -> None:
+        adapter = _RecordingAdapter()
+        session = OffboardSession(_profile(), adapter, shadow=False)
+        outcome = session.offer(_setpoint(), NOW)
+        session.poll(NOW + timedelta(seconds=2))  # the stream is declared dead
+
+        delivered = await session.deliver(outcome, NOW + timedelta(seconds=2))
+
+        self.assertFalse(delivered.delivered)
+        self.assertEqual(adapter.sent, [])
+
+    async def test_a_fresh_outcome_still_goes_through(self) -> None:
+        adapter = _RecordingAdapter()
+        session = OffboardSession(_profile(), adapter, shadow=False)
+
+        delivered = await session.deliver(session.offer(_setpoint(), NOW), NOW)
+
+        self.assertTrue(delivered.delivered)
+        self.assertEqual(len(adapter.sent), 1)
+
+
+class ExpiredSetpointTests(unittest.TestCase):
+    """An expired setpoint must stop being applied, not merely stop being fresh."""
+
+    def test_expiry_asks_the_caller_to_stop_applying_the_last_command(self) -> None:
+        # MAVSDK re-sends the last body setpoint at its own rate, so the
+        # producer going quiet does not make the link go quiet. Between the ttl
+        # and the longer watchdog timeout nothing used to replace the expired
+        # velocity, and the vehicle flew a command already declared void.
+        session = OffboardSession(_profile())
+        session.offer(_setpoint(), NOW)
+
+        decision = session.poll(NOW + timedelta(seconds=0.35))
+
+        self.assertIs(decision.state, StreamState.EXPIRED)
+        self.assertEqual(decision.fallback, ("zero_velocity",))
+
+    def test_the_stop_is_asked_for_once_not_on_every_poll(self) -> None:
+        session = OffboardSession(_profile())
+        session.offer(_setpoint(), NOW)
+        session.poll(NOW + timedelta(seconds=0.35))
+
+        self.assertEqual(session.poll(NOW + timedelta(seconds=0.4)).fallback, ())
+
+    def test_a_new_setpoint_re_arms_the_notice(self) -> None:
+        session = OffboardSession(_profile())
+        session.offer(_setpoint(sequence=1), NOW)
+        session.poll(NOW + timedelta(seconds=0.35))
+
+        resumed = NOW + timedelta(seconds=0.4)
+        session.offer(_setpoint(sequence=2, at=resumed), resumed)
+
+        self.assertEqual(
+            session.poll(resumed + timedelta(seconds=0.35)).fallback, ("zero_velocity",)
+        )
+
+    def test_the_full_fallback_still_follows_the_watchdog_timeout(self) -> None:
+        session = OffboardSession(_profile())
+        session.offer(_setpoint(), NOW)
+        session.poll(NOW + timedelta(seconds=0.35))
+
+        self.assertEqual(
+            session.poll(NOW + timedelta(seconds=2)).fallback,
+            ("zero_velocity", "hold", "land"),
         )
 
 

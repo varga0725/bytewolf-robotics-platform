@@ -28,6 +28,12 @@ from brain.control.contract import (
     Velocity,
     load_setpoint,
 )
+from brain.control.shield import (
+    RuntimeSafetyShield,
+    ShieldDecision,
+    ShieldMode,
+    ShieldVerdict,
+)
 from brain.control.session import (
     OffboardAdapterError,
     OffboardSession,
@@ -52,9 +58,13 @@ __all__ = [
     "OffboardSetpoint",
     "OffboardWatchdog",
     "RejectionReason",
+    "RuntimeSafetyShield",
     "SessionOutcome",
     "SessionRecord",
     "SetpointFrame",
+    "ShieldDecision",
+    "ShieldMode",
+    "ShieldVerdict",
     "SetpointState",
     "StreamState",
     "VelocityAdapter",

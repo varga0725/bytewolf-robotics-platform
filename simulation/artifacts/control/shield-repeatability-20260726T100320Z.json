@@ -1,0 +1,22 @@
+{
+  "matrix": "shield.v1",
+  "mode": "active",
+  "recorded_at": "2026-07-26T10:10:58.668680Z",
+  "runs_per_scenario": 6,
+  "tallies": [
+    {
+      "scenario": "clear-path",
+      "runs": 6,
+      "passed": 6,
+      "success_rate": 1.0,
+      "threshold": 0.9,
+      "met": true,
+      "worst_clearance_m": null,
+      "worst_first_intervention_m": null,
+      "highest_false_stop_rate": 0.0,
+      "failures": []
+    }
+  ],
+  "passed": true,
+  "proof_level": "app+SITL"
+}

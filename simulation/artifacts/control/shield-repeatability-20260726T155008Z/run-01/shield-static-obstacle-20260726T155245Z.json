@@ -1,0 +1,24 @@
+{
+  "scenario": "static-obstacle",
+  "recorded_at": "2026-07-26T15:52:42.937081Z",
+  "mode": "active",
+  "samples": 26,
+  "interventions": 5,
+  "intervention_rate": 0.1923,
+  "false_stops": 0,
+  "false_stop_rate": 0.0,
+  "minimum_clearance_m": 1.793,
+  "required_clearance_m": 2.0,
+  "clearance_at_first_intervention_m": 2.741,
+  "verdicts": {
+    "clear": 21,
+    "insufficient_clearance": 5
+  },
+  "first_intervention_sensed_m": 1.9579849243164062,
+  "first_intervention_bearing_deg": 0.0,
+  "passed": false,
+  "findings": [
+    "The vehicle came within 1.79 m, inside the 2.00 m the twin insists on."
+  ],
+  "proof_level": "app+SITL"
+}

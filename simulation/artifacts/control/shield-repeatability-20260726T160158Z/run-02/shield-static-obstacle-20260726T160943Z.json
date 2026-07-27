@@ -1,0 +1,25 @@
+{
+  "scenario": "static-obstacle",
+  "recorded_at": "2026-07-26T16:09:41.298669Z",
+  "mode": "active",
+  "samples": 110,
+  "interventions": 0,
+  "intervention_rate": 0.0,
+  "false_stops": 0,
+  "false_stop_rate": 0.0,
+  "minimum_clearance_m": 0.487,
+  "required_clearance_m": 2.0,
+  "clearance_at_first_intervention_m": null,
+  "verdicts": {
+    "clear": 110
+  },
+  "first_intervention_sensed_m": null,
+  "first_intervention_bearing_deg": null,
+  "passed": false,
+  "findings": [
+    "The shield never intervened in a run that placed something in its way.",
+    "The vehicle came within 0.49 m, inside the 2.00 m the twin insists on."
+  ],
+  "proof_level": "app+SITL",
+  "sample_rate_hz": 2.79
+}

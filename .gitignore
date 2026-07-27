@@ -23,3 +23,10 @@ simulation/artifacts/agent-missions/
 
 # Generated Gazebo worlds: rebuilt from the committed OSM snapshot on demand.
 simulation/worlds/generated/
+
+# Raw gz capture streams a scenario writes while it flies and deletes on the way
+# out. A run that is killed never reaches that cleanup, and these reach gigabytes
+# -- one interrupted matrix left 3.6 GB behind and a commit that GitHub refused.
+# They are working files, never evidence: the evidence is the JSON report.
+simulation/artifacts/**/.*-scans.jsonl
+simulation/artifacts/**/.*-pose.jsonl

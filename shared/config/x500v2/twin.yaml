@@ -205,7 +205,16 @@ safety:
     # The frame a setpoint must declare. A producer using the other convention
     # is rejected rather than reinterpreted: a sign error in a velocity command
     # is not something to guess about.
-    frame: local_ned
+    #
+    # body_frd for two independent reasons that happen to agree. It is the frame
+    # the obstacle contract already uses, and for the same stated reason -- a
+    # yaw error cannot rotate the map, and must not rotate the command either,
+    # so a shield reading obstacles and writing velocities needs no conversion
+    # between them. It is also the only frame MAVSDK can carry this contract
+    # faithfully in: set_velocity_body takes a yaw *rate*, which is what a
+    # setpoint declares, while set_velocity_ned takes a yaw *angle*. Choosing
+    # local_ned would mean reinterpreting one as the other at the adapter.
+    frame: body_frd
     # How long a single setpoint may be acted on. A producer may ask for less;
     # asking for more is refused, so no stream can grant itself a longer window
     # than the vehicle's own policy allows.
@@ -230,6 +239,36 @@ safety:
     # the authority for anything this process cannot reach -- a stopped process
     # commands nothing.
     fallback_sequence: [zero_velocity, hold, land]
+
+  # The runtime safety shield: the thing that stops the vehicle flying into
+  # something. It sits between whatever proposes a velocity and the Offboard
+  # boundary, and it is geometry only -- distances, sector coverage and a
+  # conservative stopping estimate. It is deliberately NOT a control barrier
+  # function: a CBF constrains a *dynamics model*, and this twin has no measured
+  # dynamics at all (see provenance -- every physical parameter is still
+  # `simulated`, taken from PX4's generic x500). A CBF built on those numbers
+  # would be a statement about a simulator, not about this airframe.
+  shield:
+    enabled: false
+    # How close the vehicle may come to a measured obstacle once it has stopped.
+    # Not a measurement of anything: a margin chosen to be larger than the
+    # position error the estimator is trusted to have.
+    minimum_clearance_m: 2.0
+    # Used only to estimate how far the vehicle travels before it stops.
+    # Conservative on purpose and NOT measured: braking capability depends on
+    # mass, thrust and controller tuning, none of which this twin knows. A real
+    # figure needs the bench measurements the missing battery blocks.
+    braking_deceleration_m_s2: 1.0
+    # Everything between deciding to stop and the vehicle beginning to: this
+    # process, the link, and PX4's own loop. Also unmeasured, also conservative.
+    reaction_latency_s: 0.5
+    # An observation older than this cannot describe where obstacles are now.
+    max_observation_age_s: 1.0
+    # The rule the roadmap states outright: no sensor coverage means no motion
+    # that way. A sector the sensor cannot speak for is never free space, and
+    # the 2D lidar has a 90-degree blind spot behind the vehicle, so this is a
+    # live constraint rather than a theoretical one.
+    unobserved_is_blocked: true
 
 battery:
   chemistry: LiPo

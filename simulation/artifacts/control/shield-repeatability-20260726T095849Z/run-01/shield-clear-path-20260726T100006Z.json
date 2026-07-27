@@ -1,0 +1,22 @@
+{
+  "scenario": "clear-path",
+  "recorded_at": "2026-07-26T10:00:04.130007Z",
+  "mode": "active",
+  "samples": 106,
+  "interventions": 4,
+  "intervention_rate": 0.0377,
+  "false_stops": 0,
+  "false_stop_rate": 0.0,
+  "minimum_clearance_m": null,
+  "required_clearance_m": 2.0,
+  "clearance_at_first_intervention_m": null,
+  "verdicts": {
+    "clear": 102,
+    "insufficient_clearance": 4
+  },
+  "passed": false,
+  "findings": [
+    "The shield intervened 4 times on a clear path; a shield that stops for nothing is the one that gets switched off."
+  ],
+  "proof_level": "app+SITL"
+}

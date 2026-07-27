@@ -1,0 +1,21 @@
+{
+  "scenario": "clear-path",
+  "recorded_at": "2026-07-26T15:43:25.899513Z",
+  "mode": "active",
+  "samples": 34,
+  "interventions": 0,
+  "intervention_rate": 0.0,
+  "false_stops": 0,
+  "false_stop_rate": 0.0,
+  "minimum_clearance_m": null,
+  "required_clearance_m": 2.0,
+  "clearance_at_first_intervention_m": null,
+  "verdicts": {
+    "clear": 34
+  },
+  "first_intervention_sensed_m": null,
+  "first_intervention_bearing_deg": null,
+  "passed": true,
+  "findings": [],
+  "proof_level": "app+SITL"
+}

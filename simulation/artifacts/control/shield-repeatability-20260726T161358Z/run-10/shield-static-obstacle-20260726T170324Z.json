@@ -1,0 +1,23 @@
+{
+  "scenario": "static-obstacle",
+  "recorded_at": "2026-07-26T17:03:22.719798Z",
+  "mode": "active",
+  "samples": 110,
+  "interventions": 2,
+  "intervention_rate": 0.0182,
+  "false_stops": 0,
+  "false_stop_rate": 0.0,
+  "minimum_clearance_m": 8.371,
+  "required_clearance_m": 2.0,
+  "clearance_at_first_intervention_m": 8.373,
+  "verdicts": {
+    "clear": 108,
+    "insufficient_clearance": 2
+  },
+  "first_intervention_sensed_m": 1.6265596151351929,
+  "first_intervention_bearing_deg": 0.0,
+  "passed": true,
+  "findings": [],
+  "proof_level": "app+SITL",
+  "sample_rate_hz": 2.75
+}
