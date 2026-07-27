@@ -5,17 +5,18 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime
 import json
+from math import isfinite
 import os
 from pathlib import Path
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway, DashboardReply
-from apps.dashboard.telemetry import TelemetryFormatError, load_telemetry_snapshot
+from apps.api.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.api.point_mission import PointMissionError, review_point_mission, review_survey_mission
 from apps.agent.pi_conversation import PiConversation
@@ -25,8 +26,16 @@ from brain.memory.briefing import capability_briefing, world_briefing
 from brain.memory.graph import knowledge_view
 from brain.memory.world_map import map_view
 from brain.memory.world_memory import load_world_memory
+from brain.mission.replay import MissionReplay, MissionReplayError, replay_run
 from brain.mission_spec.validation import load_mission_safety_profile
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, SafetyProfileError, load_safety_profile
+from brain.telemetry.domain import (
+    BatteryTelemetryEvent,
+    FlightStateTelemetryEvent,
+    PositionTelemetryEvent,
+    SupplementalTelemetryEvent,
+)
+from brain.telemetry.persistence import ObservationHistoryEvent, TelemetryHistoryEvent
 from apps.gateway.telegram_mission_gateway import _execute_with_cli, _review_with_cli
 
 
@@ -66,9 +75,12 @@ def create_app(
     detections_path: Path | None = None,
     down_camera_path: Path | None = None,
     down_detections_path: Path | None = None,
+    vision_status_path: Path | None = None,
+    vision_frame_path: Path | None = None,
     map_view_path: Path | None = None,
     map_view_meta_path: Path | None = None,
     agent_artifact_dir: Path = Path("simulation/artifacts/agent-missions"),
+    mission_runs_dir: Path = Path("var/mission-runs"),
     memory_dir: Path = Path("var/pi-agent/memory"),
     world_memory_path: Path = Path("var/world-memory/claims.jsonl"),
     safety_profile_path: Path = DEFAULT_SAFETY_PROFILE_PATH,
@@ -174,6 +186,32 @@ def create_app(
     def detections() -> Response:
         return _detections_response(detections_path)
 
+    @app.get("/api/v1/vision")
+    def vision_status() -> dict[str, object]:
+        """The Vision producer's own status, allowlisted and aged on every read.
+
+        Two separate guards, and both matter. The allowlist keeps raw payloads,
+        embeddings, templates and evidence locations out of a view that only
+        needs counts and states. The ageing is why the state is recomputed here
+        rather than relayed: a producer writes this file and stops, so nothing
+        rewrites it when the producer dies, and serving its last `valid`
+        unchanged would show dead perception as live.
+        """
+        if vision_status_path is None or not vision_status_path.is_file():
+            raise HTTPException(status_code=404, detail="Vision status is unavailable")
+        try:
+            document = json.loads(vision_status_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise HTTPException(status_code=400, detail="Vision status is not valid JSON.") from error
+        try:
+            return _vision_read_model(document)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.get("/api/v1/vision/frame")
+    def vision_frame(if_none_match: str | None = Header(default=None)) -> Response:
+        return _camera_response(vision_frame_path, if_none_match=if_none_match)
+
     @app.get("/api/v1/cameras/{sensor}/detections")
     def selected_detections(sensor: str) -> Response:
         return _detections_response(_sensor_path(detections_path, down_detections_path, sensor))
@@ -181,6 +219,50 @@ def create_app(
     @app.get("/api/v1/plans/{plan_id}/status")
     def plan_status(plan_id: str) -> dict[str, str]:
         return _execution_status(agent_artifact_dir, _mission_id(plan_id))
+
+    @app.get("/api/v1/missions/replays")
+    def mission_replays() -> dict[str, object]:
+        """List only complete, validated offline replays; never contact a vehicle.
+
+        This intentionally has no dashboard-session dependency. Audit evidence
+        describes the shared vehicle history, and the handler has no command
+        gateway or flight adapter in its path.
+        """
+        replays: list[dict[str, object]] = []
+        unreadable = 0
+        if not mission_runs_dir.is_dir():
+            return {"replays": replays, "unreadable": unreadable}
+        for artifact_path in sorted(mission_runs_dir.glob("*.json")):
+            try:
+                replay = _load_mission_replay(mission_runs_dir, artifact_path.stem)
+            except (MissionReplayError, _InvalidReplayIdentifier, FileNotFoundError):
+                # One artifact that cannot be read is not a reason to withhold
+                # the others. A mission that fails before its telemetry relay
+                # starts -- MAVSDK unavailable, the SafetyGate refusing, a PX4
+                # connection timing out -- still writes its audit artifact in a
+                # `finally`, and its history file is empty by then. Those are
+                # ordinary outcomes, and the old handler turned a single one
+                # into a 503 that hid every valid replay behind it.
+                #
+                # Counted rather than silently dropped: a view that quietly
+                # shows fewer runs than exist is its own kind of misleading.
+                unreadable += 1
+                continue
+            replays.append(_replay_summary(replay))
+        return {"replays": replays, "unreadable": unreadable}
+
+    @app.get("/api/v1/missions/replays/{run_id}")
+    def mission_replay(run_id: str) -> dict[str, object]:
+        """Return one immutable audit + telemetry replay, never a flight command."""
+        try:
+            replay = _load_mission_replay(mission_runs_dir, run_id)
+        except _InvalidReplayIdentifier as error:
+            raise HTTPException(status_code=400, detail="Invalid mission replay identifier.") from error
+        except FileNotFoundError as error:
+            raise HTTPException(status_code=404, detail="Mission replay not found.") from error
+        except MissionReplayError as error:
+            raise HTTPException(status_code=503, detail="Mission replay is unavailable or invalid.") from error
+        return _replay_document(replay)
 
     @app.post("/api/v1/chat")
     def chat(request: ChatRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
@@ -315,8 +397,26 @@ def create_app(
         facts = list_memory(memory_dir, _session(x_bytewolf_session))["facts"]
         return knowledge_view(facts, memory.recall(now), memory.disputed(now))
 
-    web_root = Path(__file__).resolve().parents[1] / "dashboard" / "web"
-    app.mount("/", StaticFiles(directory=web_root, html=True), name="dashboard")
+    applications_root = Path(__file__).resolve().parents[1]
+    # The two browser applications have intentionally separate deployment
+    # surfaces: the public site owns `/`, while the authenticated Control Room
+    # remains under `/control-room`.  Neither route is a flight-control path.
+    control_room_root = applications_root / "dashboard" / "dist"
+    if control_room_root.is_dir():
+        app.mount("/control-room", StaticFiles(directory=control_room_root, html=True), name="control-room")
+    marketing_root = applications_root / "marketing" / "dist"
+    if marketing_root.is_dir():
+        app.mount("/", StaticFiles(directory=marketing_root, html=True), name="marketing")
+    else:
+        @app.get("/", include_in_schema=False)
+        def marketing_build_required() -> HTMLResponse:
+            """Keep the public entry point useful before the frontend build exists."""
+            return HTMLResponse(
+                "<!doctype html><title>ByteWolf Robotics</title>"
+                "<main><h1>ByteWolf Robotics</h1>"
+                "<p>The public site is being prepared. Build apps/marketing/frontend to serve it.</p>"
+                "</main>"
+            )
     return app
 
 
@@ -496,6 +596,104 @@ def _mission_id(value: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid mission identifier.") from error
 
 
+class _InvalidReplayIdentifier(ValueError):
+    """A URL identifier that cannot safely name one local audit artifact."""
+
+
+def _load_mission_replay(mission_runs_dir: Path, run_id: str) -> MissionReplay:
+    """Resolve a replay within its dedicated store, then validate it offline.
+
+    The run identifier is deliberately opaque: it is only ever joined to its
+    canonical ``<run_id>.json`` name after rejecting all path syntax.  Both the
+    audit file and its adjacent telemetry history must remain under the one
+    configured directory, including when a local symlink is present.
+    """
+    if (
+        not run_id
+        or Path(run_id).name != run_id
+        or run_id in {".", ".."}
+        or "/" in run_id
+        or "\\" in run_id
+        or "\x00" in run_id
+    ):
+        raise _InvalidReplayIdentifier(run_id)
+    root = mission_runs_dir.resolve()
+    artifact_path = mission_runs_dir / f"{run_id}.json"
+    if not artifact_path.is_file():
+        raise FileNotFoundError(run_id)
+    if artifact_path.is_symlink() or artifact_path.resolve().parent != root:
+        raise MissionReplayError("Replay artifact is outside the mission replay store.")
+    history_directory = mission_runs_dir / "telemetry-history"
+    history_path = history_directory / f"{run_id}.jsonl"
+    if (
+        history_directory.is_symlink()
+        or history_path.is_symlink()
+        or history_path.resolve().parent != root / "telemetry-history"
+    ):
+        raise MissionReplayError("Replay telemetry history is outside the mission replay store.")
+    replay = replay_run(artifact_path, telemetry_history_path=history_path)
+    if replay.run_id != run_id:
+        raise MissionReplayError("Replay artifact run_id does not match its registered identifier.")
+    return replay
+
+
+def _replay_summary(replay: MissionReplay) -> dict[str, object]:
+    return {
+        "id": replay.run_id,
+        "recorded_at": _api_timestamp(replay.recorded_at),
+        "safety_decision": replay.safety_decision,
+        "outcome": replay.outcome,
+        "terminal_phase": replay.terminal_phase.value if replay.terminal_phase else None,
+    }
+
+
+def _replay_document(replay: MissionReplay) -> dict[str, object]:
+    return {
+        **_replay_summary(replay),
+        "failure_reason": replay.failure_reason,
+        "preflight": {
+            "battery_percent": replay.preflight_battery_percent,
+            "navigation_ready": replay.preflight_navigation_ready,
+            "home_position_valid": replay.preflight_home_position_valid,
+            "global_position_valid": replay.preflight_global_position_valid,
+        },
+        "events": [
+            {"phase": event.phase.value, "timestamp": _api_timestamp(event.timestamp)}
+            for event in replay.events
+        ],
+        "telemetry": [_telemetry_replay_document(event) for event in replay.telemetry_events],
+    }
+
+
+def _telemetry_replay_document(event: TelemetryHistoryEvent) -> dict[str, object]:
+    common = {"topic": event.topic, "observed_at": _api_timestamp(event.observed_at)}
+    if isinstance(event, PositionTelemetryEvent):
+        return {
+            "type": "position", **common, "latitude_deg": event.latitude_deg,
+            "longitude_deg": event.longitude_deg, "absolute_altitude_m": event.absolute_altitude_m,
+            "relative_altitude_m": event.relative_altitude_m,
+        }
+    if isinstance(event, BatteryTelemetryEvent):
+        return {"type": "battery", **common, "remaining_percent": event.remaining_percent}
+    if isinstance(event, FlightStateTelemetryEvent):
+        return {"type": "flight_state", **common, "in_air": event.in_air}
+    if isinstance(event, SupplementalTelemetryEvent):
+        return {"type": "supplemental", **common, "source": event.source, "payload": dict(event.payload)}
+    if isinstance(event, ObservationHistoryEvent):
+        observation = event.observation
+        return {
+            "type": "observation", **common, "kind": observation.kind,
+            "vehicle_id": observation.vehicle_id, "max_age_s": observation.max_age_s,
+            "validity": observation.declared_validity, "payload": observation.payload,
+            "source": observation.source,
+        }
+    raise MissionReplayError("Replay telemetry event has an unsupported type.")
+
+
+def _api_timestamp(timestamp: datetime) -> str:
+    return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
 def _execution_status(artifact_dir: Path, mission_id: str) -> dict[str, str]:
     """Read the append-only executor decision; never start or control a mission."""
     latest: dict[str, object] | None = None
@@ -553,3 +751,83 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
+
+
+_VISION_READ_MODEL_FIELDS = frozenset(
+    {
+        "contract_version", "state", "observed_at", "track_count", "detections",
+        "backlog_frames", "dropped_frames", "stream_state", "model_state", "gpu_state",
+    }
+)
+
+
+#: How long a published Vision status may be presented as live. The producer
+#: writes a file and stops; nothing rewrites it when the producer dies, so the
+#: consumer -- not the file -- has to decide the status has aged out. Chosen to
+#: be several frame intervals at any usable rate, so a healthy producer is never
+#: reported stale by a slow poll.
+VISION_STATUS_MAX_AGE_S = 5.0
+
+
+def _vision_read_model(document: object, *, now: datetime | None = None) -> dict[str, object]:
+    """Allowlist the dashboard's observation-only Vision read model.
+
+    The local artifact directory is still a producer boundary: never relay raw
+    payloads, embeddings, templates, evidence locations, or future command
+    fields merely because they happen to be JSON.
+    """
+    if not isinstance(document, dict):
+        raise ValueError("Vision status must be a JSON object.")
+    unknown = set(document) - _VISION_READ_MODEL_FIELDS
+    if unknown:
+        raise ValueError("Vision status contains fields outside the read-only contract.")
+    if document.get("contract_version") != "vision_dashboard.v1":
+        raise ValueError("Vision status must declare contract_version vision_dashboard.v1.")
+    if document.get("state") not in {"valid", "missing", "stale", "invalid"}:
+        raise ValueError("Vision status has an invalid state.")
+    detections = document.get("detections")
+    if not isinstance(detections, list) or not all(_is_dashboard_detection(item) for item in detections):
+        raise ValueError("Vision status detections do not match the read-only contract.")
+    read_model = {field: document.get(field) for field in _VISION_READ_MODEL_FIELDS if field in document}
+    if read_model.get("state") == "valid" and _is_stale(read_model.get("observed_at"), now):
+        # A producer that stalled or exited leaves its last valid file behind.
+        # Serving that state unchanged would show dead perception as live.
+        read_model["state"] = "stale"
+    return read_model
+
+
+def _is_stale(observed_at: object, now: datetime | None) -> bool:
+    """Whether a published observation has outlived its freshness budget."""
+    if not isinstance(observed_at, str):
+        return True
+    try:
+        published = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if published.tzinfo is None:
+        return True
+    age = ((now or datetime.now(UTC)).astimezone(UTC) - published.astimezone(UTC)).total_seconds()
+    # A future timestamp is a broken clock, not freshness to be trusted.
+    return age > VISION_STATUS_MAX_AGE_S or age < -VISION_STATUS_MAX_AGE_S
+
+
+def _is_dashboard_detection(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    allowed = {"label", "confidence", "tracker_id", "bounding_box"}
+    box = value.get("bounding_box")
+    confidence = value.get("confidence")
+    return (
+        set(value) <= allowed
+        and isinstance(value.get("label"), str)
+        and type(confidence) in (int, float)
+        and isfinite(confidence)
+        and 0.0 <= confidence <= 1.0
+        and (value.get("tracker_id") is None or isinstance(value.get("tracker_id"), str))
+        and isinstance(box, dict)
+        and set(box) == {"x_px", "y_px", "width_px", "height_px"}
+        and type(box["x_px"]) is int and box["x_px"] >= 0
+        and type(box["y_px"]) is int and box["y_px"] >= 0
+        and type(box["width_px"]) is int and box["width_px"] > 0
+        and type(box["height_px"]) is int and box["height_px"] > 0
+    )

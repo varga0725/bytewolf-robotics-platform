@@ -3,6 +3,11 @@
 .venv-vision/
 .venv-vision313/
 node_modules/
+apps/dashboard/dist/
+apps/marketing/dist/
+apps/marketing/frontend/dist/
+apps/dashboard/frontend/test-results/
+*.tsbuildinfo
 .env
 __pycache__/
 *.py[cod]

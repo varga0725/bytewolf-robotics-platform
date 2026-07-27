@@ -1,4 +1,4 @@
-"""Normalize telemetry JSON for the read-only local dashboard."""
+"""Normalize telemetry JSON for the shared API telemetry contract."""
 
 from __future__ import annotations
 

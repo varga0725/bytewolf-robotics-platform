@@ -74,16 +74,18 @@ class PiMemoryDiagnosticsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["memory_update"], "updated")
         self.assertNotIn("Ferenc", json.dumps(response.json()["memory_update"]))
 
-    def test_the_dashboard_renders_the_hook_status_as_diagnostics(self) -> None:
+    def test_the_chat_contract_returns_a_non_sensitive_memory_diagnostic(self) -> None:
         gateway = DashboardCommandGateway(
             converse=lambda _session, _text: AgentReply("Szia!", False, "skipped"),
             review=lambda _text: "plan-1",
             execute=lambda plan: "submitted",
         )
-        page = TestClient(create_app(PROJECT_ROOT / "missing-telemetry.json", gateway=gateway)).get("/").text
+        response = TestClient(create_app(PROJECT_ROOT / "missing-telemetry.json", gateway=gateway)).post(
+            "/api/v1/chat", json={"text": "Szia"}, headers={"X-ByteWolf-Session": SESSION}
+        )
 
-        self.assertIn("memory-status", page)
-        self.assertIn("memory_update", page)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["memory_update"], "skipped")
 
 
 if __name__ == "__main__":

@@ -453,8 +453,16 @@ class ControlBoundaryTests(unittest.TestCase):
     def test_the_read_only_telemetry_bridge_gains_no_control_path(self) -> None:
         # The roadmap's explicit warning: the telemetry-only bridge must not
         # quietly become a control path.
-        for package in ("brain/telemetry", "robots/drone/x500v2/ros2", "apps/dashboard"):
-            for source in sorted((ROOT / package).glob("**/*.py")):
+        #
+        # apps/api replaced apps/dashboard when the Control Room landed. Naming
+        # a directory that no longer exists would leave this guard passing over
+        # an empty set -- a test that cannot fail, guarding nothing. apps/api
+        # does carry mission endpoints, but they reach PX4 through MissionSpec
+        # and the SafetyGate; the Offboard boundary is not theirs to touch.
+        for package in ("brain/telemetry", "robots/drone/x500v2/ros2", "apps/api"):
+            sources = sorted((ROOT / package).glob("**/*.py"))
+            self.assertTrue(sources, f"{package} has no sources, so this guards nothing")
+            for source in sources:
                 with self.subTest(source=str(source.relative_to(ROOT))):
                     self.assertNotIn(
                         "brain.control", source.read_text(encoding="utf-8"),

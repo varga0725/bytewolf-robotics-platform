@@ -27,7 +27,7 @@ from pathlib import Path
 import subprocess
 import time
 
-from apps.dashboard.telemetry import TelemetryFormatError, TelemetrySnapshot, load_telemetry_snapshot
+from apps.api.telemetry import TelemetryFormatError, TelemetrySnapshot, load_telemetry_snapshot
 from brain.memory.recorder import DEFAULT_WORLD_MEMORY_PATH, RecordingResult, WorldMemoryRecorder
 from brain.memory.world_map import MapGrid, VehiclePose
 from brain.perception.lidar_obstacle import laser_scan_from_gz_json, obstacle_observation

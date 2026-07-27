@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="ByteWolf Robotics — one cognitive runtime, many embodied systems." />
+    <title>ByteWolf Robotics — One Brain. Many Bodies.</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <!-- Indexing is opt-in per deployment, through Vite's own build-time
+         substitution rather than a post-processing step. A preview origin
+         serving production's markup would compete with it in search and
+         publish work not ready to be read as current, so the default is the
+         safe one: without VITE_ROBOTS set, the page says noindex. -->
+    <meta name="robots" content="%VITE_ROBOTS%" />
+    <link rel="canonical" href="%VITE_CANONICAL_URL%" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="ByteWolf Robotics" />
+    <meta property="og:title" content="ByteWolf Robotics — One Brain. Many Bodies." />
+    <meta property="og:description" content="One cognitive runtime, many embodied systems. Safety-gated mission execution on a PX4 and Gazebo digital twin." />
+    <meta property="og:url" content="%VITE_CANONICAL_URL%" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ByteWolf Robotics — One Brain. Many Bodies." />
+    <meta name="twitter:description" content="One cognitive runtime, many embodied systems. Safety-gated mission execution on a PX4 and Gazebo digital twin." />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

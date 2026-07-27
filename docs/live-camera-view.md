@@ -44,7 +44,7 @@ Serve the dashboard with those files (another terminal):
   --detections-file simulation/artifacts/dashboard/detections.json
 ```
 
-Open `http://127.0.0.1:8080`. Fly a mission from a third terminal (for example
+Open `http://127.0.0.1:8080/control-room/`. Fly a mission from a third terminal (for example
 `.venv/bin/python -m brain.cli.fly_takeoff_hover_land --altitude 8 --hover-seconds 30`);
 the camera card updates about twice a second, and a red marker in view is drawn
 as a labelled box.

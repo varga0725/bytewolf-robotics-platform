@@ -203,12 +203,14 @@ class KnowledgeApiTests(unittest.TestCase):
         self.assertEqual([node["label"] for node in other["personal"]["nodes"]], ["Te"])
         self.assertTrue(other["world"]["nodes"], "world evidence is shared, not per person")
 
-    def test_the_dashboard_names_the_boundary_it_draws(self) -> None:
-        page = self.client.get("/").text
+    def test_the_knowledge_contract_keeps_personal_and_world_namespaces_separate(self) -> None:
+        body = self.client.get(
+            "/api/v1/knowledge", headers={"X-ByteWolf-Session": self.session}
+        ).json()
 
-        self.assertIn('id="personal-graph"', page)
-        self.assertIn('id="world-graph"', page)
-        self.assertIn("Nincs köztük él", page)
+        self.assertIn("personal", body)
+        self.assertIn("world", body)
+        self.assertTrue(all(node["id"].startswith("personal:") for node in body["personal"]["nodes"]))
 
 
 if __name__ == "__main__":

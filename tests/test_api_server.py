@@ -30,28 +30,19 @@ class ApiServerTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.directory.cleanup()
 
-    def test_dashboard_root_and_telemetry_are_available(self) -> None:
-        dashboard = self.client.get("/")
-        self.assertEqual(dashboard.status_code, 200)
-        self.assertIn("d.in_air===true", dashboard.text)
-        self.assertIn("relative_altitude_m==null", dashboard.text)
-        self.assertIn('id="camera-select"', dashboard.text)
-        self.assertIn('id="memory-list"', dashboard.text)
-        self.assertIn("/api/v1/memory", dashboard.text)
-        self.assertIn("A státuszkapcsolat megszakadt; újrapróbálom.", dashboard.text)
-        self.assertNotIn("A küldetés státusza nem olvasható:", dashboard.text)
+    def test_public_root_and_telemetry_are_available(self) -> None:
+        public_site = self.client.get("/")
+        self.assertEqual(public_site.status_code, 200)
+        self.assertIn("ByteWolf Robotics", public_site.text)
+        self.assertNotIn('id="camera-select"', public_site.text)
         response = self.client.get("/api/v1/telemetry")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["in_air"])
 
-    def test_the_dashboard_ships_every_navigable_page(self) -> None:
-        """Each sidebar entry must have the section it claims to open."""
+    def test_public_root_does_not_serve_the_retired_dashboard_markup(self) -> None:
         page = self.client.get("/").text
-
-        for identifier in ("page-state", "page-camera", "page-chat", "page-memory", "page-world"):
-            with self.subTest(page=identifier):
-                self.assertIn(f'data-target="{identifier}"', page, "the sidebar offers it")
-                self.assertIn(f'id="{identifier}"', page, "the section exists")
+        self.assertNotIn("A státuszkapcsolat megszakadt", page)
+        self.assertNotIn('id="memory-list"', page)
 
     def test_telemetry_keeps_unknown_flight_state_and_altitude(self) -> None:
         self.telemetry.write_text(json.dumps({
@@ -263,10 +254,11 @@ class SafetyEnvelopeApiTests(unittest.TestCase):
             with self.subTest(method=method.__name__):
                 self.assertEqual(method("/api/v1/safety-envelope").status_code, 405)
 
-    def test_the_dashboard_stops_hardcoding_the_limits_it_draws(self) -> None:
-        page = self.client.get("/").text
+    def test_the_safety_envelope_remains_available_to_the_control_room(self) -> None:
+        response = self.client.get("/api/v1/safety-envelope")
 
-        self.assertIn("/api/v1/safety-envelope", page)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("max_altitude_m", response.json())
 
 
 if __name__ == "__main__":
