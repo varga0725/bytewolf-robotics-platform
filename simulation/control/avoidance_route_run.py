@@ -53,6 +53,10 @@ _WALL_CENTER_XY = (0.0, 12.0)
 _WALL_HALF_EXTENTS_XY = (1.0, 1.0)
 _REQUIRED_CLEARANCE_M = 2.0
 _REQUIRED_BYPASS_OFFSET_M = _WALL_HALF_EXTENTS_XY[0] + _REQUIRED_CLEARANCE_M
+# Rejoining the final target from the minimum side clearance would cut the
+# diagonal through the wall's envelope.  This finite-wall fixture therefore
+# holds a larger, geometry-derived detour before it resumes the direct leg.
+_DETOUR_RELEASE_OFFSET_M = 6.2
 
 
 def run_avoidance_route_scenario(
@@ -211,7 +215,11 @@ async def _fly_avoidance_route(
             telemetry_max_age_s=0.5,
             max_vertical_speed_m_s=0.5,
             slowdown_radius_m=3.0,
-            replanner=LocalReplanner(lateral_speed_m_s=0.4, max_detour_s=12.0),
+            replanner=LocalReplanner(
+                lateral_speed_m_s=0.4,
+                max_detour_s=20.0,
+                required_bypass_offset_m=_DETOUR_RELEASE_OFFSET_M,
+            ),
             tick_observer=record_tick,
         )
         control_started = time.monotonic()
