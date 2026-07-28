@@ -64,6 +64,21 @@ _DETOUR_RELEASE_OFFSET_M = 6.5
 # turning home; this is a route-geometry policy, not a relaxation of the
 # shield or the scored 2 m limit.
 _SAFE_REJOIN_OVERSHOOT_M = 0.5
+# The digital-twin vehicle envelope permits 3 m/s, but the obstacle-bypass
+# acceptance needs a bounded, inspectable route speed.  This deliberately
+# tightens the profile for this scenario; it never widens a vehicle limit.
+_ACCEPTANCE_ROUTE_SPEED_M_S = 0.6
+
+
+def _acceptance_profile(profile):
+    """Enable the scenario layers while narrowing its route speed envelope."""
+    assert profile.offboard is not None and profile.shield is not None
+    return replace(
+        profile,
+        max_speed_m_s=min(profile.max_speed_m_s, _ACCEPTANCE_ROUTE_SPEED_M_S),
+        offboard=_enabled(profile.offboard),
+        shield=_enabled(profile.shield),
+    )
 
 
 def run_avoidance_route_scenario(
@@ -133,11 +148,7 @@ async def _fly_avoidance_route(
 
     profile = load_safety_profile()
     assert profile.offboard is not None and profile.shield is not None
-    scenario_profile = replace(
-        profile,
-        offboard=_enabled(profile.offboard),
-        shield=_enabled(profile.shield),
-    )
+    scenario_profile = _acceptance_profile(profile)
     system = System()
     await system.connect(system_address=_ENDPOINT)
     await _await_connection(system)

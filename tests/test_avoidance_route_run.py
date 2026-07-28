@@ -1,14 +1,24 @@
 import unittest
 
 from simulation.control.avoidance_route_run import (
+    _ACCEPTANCE_ROUTE_SPEED_M_S,
     _DETOUR_RELEASE_OFFSET_M,
     _REQUIRED_BYPASS_OFFSET_M,
     _SAFE_REJOIN_OVERSHOOT_M,
+    _acceptance_profile,
     _wall_clearance,
 )
+from brain.safety.profile import load_safety_profile
 
 
 class AvoidanceWallGeometryTests(unittest.TestCase):
+    def test_acceptance_profile_tightens_the_generic_vehicle_speed(self) -> None:
+        profile = load_safety_profile()
+
+        acceptance = _acceptance_profile(profile)
+
+        self.assertEqual(acceptance.max_speed_m_s, _ACCEPTANCE_ROUTE_SPEED_M_S)
+        self.assertGreater(profile.max_speed_m_s, _ACCEPTANCE_ROUTE_SPEED_M_S)
     def test_bypass_offset_places_the_vehicle_outside_the_wall_clearance_envelope(self) -> None:
         self.assertEqual(_REQUIRED_BYPASS_OFFSET_M, 3.0)
         self.assertEqual(_wall_clearance(3.0, 12.0), 2.0)
