@@ -45,6 +45,7 @@ class AvoidanceRouteReport:
     route_reached: bool
     passed: bool
     trace: list[AvoidanceRouteSample] = field(default_factory=list)
+    ground_truth_trace: list[AvoidanceGroundTruthSample] = field(default_factory=list)
     findings: list[str] = field(default_factory=list)
 
 
@@ -175,6 +176,7 @@ def evaluate_avoidance_route_run(
         passed=not findings,
         findings=findings,
         trace=list(samples),
+        ground_truth_trace=list(ground_truth_samples),
     )
 
 

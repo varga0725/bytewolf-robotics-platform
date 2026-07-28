@@ -83,6 +83,7 @@ class AvoidanceRouteScenarioTests(unittest.TestCase):
         )
 
         self.assertTrue(report.passed, report.findings)
+        self.assertEqual(len(report.ground_truth_trace), 4)
 
     def test_goal_reached_without_an_obstacle_stop_fails(self) -> None:
         report = _run([_sample(0.0), _sample(0.2)], flown_seconds=0.4)
