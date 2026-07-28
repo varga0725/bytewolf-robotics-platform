@@ -202,7 +202,7 @@ def _state(north_error_m: float, *, at: datetime = NOW) -> RouteState:
 
 
 class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
-    def executor(self, states, observations, *, adapter_factory=None):
+    def executor(self, states, observations, *, adapter_factory=None, tick_observer=None):
         profile = _profile()
         clock = FakeClock()
         events = []
@@ -226,6 +226,7 @@ class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
             max_vertical_speed_m_s=0.5,
             slowdown_radius_m=3.0,
             stream_id_factory=lambda: "route-a",
+            tick_observer=tick_observer,
         )
         return executor, events, fallback
 
@@ -245,6 +246,21 @@ class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1], "stop")
         self.assertEqual(fallback.calls, [])
 
+    async def test_tick_observer_records_the_actual_delivery_outcome(self) -> None:
+        ticks = []
+        executor, _events, _fallback = self.executor(
+            [_state(0.1)],
+            [_observation()],
+            tick_observer=ticks.append,
+        )
+
+        await executor.run(arrival_tolerance_m=0.5, timeout_s=1.0)
+
+        self.assertEqual(len(ticks), 1)
+        self.assertTrue(ticks[0].delivered)
+        self.assertEqual(ticks[0].commanded_velocity.speed_m_s, 0.0)
+        self.assertEqual(ticks[0].verdict, "clear")
+
     async def test_active_obstacle_delivers_an_immediate_zero_then_times_out_safely(self) -> None:
         executor, events, fallback = self.executor(
             [_state(5.0)],
@@ -258,6 +274,25 @@ class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(sent)
         self.assertTrue(all(velocity.speed_m_s == 0.0 for velocity in sent))
         self.assertEqual(fallback.calls, [("zero_velocity", "hold", "land")])
+        self.assertIsNotNone(caught.exception.fallback)
+        self.assertEqual(caught.exception.reason.value, "timeout")
+
+    async def test_await_crossing_route_deadline_is_classified_as_route_timeout(self) -> None:
+        executor, _events, _fallback = self.executor(
+            [_state(5.0)],
+            [_observation(distance_m=1.0)],
+        )
+        clock = executor._now.__self__
+
+        async def oversleep(_seconds: float) -> None:
+            await clock.sleep(0.3)
+
+        executor._sleep = oversleep
+
+        with self.assertRaises(OffboardRouteExecutionError) as caught:
+            await executor.run(arrival_tolerance_m=0.5, timeout_s=0.2)
+
+        self.assertEqual(caught.exception.reason.value, "timeout")
         self.assertIsNotNone(caught.exception.fallback)
 
     async def test_missing_observation_can_deliver_only_zero(self) -> None:
@@ -305,10 +340,74 @@ class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
         sent = [event[1] for event in events if isinstance(event, tuple) and event[0] == "send"]
         self.assertTrue(result.reached)
         self.assertEqual(sent[0].speed_m_s, 0.0)
-        self.assertAlmostEqual(sent[1].speed_m_s, 0.4)
-        self.assertAlmostEqual(sent[2].speed_m_s, 0.6)
+        self.assertAlmostEqual(sent[1].speed_m_s, 0.3996)
+        self.assertAlmostEqual(sent[2].speed_m_s, 0.5994)
         self.assertEqual(sent[-1].speed_m_s, 0.0)
         self.assertEqual(fallback.calls, [])
+
+    async def test_slew_uses_actual_tick_elapsed_time(self) -> None:
+        executor, events, _fallback = self.executor(
+            [
+                _state(5.0),
+                _state(4.9, at=NOW + timedelta(seconds=0.1)),
+                _state(0.1, at=NOW + timedelta(seconds=0.2)),
+            ],
+            [
+                _observation(),
+                _observation(at=NOW + timedelta(seconds=0.1)),
+                _observation(at=NOW + timedelta(seconds=0.2)),
+            ],
+        )
+        clock = executor._now.__self__
+
+        async def fast_sleep(_seconds: float) -> None:
+            await clock.sleep(0.1)
+
+        executor._sleep = fast_sleep
+
+        result = await executor.run(arrival_tolerance_m=0.5, timeout_s=1.0)
+
+        sent = [
+            event[1]
+            for event in events
+            if isinstance(event, tuple) and event[0] == "send"
+        ]
+        self.assertTrue(result.reached)
+        self.assertAlmostEqual(sent[0].speed_m_s, 0.3996)
+        self.assertLessEqual(
+            (sent[1].speed_m_s - sent[0].speed_m_s) / 0.1,
+            2.0,
+        )
+
+    async def test_forward_wall_clock_jump_cannot_expand_slew_budget(self) -> None:
+        executor, events, _fallback = self.executor(
+            [_state(5.0), _state(4.9, at=NOW + timedelta(seconds=0.5))],
+            [
+                _observation(),
+                _observation(at=NOW + timedelta(seconds=0.5)),
+            ],
+        )
+        clock = executor._now.__self__
+        calls = 0
+
+        async def jumped_sleep(_seconds: float) -> None:
+            nonlocal calls
+            calls += 1
+            clock.monotonic_s += 0.1
+            clock.current += timedelta(seconds=0.5 if calls == 1 else 0.1)
+
+        executor._sleep = jumped_sleep
+
+        with self.assertRaises(OffboardRouteExecutionError) as caught:
+            await executor.run(arrival_tolerance_m=0.5, timeout_s=0.3)
+
+        sent = [
+            event[1]
+            for event in events
+            if isinstance(event, tuple) and event[0] == "send"
+        ]
+        self.assertGreaterEqual(len(sent), 2, str(caught.exception))
+        self.assertLessEqual(sent[1].speed_m_s - sent[0].speed_m_s, 0.2)
 
     async def test_stale_route_telemetry_fails_closed_and_executes_fallback_once(self) -> None:
         executor, events, fallback = self.executor(
@@ -395,6 +494,23 @@ class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
         blocking.release.set()
         with self.assertRaises(asyncio.CancelledError):
             await task
+        self.assertEqual(blocking.calls, 1)
+
+    async def test_blocking_fallback_is_bounded(self) -> None:
+        executor, _events, _fallback = self.executor(
+            [_state(5.0, at=NOW - timedelta(seconds=1.0))],
+            [_observation()],
+        )
+        blocking = BlockingFallback()
+        executor._fallback_executor = blocking
+        executor._fallback_timeout_s = 0.01
+        executor._fallback_cancel_grace_s = 0.01
+
+        with self.assertRaisesRegex(
+            OffboardRouteExecutionError, "fallback exceeded"
+        ):
+            await executor.run(arrival_tolerance_m=0.5, timeout_s=1.0)
+
         self.assertEqual(blocking.calls, 1)
 
     async def test_result_is_immutable(self) -> None:

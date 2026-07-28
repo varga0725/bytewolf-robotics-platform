@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from math import hypot, isfinite
 from typing import Protocol
 import uuid
@@ -17,6 +18,9 @@ from brain.control.shield import RuntimeSafetyShield, ShieldMode
 from brain.navigation.offboard_route import OffboardRouteError, plan_body_velocity
 from brain.safety.profile import SafetyProfile
 from brain.telemetry.observation import Observation
+
+
+_SLEW_NUMERIC_MARGIN = 0.999
 
 
 class OffboardModeAdapter(Protocol):
@@ -57,11 +61,38 @@ class RouteRunResult:
     session_record: dict[str, object]
 
 
+@dataclass(frozen=True)
+class RouteTick:
+    sequence: int
+    observed_at: datetime
+    nominal_velocity: Velocity
+    verdict: str
+    commanded_velocity: Velocity
+    delivered: bool
+    sensed_distance_m: float | None
+
+
+class RouteTerminalReason(str, Enum):
+    TIMEOUT = "timeout"
+    WATCHDOG = "watchdog"
+    INPUT_REJECTED = "input_rejected"
+    DELIVERY_REJECTED = "delivery_rejected"
+    OFFBOARD_REFUSED = "offboard_refused"
+    INTERNAL_FAILURE = "internal_failure"
+
+
 class OffboardRouteExecutionError(RuntimeError):
     """A leg ended safely without reaching its target."""
 
-    def __init__(self, message: str, fallback: FallbackRecord | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: RouteTerminalReason,
+        fallback: FallbackRecord | None = None,
+    ) -> None:
         super().__init__(message)
+        self.reason = reason
         self.fallback = fallback
 
 
@@ -83,7 +114,10 @@ class OffboardRouteExecutor:
         telemetry_max_age_s: float,
         max_vertical_speed_m_s: float,
         slowdown_radius_m: float,
+        fallback_timeout_s: float = 20.0,
+        fallback_cancel_grace_s: float = 1.0,
         stream_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
+        tick_observer: Callable[[RouteTick], None] | None = None,
     ) -> None:
         if profile.offboard is None or profile.shield is None:
             raise ValueError("A shielded route needs both offboard and shield twin blocks.")
@@ -103,6 +137,10 @@ class OffboardRouteExecutor:
             raise ValueError("max_vertical_speed_m_s must be positive and finite.")
         if not isfinite(slowdown_radius_m) or slowdown_radius_m <= 0:
             raise ValueError("slowdown_radius_m must be positive and finite.")
+        if not isfinite(fallback_timeout_s) or fallback_timeout_s <= 0:
+            raise ValueError("fallback_timeout_s must be positive and finite.")
+        if not isfinite(fallback_cancel_grace_s) or fallback_cancel_grace_s <= 0:
+            raise ValueError("fallback_cancel_grace_s must be positive and finite.")
         self._profile = profile
         self._adapter = adapter
         # Construct the policy-bearing components here. Accepting injected
@@ -121,7 +159,10 @@ class OffboardRouteExecutor:
         self._telemetry_max_age_s = telemetry_max_age_s
         self._max_vertical_speed_m_s = max_vertical_speed_m_s
         self._slowdown_radius_m = slowdown_radius_m
+        self._fallback_timeout_s = fallback_timeout_s
+        self._fallback_cancel_grace_s = fallback_cancel_grace_s
         self._stream_id_factory = stream_id_factory
+        self._tick_observer = tick_observer
         self._used = False
 
     async def run(self, *, arrival_tolerance_m: float, timeout_s: float) -> RouteRunResult:
@@ -147,6 +188,7 @@ class OffboardRouteExecutor:
         entered_offboard = False
         fallback_task: asyncio.Task[FallbackRecord] | None = None
         last_delivered = Velocity(0.0, 0.0, 0.0, 0.0)
+        last_delivered_monotonic: float | None = None
         active_setpoint_deadline: float | None = None
 
         async def execute_fallback(sequence: Sequence[str]) -> FallbackRecord:
@@ -155,9 +197,33 @@ class OffboardRouteExecutor:
                 fallback_task = asyncio.create_task(
                     self._fallback_executor.execute(sequence)
                 )
-            return await asyncio.shield(fallback_task)
+            try:
+                return await asyncio.wait_for(
+                    asyncio.shield(fallback_task),
+                    timeout=self._fallback_timeout_s,
+                )
+            except TimeoutError:
+                fallback_task.cancel()
+                quiesced = False
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(fallback_task),
+                        timeout=self._fallback_cancel_grace_s,
+                    )
+                except asyncio.CancelledError:
+                    quiesced = True
+                except Exception:
+                    quiesced = fallback_task.done()
+                raise TimeoutError(
+                    "The terminal fallback exceeded its bounded execution time"
+                    + (
+                        "."
+                        if quiesced
+                        else " and did not quiesce after cancellation."
+                    )
+                )
 
-        async def fail(message: str) -> None:
+        async def fail(message: str, reason: RouteTerminalReason) -> None:
             assert self._profile.offboard is not None
             try:
                 fallback = await execute_fallback(
@@ -167,9 +233,12 @@ class OffboardRouteExecutor:
                 raise
             except Exception as error:
                 raise OffboardRouteExecutionError(
-                    f"{message} Fallback execution also failed: {error}"
+                    f"{message} Fallback execution also failed: {error}",
+                    reason=reason,
                 ) from error
-            raise OffboardRouteExecutionError(message, fallback)
+            raise OffboardRouteExecutionError(
+                message, reason=reason, fallback=fallback
+            )
 
         try:
             while self._monotonic() < deadline:
@@ -183,13 +252,16 @@ class OffboardRouteExecutor:
                     # lifetime. Freshness and issuance are judged after every
                     # input has arrived, never against the pre-await clock.
                     now = self._utc_now()
+                    issuance_monotonic = self._monotonic()
                     self._require_fresh_state(state, now)
                     nominal = plan_body_velocity(
                         north_error_m=state.north_error_m,
                         east_error_m=state.east_error_m,
                         altitude_error_m=state.altitude_error_m,
                         heading_deg=state.heading_deg,
-                        max_horizontal_speed_m_s=self._profile.max_speed_m_s,
+                        max_horizontal_speed_m_s=(
+                            self._profile.max_speed_m_s * _SLEW_NUMERIC_MARGIN
+                        ),
                         max_vertical_speed_m_s=self._max_vertical_speed_m_s,
                         arrival_tolerance_m=arrival_tolerance_m,
                         slowdown_radius_m=self._slowdown_radius_m,
@@ -198,10 +270,21 @@ class OffboardRouteExecutor:
                         last_delivered,
                         nominal.velocity,
                         self._profile.offboard.max_acceleration_m_s2
-                        / self._stream_hz,
+                        * _SLEW_NUMERIC_MARGIN
+                        * (
+                            1.0 / self._stream_hz
+                            if last_delivered_monotonic is None
+                            else max(
+                                issuance_monotonic - last_delivered_monotonic,
+                                0.0,
+                            )
+                        ),
                     )
                 except (OffboardRouteError, ValueError, TypeError) as error:
-                    await fail(f"Route telemetry or geometry was rejected: {error}")
+                    await fail(
+                        f"Route telemetry or geometry was rejected: {error}",
+                        RouteTerminalReason.INPUT_REJECTED,
+                    )
 
                 decision = self._shield.evaluate(
                     nominal_velocity, observation, now
@@ -226,20 +309,36 @@ class OffboardRouteExecutor:
                         candidate_setpoint_deadline,
                     ),
                 )
+                if self._tick_observer is not None:
+                    self._tick_observer(
+                        RouteTick(
+                            sequence=ticks,
+                            observed_at=now,
+                            nominal_velocity=nominal_velocity,
+                            verdict=decision.verdict.value,
+                            commanded_velocity=decision.velocity,
+                            delivered=delivered.delivered,
+                            sensed_distance_m=decision.clearance_m,
+                        )
+                    )
                 if delivered.watchdog.requires_fallback:
                     fallback = await execute_fallback(
                         delivered.watchdog.fallback
                     )
                     raise OffboardRouteExecutionError(
-                        delivered.watchdog.reason, fallback
+                        delivered.watchdog.reason,
+                        reason=RouteTerminalReason.WATCHDOG,
+                        fallback=fallback,
                     )
                 if not delivered.approved or not delivered.delivered:
                     await fail(
                         delivered.decision.detail
-                        or "The Offboard boundary did not deliver the route setpoint."
+                        or "The Offboard boundary did not deliver the route setpoint.",
+                        RouteTerminalReason.DELIVERY_REJECTED,
                     )
                 assert delivered.decision.velocity is not None
                 last_delivered = delivered.decision.velocity
+                last_delivered_monotonic = issuance_monotonic
                 active_setpoint_deadline = candidate_setpoint_deadline
                 if not entered_offboard:
                     try:
@@ -248,7 +347,10 @@ class OffboardRouteExecutor:
                             _earlier(deadline, active_setpoint_deadline),
                         )
                     except Exception as error:  # adapter errors are implementation-specific
-                        await fail(f"PX4 refused the shielded Offboard route: {error}")
+                        await fail(
+                            f"PX4 refused the shielded Offboard route: {error}",
+                            RouteTerminalReason.OFFBOARD_REFUSED,
+                        )
                     entered_offboard = True
                 ticks += 1
                 if nominal.reached and decision.velocity.speed_m_s == 0.0:
@@ -265,7 +367,10 @@ class OffboardRouteExecutor:
                         self._sleep(remaining),
                         _earlier(deadline, active_setpoint_deadline),
                     )
-            await fail(f"Route timed out after {timeout_s:g} s.")
+            await fail(
+                f"Route timed out after {timeout_s:g} s.",
+                RouteTerminalReason.TIMEOUT,
+            )
         except asyncio.CancelledError:
             assert self._profile.offboard is not None
             try:
@@ -278,8 +383,21 @@ class OffboardRouteExecutor:
             raise
         except OffboardRouteExecutionError:
             raise
+        except TimeoutError as error:
+            if self._monotonic() >= deadline:
+                await fail(
+                    f"Route timed out after {timeout_s:g} s.",
+                    RouteTerminalReason.TIMEOUT,
+                )
+            await fail(
+                f"Shielded route execution missed an active deadline: {error}",
+                RouteTerminalReason.INTERNAL_FAILURE,
+            )
         except Exception as error:
-            await fail(f"Shielded route execution failed closed: {error}")
+            await fail(
+                f"Shielded route execution failed closed: {error}",
+                RouteTerminalReason.INTERNAL_FAILURE,
+            )
         finally:
             self._session.stop()
             try:
@@ -345,6 +463,7 @@ __all__ = [
     "OffboardRouteExecutor",
     "RouteRunResult",
     "RouteState",
+    "RouteTick",
 ]
 
 

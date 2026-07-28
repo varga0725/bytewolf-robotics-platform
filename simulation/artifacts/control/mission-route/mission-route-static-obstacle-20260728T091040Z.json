@@ -1,0 +1,23 @@
+{
+  "scenario": "static-obstacle",
+  "recorded_at": "2026-07-28T09:10:38.103638Z",
+  "samples": 125,
+  "ground_truth_samples": 186,
+  "sample_rate_hz": 4.99,
+  "interventions": 90,
+  "delivered_stop": true,
+  "minimum_clearance_m": 2.115,
+  "required_clearance_m": 2.0,
+  "goto_location_calls": 0,
+  "fallback_completed": [
+    "zero_velocity",
+    "hold",
+    "land"
+  ],
+  "landed": true,
+  "route_reached": false,
+  "execution_error": null,
+  "passed": true,
+  "findings": [],
+  "proof_level": "app+PX4-SITL+Gazebo-ground-truth"
+}
