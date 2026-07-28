@@ -11,15 +11,21 @@ class LocalReplannerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.replanner = LocalReplanner(lateral_speed_m_s=0.4)
         self.direct = Velocity(0.6, 0.0, 0.0, 0.0)
+        self.right = Velocity(0.0, 0.4, 0.0, 0.0)
+        self.left = Velocity(0.0, -0.4, 0.0, 0.0)
 
     def test_offers_right_then_left_and_keeps_the_selected_side_sticky(self) -> None:
-        initial = self.replanner.candidates(self.direct)
+        initial = self.replanner.candidates(
+            right_velocity=self.right, left_velocity=self.left
+        )
 
         self.assertEqual([candidate.mode for candidate in initial], [ReplanMode.RIGHT, ReplanMode.LEFT])
         self.assertEqual(initial[0].velocity, Velocity(0.0, 0.4, 0.0, 0.0))
         self.replanner.select(ReplanMode.LEFT, now_s=1.0)
 
-        sticky = self.replanner.candidates(self.direct)
+        sticky = self.replanner.candidates(
+            right_velocity=self.right, left_velocity=self.left
+        )
 
         self.assertEqual([candidate.mode for candidate in sticky], [ReplanMode.LEFT, ReplanMode.RIGHT])
         self.assertEqual(sticky[0].velocity, Velocity(0.0, -0.4, 0.0, 0.0))
@@ -30,7 +36,12 @@ class LocalReplannerTests(unittest.TestCase):
         self.replanner.clear()
 
         self.assertEqual(self.replanner.mode, ReplanMode.DIRECT)
-        self.assertEqual(self.replanner.candidates(self.direct)[0].mode, ReplanMode.RIGHT)
+        self.assertEqual(
+            self.replanner.candidates(
+                right_velocity=self.right, left_velocity=self.left
+            )[0].mode,
+            ReplanMode.RIGHT,
+        )
 
     def test_invalid_speed_is_refused(self) -> None:
         for speed in (0.0, -0.1, float("nan"), float("inf")):
@@ -48,9 +59,9 @@ class LocalReplannerTests(unittest.TestCase):
         self.assertTrue(self.replanner.exhausted(now_s=14.82))
 
     def test_direct_resume_requires_the_configured_bypass_offset(self) -> None:
-        self.replanner.select(ReplanMode.RIGHT, now_s=1.0, east_error_m=5.0)
-        self.assertFalse(self.replanner.may_resume_direct(east_error_m=2.1))
-        self.assertTrue(self.replanner.may_resume_direct(east_error_m=2.0))
+        self.replanner.select(ReplanMode.RIGHT, now_s=1.0, cross_track_error_m=5.0)
+        self.assertFalse(self.replanner.may_resume_direct(cross_track_error_m=2.1))
+        self.assertTrue(self.replanner.may_resume_direct(cross_track_error_m=2.0))
 
 
 if __name__ == "__main__":

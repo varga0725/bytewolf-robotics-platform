@@ -134,6 +134,70 @@ def plan_body_velocity(
     )
 
 
+def body_cross_track_velocity(
+    *,
+    path_north_m: float,
+    path_east_m: float,
+    heading_deg: float,
+    lateral_speed_m_s: float,
+    right: bool,
+) -> Velocity:
+    """Map a route-relative lateral bypass into the current ``body_frd`` frame.
+
+    ``right`` is relative to the original mission path in NED, not to the
+    vehicle's launch yaw.  This keeps the detour geometrically meaningful when
+    PX4 starts the vehicle with an arbitrary heading.
+    """
+    _require_finite("path_north_m", path_north_m)
+    _require_finite("path_east_m", path_east_m)
+    _require_finite("heading_deg", heading_deg)
+    _require_positive("lateral_speed_m_s", lateral_speed_m_s)
+    if not -180.0 <= heading_deg <= 180.0:
+        raise OffboardRouteError(
+            "heading_deg must use the canonical [-180, 180] telemetry range."
+        )
+    path_length_m = hypot(path_north_m, path_east_m)
+    if not isfinite(path_length_m) or path_length_m <= 0.0:
+        raise OffboardRouteError("The mission path direction must be non-zero.")
+    direction_north = path_north_m / path_length_m
+    direction_east = path_east_m / path_length_m
+    sign = 1.0 if right else -1.0
+    # NED right-hand normal for the route tangent.
+    north_velocity = -sign * direction_east * lateral_speed_m_s
+    east_velocity = sign * direction_north * lateral_speed_m_s
+    yaw = radians(heading_deg)
+    return Velocity(
+        x_m_s=cos(yaw) * north_velocity + sin(yaw) * east_velocity,
+        y_m_s=-sin(yaw) * north_velocity + cos(yaw) * east_velocity,
+        z_m_s=0.0,
+        yaw_rate_deg_s=0.0,
+    )
+
+
+def cross_track_error_m(
+    *,
+    north_error_m: float,
+    east_error_m: float,
+    path_north_m: float,
+    path_east_m: float,
+) -> float:
+    """Return signed target-error component normal to the original route."""
+    for name, value in {
+        "north_error_m": north_error_m,
+        "east_error_m": east_error_m,
+        "path_north_m": path_north_m,
+        "path_east_m": path_east_m,
+    }.items():
+        _require_finite(name, value)
+    path_length_m = hypot(path_north_m, path_east_m)
+    if not isfinite(path_length_m) or path_length_m <= 0.0:
+        raise OffboardRouteError("The mission path direction must be non-zero.")
+    # Dot the target error against the route's right-hand normal.
+    return (
+        east_error_m * path_north_m - north_error_m * path_east_m
+    ) / path_length_m
+
+
 def _require_finite(name: str, value: float) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
         raise OffboardRouteError(f"{name} must be a finite number.")

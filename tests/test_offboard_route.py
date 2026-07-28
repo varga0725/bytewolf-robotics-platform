@@ -6,6 +6,8 @@ from dataclasses import FrozenInstanceError
 from brain.navigation.offboard_route import (
     OffboardRouteError,
     RouteVelocityDecision,
+    body_cross_track_velocity,
+    cross_track_error_m,
     plan_body_velocity,
 )
 
@@ -82,6 +84,29 @@ class OffboardRoutePlannerTests(unittest.TestCase):
 
         self.assertAlmostEqual(positive.velocity.x_m_s, negative.velocity.x_m_s)
         self.assertAlmostEqual(positive.velocity.y_m_s, negative.velocity.y_m_s)
+
+    def test_cross_track_commands_and_progress_are_world_path_relative(self) -> None:
+        # A GUI vehicle may launch at any yaw.  A northbound route's right-hand
+        # bypass remains eastward in NED, rather than becoming body-right.
+        right = body_cross_track_velocity(
+            path_north_m=15.0,
+            path_east_m=0.0,
+            heading_deg=96.552,
+            lateral_speed_m_s=0.4,
+            right=True,
+        )
+        self.assertAlmostEqual(right.x_m_s, 0.397, places=3)
+        self.assertAlmostEqual(right.y_m_s, -0.046, places=3)
+        self.assertAlmostEqual(right.speed_m_s, 0.4, places=6)
+        self.assertEqual(
+            cross_track_error_m(
+                north_error_m=15.0,
+                east_error_m=-3.0,
+                path_north_m=15.0,
+                path_east_m=0.0,
+            ),
+            -3.0,
+        )
 
     def test_heading_outside_the_telemetry_contract_fails_closed(self) -> None:
         for heading in (-180.001, 180.001, sys.float_info.max):

@@ -88,8 +88,10 @@ def _observation_with_side_clearance(*, at: datetime = NOW):
                 "sensor": {"id": "lidar_2d_v2", "min_range_m": 0.1, "max_range_m": 30.0},
                 "sectors": [
                     {"yaw_deg": 0.0, "width_deg": 30.0, "coverage": "measured", "distance_m": 1.0},
+                    {"yaw_deg": -45.0, "width_deg": 30.0, "coverage": "measured", "distance_m": 1.0},
                     {"yaw_deg": 90.0, "width_deg": 30.0, "coverage": "clear"},
                     {"yaw_deg": -90.0, "width_deg": 30.0, "coverage": "clear"},
+                    {"yaw_deg": 45.0, "width_deg": 30.0, "coverage": "clear"},
                 ],
             },
         }
@@ -368,18 +370,20 @@ class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
                 replanner=LocalReplanner(lateral_speed_m_s=0.7),
             )
 
-    async def test_replanner_refuses_a_non_north_heading_until_cross_track_projection_exists(self) -> None:
-        executor, _events, fallback = self.executor(
+    async def test_replanner_rotates_cross_track_detour_for_a_non_north_heading(self) -> None:
+        executor, events, fallback = self.executor(
             [RouteState(5.0, 0.0, 0.0, 45.0, NOW)],
             [_observation_with_side_clearance()],
             replanner=LocalReplanner(lateral_speed_m_s=0.4),
         )
 
-        with self.assertRaisesRegex(
-            OffboardRouteExecutionError, r"due-north.*45\.000"
-        ):
+        with self.assertRaises(OffboardRouteExecutionError):
             await executor.run(arrival_tolerance_m=0.5, timeout_s=1.0)
 
+        sent = [event[1] for event in events if isinstance(event, tuple) and event[0] == "send"]
+        detour = next(velocity for velocity in sent if velocity.speed_m_s > 0.0)
+        self.assertAlmostEqual(detour.x_m_s, 0.4 / 2**0.5, places=3)
+        self.assertAlmostEqual(detour.y_m_s, 0.4 / 2**0.5, places=3)
         self.assertEqual(fallback.calls, [("zero_velocity", "hold", "land")])
 
     async def test_replanner_stops_a_cruising_vehicle_before_a_slewed_detour(self) -> None:

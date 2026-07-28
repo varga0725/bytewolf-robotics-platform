@@ -16,7 +16,12 @@ from brain.control.contract import Velocity, load_setpoint
 from brain.control.session import OffboardSession
 from brain.control.shield import RuntimeSafetyShield, ShieldMode, ShieldVerdict
 from brain.navigation.local_replanner import LocalReplanner, ReplanMode
-from brain.navigation.offboard_route import OffboardRouteError, plan_body_velocity
+from brain.navigation.offboard_route import (
+    OffboardRouteError,
+    body_cross_track_velocity,
+    cross_track_error_m,
+    plan_body_velocity,
+)
 from brain.safety.profile import SafetyProfile
 from brain.telemetry.observation import Observation
 
@@ -201,6 +206,8 @@ class OffboardRouteExecutor:
         last_delivered = Velocity(0.0, 0.0, 0.0, 0.0)
         last_delivered_monotonic: float | None = None
         active_setpoint_deadline: float | None = None
+        path_north_m: float | None = None
+        path_east_m: float | None = None
 
         async def execute_fallback(sequence: Sequence[str]) -> FallbackRecord:
             nonlocal fallback_task
@@ -265,11 +272,9 @@ class OffboardRouteExecutor:
                     now = self._utc_now()
                     issuance_monotonic = self._monotonic()
                     self._require_fresh_state(state, now)
-                    if self._replanner is not None and abs(state.heading_deg) > 5.0:
-                        raise OffboardRouteError(
-                            "The v0 local detour is restricted to the due-north GUI scenario "
-                            f"(canonical heading {state.heading_deg:.3f} deg)."
-                        )
+                    if self._replanner is not None and path_north_m is None:
+                        path_north_m = state.north_error_m
+                        path_east_m = state.east_error_m
                     nominal = plan_body_velocity(
                         north_error_m=state.north_error_m,
                         east_error_m=state.east_error_m,
@@ -311,10 +316,20 @@ class OffboardRouteExecutor:
                 decision = primary_decision
                 selected_mode = ReplanMode.DIRECT
                 detour_active = self._replanner is not None and self._replanner.mode is not ReplanMode.DIRECT
+                cross_track_error = None
+                if self._replanner is not None:
+                    if path_north_m is None or path_east_m is None:
+                        raise RuntimeError("The replanner route basis was not initialized.")
+                    cross_track_error = cross_track_error_m(
+                        north_error_m=state.north_error_m,
+                        east_error_m=state.east_error_m,
+                        path_north_m=path_north_m,
+                        path_east_m=path_east_m,
+                    )
                 if self._replanner is not None and (
                     primary_decision.verdict is ShieldVerdict.INSUFFICIENT_CLEARANCE
                     or (detour_active and not self._replanner.may_resume_direct(
-                        east_error_m=state.east_error_m
+                        cross_track_error_m=cross_track_error
                     ))
                 ):
                     self._replanner.note_blocked(
@@ -327,9 +342,25 @@ class OffboardRouteExecutor:
                         await fail(
                             "The bounded local detour made no route progress.",
                             RouteTerminalReason.INTERNAL_FAILURE,
-                        )
+                    )
                     if self._replanner.ready(now_s=issuance_monotonic):
-                        for candidate in self._replanner.candidates(nominal_velocity):
+                        right_velocity = body_cross_track_velocity(
+                            path_north_m=path_north_m,
+                            path_east_m=path_east_m,
+                            heading_deg=state.heading_deg,
+                            lateral_speed_m_s=self._replanner.lateral_speed_m_s,
+                            right=True,
+                        )
+                        left_velocity = body_cross_track_velocity(
+                            path_north_m=path_north_m,
+                            path_east_m=path_east_m,
+                            heading_deg=state.heading_deg,
+                            lateral_speed_m_s=self._replanner.lateral_speed_m_s,
+                            right=False,
+                        )
+                        for candidate in self._replanner.candidates(
+                            right_velocity=right_velocity, left_velocity=left_velocity
+                        ):
                             transitional_velocity = _slew_velocity(
                                 last_delivered,
                                 candidate.velocity,
@@ -343,7 +374,7 @@ class OffboardRouteExecutor:
                                 selected_mode = candidate.mode
                                 self._replanner.select(
                                     candidate.mode, now_s=issuance_monotonic,
-                                    east_error_m=state.east_error_m,
+                                    cross_track_error_m=cross_track_error,
                                 )
                                 break
                 elif (

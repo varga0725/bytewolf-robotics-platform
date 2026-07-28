@@ -50,7 +50,7 @@ class LocalReplanner:
         self._mode = ReplanMode.DIRECT
         self._ready_at_s: float | None = None
         self._detour_at_s: float | None = None
-        self._detour_east_error_m: float | None = None
+        self._detour_cross_track_error_m: float | None = None
 
     @property
     def mode(self) -> ReplanMode:
@@ -83,44 +83,47 @@ class LocalReplanner:
             and now_s - self._detour_at_s >= self._max_detour_s
         )
 
-    def may_resume_direct(self, *, east_error_m: float) -> bool:
-        if not isfinite(east_error_m):
-            raise ValueError("east_error_m must be finite.")
-        return self._detour_east_error_m is not None and abs(
-            east_error_m - self._detour_east_error_m
+    def may_resume_direct(self, *, cross_track_error_m: float) -> bool:
+        if not isfinite(cross_track_error_m):
+            raise ValueError("cross_track_error_m must be finite.")
+        return self._detour_cross_track_error_m is not None and abs(
+            cross_track_error_m - self._detour_cross_track_error_m
         ) >= self._required_bypass_offset_m
 
-    def candidates(self, direct_velocity: Velocity) -> tuple[RouteCandidate, ...]:
-        """Return right/left candidates, prioritising the previously safe side."""
-        if direct_velocity.speed_m_s <= 0.0:
+    def candidates(
+        self, *, right_velocity: Velocity, left_velocity: Velocity
+    ) -> tuple[RouteCandidate, ...]:
+        """Return route-relative candidates, prioritising the safe side.
+
+        The caller rotates the route's world-frame cross-track vectors into
+        ``body_frd`` using the current heading.  This class retains only the
+        bounded selection and progress state.
+        """
+        if right_velocity.speed_m_s <= 0.0 or left_velocity.speed_m_s <= 0.0:
             return ()
-        right = RouteCandidate(
-            ReplanMode.RIGHT,
-            Velocity(0.0, self._lateral_speed_m_s, 0.0, 0.0),
-        )
-        left = RouteCandidate(
-            ReplanMode.LEFT,
-            Velocity(0.0, -self._lateral_speed_m_s, 0.0, 0.0),
-        )
+        right = RouteCandidate(ReplanMode.RIGHT, right_velocity)
+        left = RouteCandidate(ReplanMode.LEFT, left_velocity)
         return (left, right) if self._mode is ReplanMode.LEFT else (right, left)
 
-    def select(self, mode: ReplanMode, *, now_s: float, east_error_m: float = 0.0) -> None:
+    def select(
+        self, mode: ReplanMode, *, now_s: float, cross_track_error_m: float = 0.0
+    ) -> None:
         if mode not in (ReplanMode.RIGHT, ReplanMode.LEFT):
             raise ValueError("Only an accepted lateral detour can be selected.")
         if not isfinite(now_s):
             raise ValueError("now_s must be finite.")
-        if not isfinite(east_error_m):
-            raise ValueError("east_error_m must be finite.")
+        if not isfinite(cross_track_error_m):
+            raise ValueError("cross_track_error_m must be finite.")
         self._mode = mode
         if self._detour_at_s is None:
             self._detour_at_s = now_s
-            self._detour_east_error_m = east_error_m
+            self._detour_cross_track_error_m = cross_track_error_m
 
     def clear(self) -> None:
         self._mode = ReplanMode.DIRECT
         self._ready_at_s = None
         self._detour_at_s = None
-        self._detour_east_error_m = None
+        self._detour_cross_track_error_m = None
 
 
 __all__ = ["LocalReplanner", "ReplanMode", "RouteCandidate"]
