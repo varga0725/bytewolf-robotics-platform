@@ -70,12 +70,16 @@ _SAFE_REJOIN_OVERSHOOT_M = 0.5
 _ACCEPTANCE_ROUTE_SPEED_M_S = 0.6
 
 
-def _acceptance_profile(profile):
+def _acceptance_profile(profile, *, route_speed_m_s: float = _ACCEPTANCE_ROUTE_SPEED_M_S):
     """Enable the scenario layers while narrowing its route speed envelope."""
     assert profile.offboard is not None and profile.shield is not None
+    if not isfinite(route_speed_m_s) or route_speed_m_s <= 0.0:
+        raise ValueError("The acceptance route speed must be positive and finite.")
+    if route_speed_m_s > profile.max_speed_m_s:
+        raise ValueError("The acceptance route speed exceeds the vehicle envelope.")
     return replace(
         profile,
-        max_speed_m_s=min(profile.max_speed_m_s, _ACCEPTANCE_ROUTE_SPEED_M_S),
+        max_speed_m_s=route_speed_m_s,
         offboard=_enabled(profile.offboard),
         shield=_enabled(profile.shield),
     )
@@ -89,6 +93,7 @@ def run_avoidance_route_scenario(
     route_timeout_s: float = 75.0,
     startup_wait_s: float = 32.0,
     gui: bool = True,
+    route_speed_m_s: float = _ACCEPTANCE_ROUTE_SPEED_M_S,
 ) -> AvoidanceRouteReport:
     """Run a visible, finite-wall avoidance route and persist its evidence."""
     artifact_directory.mkdir(parents=True, exist_ok=True)
@@ -117,6 +122,7 @@ def run_avoidance_route_scenario(
                 route_timeout_s=route_timeout_s,
                 scan_path=scan_path,
                 pose_path=pose_path,
+                route_speed_m_s=route_speed_m_s,
             )
         )
     finally:
@@ -143,12 +149,13 @@ async def _fly_avoidance_route(
     route_timeout_s: float,
     scan_path: Path,
     pose_path: Path,
+    route_speed_m_s: float,
 ) -> AvoidanceRouteReport:
     from mavsdk import System
 
     profile = load_safety_profile()
     assert profile.offboard is not None and profile.shield is not None
-    scenario_profile = _acceptance_profile(profile)
+    scenario_profile = _acceptance_profile(profile, route_speed_m_s=route_speed_m_s)
     system = System()
     await system.connect(system_address=_ENDPOINT)
     await _await_connection(system)
@@ -378,6 +385,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run visible PX4/Gazebo obstacle avoidance evidence.")
     parser.add_argument("--artifact-dir", type=Path, default=Path("simulation/artifacts/control/avoidance-route"))
     parser.add_argument("--route-timeout-seconds", type=float, default=75.0)
+    parser.add_argument("--route-speed-m-s", type=float, default=_ACCEPTANCE_ROUTE_SPEED_M_S)
     parser.add_argument("--startup-wait-seconds", type=float, default=32.0)
     parser.add_argument("--no-gui", action="store_true")
     args = parser.parse_args()
@@ -386,6 +394,7 @@ def main() -> int:
         route_timeout_s=args.route_timeout_seconds,
         startup_wait_s=args.startup_wait_seconds,
         gui=not args.no_gui,
+        route_speed_m_s=args.route_speed_m_s,
     )
     for finding in report.findings:
         print(f"FAIL: {finding}")
