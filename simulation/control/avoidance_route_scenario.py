@@ -44,6 +44,7 @@ class AvoidanceRouteReport:
     execution_error: str | None
     route_reached: bool
     passed: bool
+    trace: list[AvoidanceRouteSample] = field(default_factory=list)
     findings: list[str] = field(default_factory=list)
 
 
@@ -173,6 +174,7 @@ def evaluate_avoidance_route_run(
         route_reached=route_reached,
         passed=not findings,
         findings=findings,
+        trace=list(samples),
     )
 
 
