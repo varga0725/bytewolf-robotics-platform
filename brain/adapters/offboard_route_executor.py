@@ -305,10 +305,12 @@ class OffboardRouteExecutor:
                 )
                 decision = primary_decision
                 selected_mode = ReplanMode.DIRECT
-                if (
-                    self._replanner is not None
-                    and primary_decision.verdict
-                    is ShieldVerdict.INSUFFICIENT_CLEARANCE
+                detour_active = self._replanner is not None and self._replanner.mode is not ReplanMode.DIRECT
+                if self._replanner is not None and (
+                    primary_decision.verdict is ShieldVerdict.INSUFFICIENT_CLEARANCE
+                    or (detour_active and not self._replanner.may_resume_direct(
+                        east_error_m=state.east_error_m
+                    ))
                 ):
                     self._replanner.note_blocked(
                         now_s=issuance_monotonic,
@@ -335,7 +337,8 @@ class OffboardRouteExecutor:
                                 decision = candidate_decision
                                 selected_mode = candidate.mode
                                 self._replanner.select(
-                                    candidate.mode, now_s=issuance_monotonic
+                                    candidate.mode, now_s=issuance_monotonic,
+                                    east_error_m=state.east_error_m,
                                 )
                                 break
                 elif (

@@ -47,6 +47,11 @@ class LocalReplannerTests(unittest.TestCase):
         self.assertFalse(self.replanner.exhausted(now_s=14.7))
         self.assertTrue(self.replanner.exhausted(now_s=14.82))
 
+    def test_direct_resume_requires_the_configured_bypass_offset(self) -> None:
+        self.replanner.select(ReplanMode.RIGHT, now_s=1.0, east_error_m=5.0)
+        self.assertFalse(self.replanner.may_resume_direct(east_error_m=2.1))
+        self.assertTrue(self.replanner.may_resume_direct(east_error_m=2.0))
+
 
 if __name__ == "__main__":
     unittest.main()

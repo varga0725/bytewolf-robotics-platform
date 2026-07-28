@@ -35,17 +35,22 @@ class LocalReplanner:
     """
 
     def __init__(
-        self, *, lateral_speed_m_s: float, max_detour_s: float = 12.0
+        self, *, lateral_speed_m_s: float, max_detour_s: float = 12.0,
+        required_bypass_offset_m: float = 3.0,
     ) -> None:
         if not isfinite(lateral_speed_m_s) or lateral_speed_m_s <= 0.0:
             raise ValueError("lateral_speed_m_s must be positive and finite.")
         if not isfinite(max_detour_s) or max_detour_s <= 0.0:
             raise ValueError("max_detour_s must be positive and finite.")
+        if not isfinite(required_bypass_offset_m) or required_bypass_offset_m <= 0.0:
+            raise ValueError("required_bypass_offset_m must be positive and finite.")
         self._lateral_speed_m_s = lateral_speed_m_s
         self._max_detour_s = max_detour_s
+        self._required_bypass_offset_m = required_bypass_offset_m
         self._mode = ReplanMode.DIRECT
         self._ready_at_s: float | None = None
         self._detour_at_s: float | None = None
+        self._detour_east_error_m: float | None = None
 
     @property
     def mode(self) -> ReplanMode:
@@ -78,6 +83,13 @@ class LocalReplanner:
             and now_s - self._detour_at_s >= self._max_detour_s
         )
 
+    def may_resume_direct(self, *, east_error_m: float) -> bool:
+        if not isfinite(east_error_m):
+            raise ValueError("east_error_m must be finite.")
+        return self._detour_east_error_m is not None and abs(
+            east_error_m - self._detour_east_error_m
+        ) >= self._required_bypass_offset_m
+
     def candidates(self, direct_velocity: Velocity) -> tuple[RouteCandidate, ...]:
         """Return right/left candidates, prioritising the previously safe side."""
         if direct_velocity.speed_m_s <= 0.0:
@@ -92,19 +104,23 @@ class LocalReplanner:
         )
         return (left, right) if self._mode is ReplanMode.LEFT else (right, left)
 
-    def select(self, mode: ReplanMode, *, now_s: float) -> None:
+    def select(self, mode: ReplanMode, *, now_s: float, east_error_m: float = 0.0) -> None:
         if mode not in (ReplanMode.RIGHT, ReplanMode.LEFT):
             raise ValueError("Only an accepted lateral detour can be selected.")
         if not isfinite(now_s):
             raise ValueError("now_s must be finite.")
+        if not isfinite(east_error_m):
+            raise ValueError("east_error_m must be finite.")
         self._mode = mode
         if self._detour_at_s is None:
             self._detour_at_s = now_s
+            self._detour_east_error_m = east_error_m
 
     def clear(self) -> None:
         self._mode = ReplanMode.DIRECT
         self._ready_at_s = None
         self._detour_at_s = None
+        self._detour_east_error_m = None
 
 
 __all__ = ["LocalReplanner", "ReplanMode", "RouteCandidate"]
