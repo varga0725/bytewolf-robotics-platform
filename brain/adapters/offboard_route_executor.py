@@ -14,7 +14,8 @@ import uuid
 from brain.adapters.offboard_fallback import FallbackRecord
 from brain.control.contract import Velocity, load_setpoint
 from brain.control.session import OffboardSession
-from brain.control.shield import RuntimeSafetyShield, ShieldMode
+from brain.control.shield import RuntimeSafetyShield, ShieldMode, ShieldVerdict
+from brain.navigation.local_replanner import LocalReplanner, ReplanMode
 from brain.navigation.offboard_route import OffboardRouteError, plan_body_velocity
 from brain.safety.profile import SafetyProfile
 from brain.telemetry.observation import Observation
@@ -70,6 +71,8 @@ class RouteTick:
     commanded_velocity: Velocity
     delivered: bool
     sensed_distance_m: float | None
+    primary_verdict: str
+    selected_mode: str
 
 
 class RouteTerminalReason(str, Enum):
@@ -114,6 +117,7 @@ class OffboardRouteExecutor:
         telemetry_max_age_s: float,
         max_vertical_speed_m_s: float,
         slowdown_radius_m: float,
+        replanner: LocalReplanner | None = None,
         fallback_timeout_s: float = 20.0,
         fallback_cancel_grace_s: float = 1.0,
         stream_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
@@ -141,6 +145,12 @@ class OffboardRouteExecutor:
             raise ValueError("fallback_timeout_s must be positive and finite.")
         if not isfinite(fallback_cancel_grace_s) or fallback_cancel_grace_s <= 0:
             raise ValueError("fallback_cancel_grace_s must be positive and finite.")
+        if (
+            replanner is not None
+            and replanner.lateral_speed_m_s
+            > profile.max_speed_m_s * _SLEW_NUMERIC_MARGIN
+        ):
+            raise ValueError("The replanner lateral speed exceeds the route envelope.")
         self._profile = profile
         self._adapter = adapter
         # Construct the policy-bearing components here. Accepting injected
@@ -159,6 +169,7 @@ class OffboardRouteExecutor:
         self._telemetry_max_age_s = telemetry_max_age_s
         self._max_vertical_speed_m_s = max_vertical_speed_m_s
         self._slowdown_radius_m = slowdown_radius_m
+        self._replanner = replanner
         self._fallback_timeout_s = fallback_timeout_s
         self._fallback_cancel_grace_s = fallback_cancel_grace_s
         self._stream_id_factory = stream_id_factory
@@ -266,9 +277,7 @@ class OffboardRouteExecutor:
                         arrival_tolerance_m=arrival_tolerance_m,
                         slowdown_radius_m=self._slowdown_radius_m,
                     )
-                    nominal_velocity = _slew_velocity(
-                        last_delivered,
-                        nominal.velocity,
+                    slew_budget_m_s = (
                         self._profile.offboard.max_acceleration_m_s2
                         * _SLEW_NUMERIC_MARGIN
                         * (
@@ -278,7 +287,12 @@ class OffboardRouteExecutor:
                                 issuance_monotonic - last_delivered_monotonic,
                                 0.0,
                             )
-                        ),
+                        )
+                    )
+                    nominal_velocity = _slew_velocity(
+                        last_delivered,
+                        nominal.velocity,
+                        slew_budget_m_s,
                     )
                 except (OffboardRouteError, ValueError, TypeError) as error:
                     await fail(
@@ -286,11 +300,51 @@ class OffboardRouteExecutor:
                         RouteTerminalReason.INPUT_REJECTED,
                     )
 
-                decision = self._shield.evaluate(
+                primary_decision = self._shield.evaluate(
                     nominal_velocity, observation, now
                 )
+                decision = primary_decision
+                selected_mode = ReplanMode.DIRECT
+                if (
+                    self._replanner is not None
+                    and primary_decision.verdict
+                    is ShieldVerdict.INSUFFICIENT_CLEARANCE
+                ):
+                    self._replanner.note_blocked(
+                        now_s=issuance_monotonic,
+                        stop_duration_s=self._shield.stopping_time_s(
+                            last_delivered.speed_m_s
+                        ),
+                    )
+                    if self._replanner.exhausted(now_s=issuance_monotonic):
+                        await fail(
+                            "The bounded local detour made no route progress.",
+                            RouteTerminalReason.INTERNAL_FAILURE,
+                        )
+                    if self._replanner.ready(now_s=issuance_monotonic):
+                        for candidate in self._replanner.candidates(nominal_velocity):
+                            transitional_velocity = _slew_velocity(
+                                last_delivered,
+                                candidate.velocity,
+                                slew_budget_m_s,
+                            )
+                            candidate_decision = self._shield.evaluate(
+                                transitional_velocity, observation, now
+                            )
+                            if candidate_decision.verdict is ShieldVerdict.CLEAR:
+                                decision = candidate_decision
+                                selected_mode = candidate.mode
+                                self._replanner.select(
+                                    candidate.mode, now_s=issuance_monotonic
+                                )
+                                break
+                elif (
+                    self._replanner is not None
+                    and primary_decision.verdict is ShieldVerdict.CLEAR
+                ):
+                    self._replanner.clear()
                 final_verdict = decision.verdict.value
-                if decision.verdict.blocks_motion:
+                if primary_decision.verdict.blocks_motion:
                     interventions += 1
                 setpoint = load_setpoint(
                     self._setpoint_document(
@@ -318,7 +372,9 @@ class OffboardRouteExecutor:
                             verdict=decision.verdict.value,
                             commanded_velocity=decision.velocity,
                             delivered=delivered.delivered,
-                            sensed_distance_m=decision.clearance_m,
+                            sensed_distance_m=primary_decision.clearance_m,
+                            primary_verdict=primary_decision.verdict.value,
+                            selected_mode=selected_mode.value,
                         )
                     )
                 if delivered.watchdog.requires_fallback:

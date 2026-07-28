@@ -10,6 +10,7 @@ from brain.adapters.offboard_route_executor import (
     RouteState,
 )
 from brain.control.contract import Velocity
+from brain.navigation.local_replanner import LocalReplanner
 from brain.safety.profile import OffboardLimits, SafetyProfile, ShieldLimits
 from brain.telemetry.observation import load_observation
 
@@ -68,6 +69,28 @@ def _observation(*, distance_m: float | None = None, at: datetime = NOW):
                     "max_range_m": 30.0,
                 },
                 "sectors": [sector],
+            },
+        }
+    )
+
+
+def _observation_with_side_clearance(*, at: datetime = NOW):
+    return load_observation(
+        {
+            "contract_version": "v0.1",
+            "vehicle_id": "x500v2_reference_01",
+            "observed_at": at.isoformat().replace("+00:00", "Z"),
+            "max_age_s": 1.0,
+            "kind": "obstacle",
+            "validity": "valid",
+            "payload": {
+                "frame": "body_frd",
+                "sensor": {"id": "lidar_2d_v2", "min_range_m": 0.1, "max_range_m": 30.0},
+                "sectors": [
+                    {"yaw_deg": 0.0, "width_deg": 30.0, "coverage": "measured", "distance_m": 1.0},
+                    {"yaw_deg": 90.0, "width_deg": 30.0, "coverage": "clear"},
+                    {"yaw_deg": -90.0, "width_deg": 30.0, "coverage": "clear"},
+                ],
             },
         }
     )
@@ -202,7 +225,7 @@ def _state(north_error_m: float, *, at: datetime = NOW) -> RouteState:
 
 
 class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
-    def executor(self, states, observations, *, adapter_factory=None, tick_observer=None):
+    def executor(self, states, observations, *, adapter_factory=None, tick_observer=None, replanner=None):
         profile = _profile()
         clock = FakeClock()
         events = []
@@ -225,6 +248,7 @@ class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
             telemetry_max_age_s=0.5,
             max_vertical_speed_m_s=0.5,
             slowdown_radius_m=3.0,
+            replanner=replanner,
             stream_id_factory=lambda: "route-a",
             tick_observer=tick_observer,
         )
@@ -318,6 +342,64 @@ class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
         sent = [event[1] for event in events if isinstance(event, tuple) and event[0] == "send"]
         self.assertGreater(sent[0].speed_m_s, 0.0)
         self.assertEqual(sent[1].speed_m_s, 0.0)
+
+    async def test_replanner_detour_is_still_vetted_by_the_active_shield(self) -> None:
+        ticks = []
+        executor, events, _fallback = self.executor(
+            [_state(5.0)],
+            [_observation_with_side_clearance()],
+            replanner=LocalReplanner(lateral_speed_m_s=0.4),
+            tick_observer=ticks.append,
+        )
+
+        with self.assertRaises(OffboardRouteExecutionError):
+            await executor.run(arrival_tolerance_m=0.5, timeout_s=0.2)
+
+        sent = [event[1] for event in events if isinstance(event, tuple) and event[0] == "send"]
+        self.assertTrue(any(velocity.y_m_s > 0.0 for velocity in sent))
+        self.assertEqual(ticks[0].primary_verdict, "insufficient_clearance")
+        self.assertEqual(ticks[0].selected_mode, "right")
+
+    def test_rejects_a_replanner_outside_the_route_speed_envelope(self) -> None:
+        with self.assertRaisesRegex(ValueError, "lateral speed"):
+            self.executor(
+                [_state(5.0)],
+                [_observation()],
+                replanner=LocalReplanner(lateral_speed_m_s=0.7),
+            )
+
+    async def test_replanner_stops_a_cruising_vehicle_before_a_slewed_detour(self) -> None:
+        ticks = []
+        executor, events, _fallback = self.executor(
+            [
+                _state(5.0),
+                _state(4.9, at=NOW + timedelta(seconds=0.2)),
+                _state(4.8, at=NOW + timedelta(seconds=0.4)),
+                _state(4.7, at=NOW + timedelta(seconds=0.6)),
+                _state(4.6, at=NOW + timedelta(seconds=0.8)),
+                _state(4.5, at=NOW + timedelta(seconds=1.0)),
+            ],
+            [
+                _observation(),
+                _observation_with_side_clearance(at=NOW + timedelta(seconds=0.2)),
+                _observation_with_side_clearance(at=NOW + timedelta(seconds=0.4)),
+                _observation_with_side_clearance(at=NOW + timedelta(seconds=0.6)),
+                _observation_with_side_clearance(at=NOW + timedelta(seconds=0.8)),
+                _observation_with_side_clearance(at=NOW + timedelta(seconds=1.0)),
+            ],
+            replanner=LocalReplanner(lateral_speed_m_s=0.4),
+            tick_observer=ticks.append,
+        )
+
+        with self.assertRaises(OffboardRouteExecutionError):
+            await executor.run(arrival_tolerance_m=0.5, timeout_s=1.2)
+
+        sent = [event[1] for event in events if isinstance(event, tuple) and event[0] == "send"]
+        detour_index = next(index for index, velocity in enumerate(sent) if velocity.y_m_s > 0.0)
+        self.assertGreaterEqual(detour_index, 4)
+        self.assertTrue(all(velocity.speed_m_s == 0.0 for velocity in sent[1:detour_index]))
+        self.assertLessEqual(sent[detour_index].speed_m_s, 0.4)
+        self.assertEqual(ticks[detour_index].selected_mode, "right")
 
     async def test_a_temporary_obstacle_can_clear_without_an_acceleration_rejection(self) -> None:
         executor, events, fallback = self.executor(
