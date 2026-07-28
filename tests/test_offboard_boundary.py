@@ -194,6 +194,40 @@ class RateTests(unittest.TestCase):
 
         self.assertTrue(boundary.evaluate(_setpoint(sequence=2, at=later), later).approved)
 
+    def test_an_emergency_stop_is_accepted_between_regular_stream_ticks(self) -> None:
+        boundary = OffboardBoundary(_profile(offboard=_limits(max_rate_hz=10.0)))
+        boundary.evaluate(_setpoint(sequence=1), NOW)
+        soon = NOW + timedelta(milliseconds=10)
+        stopped = {
+            "x_m_s": 0.0,
+            "y_m_s": 0.0,
+            "z_m_s": 0.0,
+            "yaw_rate_deg_s": 0.0,
+        }
+
+        decision = boundary.evaluate(
+            _setpoint(sequence=2, at=soon, velocity=stopped), soon
+        )
+
+        self.assertTrue(decision.approved)
+
+    def test_repeated_zero_commands_remain_rate_limited(self) -> None:
+        boundary = OffboardBoundary(_profile(offboard=_limits(max_rate_hz=10.0)))
+        stopped = {
+            "x_m_s": 0.0,
+            "y_m_s": 0.0,
+            "z_m_s": 0.0,
+            "yaw_rate_deg_s": 0.0,
+        }
+        boundary.evaluate(_setpoint(sequence=1, velocity=stopped), NOW)
+        soon = NOW + timedelta(milliseconds=10)
+
+        decision = boundary.evaluate(
+            _setpoint(sequence=2, at=soon, velocity=stopped), soon
+        )
+
+        self.assertIs(decision.reason, RejectionReason.RATE_TOO_HIGH)
+
 
 class EnvelopeTests(unittest.TestCase):
     def test_a_speed_over_the_limit_is_refused_not_clamped(self) -> None:
@@ -245,6 +279,76 @@ class EnvelopeTests(unittest.TestCase):
 
 
 class AccelerationTests(unittest.TestCase):
+    def test_an_exact_stop_is_never_rejected_by_the_acceleration_envelope(self) -> None:
+        """The shield's emergency zero must be deliverable on the next tick.
+
+        PX4 still performs the physical deceleration; this boundary limits the
+        requested stream. Rejecting the request to stop would leave MAVSDK
+        re-sending the last moving setpoint at 20 Hz.
+        """
+        boundary = OffboardBoundary(_profile(offboard=_limits(max_acceleration_m_s2=2.0)))
+        boundary.evaluate(
+            _setpoint(
+                sequence=1,
+                velocity={
+                    "x_m_s": 0.6,
+                    "y_m_s": 0.0,
+                    "z_m_s": 0.0,
+                    "yaw_rate_deg_s": 0.0,
+                },
+            ),
+            NOW,
+        )
+        later = NOW + timedelta(milliseconds=200)
+
+        decision = boundary.evaluate(
+            _setpoint(
+                sequence=2,
+                at=later,
+                velocity={
+                    "x_m_s": 0.0,
+                    "y_m_s": 0.0,
+                    "z_m_s": 0.0,
+                    "yaw_rate_deg_s": 0.0,
+                },
+            ),
+            later,
+        )
+
+        self.assertTrue(decision.approved)
+
+    def test_a_near_zero_motion_is_not_misclassified_as_an_emergency_stop(self) -> None:
+        boundary = OffboardBoundary(_profile(offboard=_limits(max_acceleration_m_s2=2.0)))
+        boundary.evaluate(
+            _setpoint(
+                sequence=1,
+                velocity={
+                    "x_m_s": 0.6,
+                    "y_m_s": 0.0,
+                    "z_m_s": 0.0,
+                    "yaw_rate_deg_s": 0.0,
+                },
+            ),
+            NOW,
+        )
+        later = NOW + timedelta(milliseconds=200)
+
+        decision = boundary.evaluate(
+            _setpoint(
+                sequence=2,
+                at=later,
+                velocity={
+                    "x_m_s": 0.01,
+                    "y_m_s": 0.0,
+                    "z_m_s": 0.0,
+                    "yaw_rate_deg_s": 0.0,
+                },
+            ),
+            later,
+        )
+
+        self.assertIs(decision.reason, RejectionReason.ACCELERATION_TOO_HIGH)
+
     def test_a_step_change_no_airframe_could_follow_is_refused(self) -> None:
         # Both endpoints are inside the speed limit; the step between them is
         # not something to discover in flight.

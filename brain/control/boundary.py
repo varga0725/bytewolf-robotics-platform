@@ -147,7 +147,7 @@ class OffboardBoundary:
         ordering = self._check_ordering(setpoint)
         if ordering is not None:
             return ordering
-        rate = self._check_rate(now)
+        rate = self._check_rate(setpoint.velocity, now)
         if rate is not None:
             return rate
 
@@ -188,8 +188,15 @@ class OffboardBoundary:
             )
         return None
 
-    def _check_rate(self, now: datetime) -> BoundaryDecision | None:
+    def _check_rate(self, velocity: Velocity, now: datetime) -> BoundaryDecision | None:
         if self._last_accepted_at is None:
+            return None
+        if self._is_emergency_translational_stop(velocity):
+            # A shield revocation is allowed to arrive between regular stream
+            # ticks. Rate-limiting this single moving->zero transition would
+            # preserve the last moving setpoint until the next admissible tick.
+            # Repeated zero commands are not exempt because the accepted state
+            # becomes zero immediately.
             return None
         interval_s = (now - self._last_accepted_at).total_seconds()
         minimum_interval_s = 1.0 / self._limits.max_rate_hz
@@ -231,6 +238,15 @@ class OffboardBoundary:
         is one no airframe can follow; what PX4 would do with such a command is
         not something to find out in flight.
         """
+        if self._is_emergency_translational_stop(velocity):
+            # A requested stop is different from a requested acceleration.
+            # MAVSDK keeps publishing the last accepted body setpoint at 20 Hz,
+            # so refusing the shield's exact zero here would actively preserve
+            # the moving command the shield just revoked. PX4 remains the layer
+            # that performs the physical deceleration within the airframe's
+            # controller limits; this exception only guarantees that asking it
+            # to stop cannot be blocked by the command-change envelope.
+            return None
         if self._last_velocity is None or self._last_accepted_at is None:
             return None
         interval_s = (now - self._last_accepted_at).total_seconds()
@@ -254,6 +270,21 @@ class OffboardBoundary:
                 f"the {self._limits.max_acceleration_m_s2:g} m/s^2 limit.",
             )
         return None
+
+    def _is_emergency_translational_stop(self, velocity: Velocity) -> bool:
+        """Whether this command revokes a previously accepted translation."""
+        if self._last_velocity is None:
+            return False
+        was_moving = any(
+            component != 0.0
+            for component in (
+                self._last_velocity.x_m_s,
+                self._last_velocity.y_m_s,
+                self._last_velocity.z_m_s,
+            )
+        )
+        is_stopped = velocity.x_m_s == velocity.y_m_s == velocity.z_m_s == 0.0
+        return was_moving and is_stopped
 
     def _accept(self, setpoint: OffboardSetpoint, now: datetime) -> None:
         self._stream_id = setpoint.stream_id
