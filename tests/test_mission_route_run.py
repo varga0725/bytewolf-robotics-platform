@@ -14,6 +14,7 @@ from simulation.control.mission_route_run import (
     _canonical_heading,
     _ensure_termination,
     _fresh_surface_clearance,
+    _simulation_environment,
 )
 from brain.adapters.offboard_fallback import FallbackRecord
 
@@ -97,6 +98,18 @@ class ActionAuditTests(unittest.IsolatedAsyncioTestCase):
         await action.goto_location(1, 2, 3, 4)
 
         self.assertEqual(action.goto_location_calls, 1)
+
+
+class GuiLaunchTests(unittest.TestCase):
+    def test_gui_is_enabled_for_visible_acceptance_runs(self) -> None:
+        environment = _simulation_environment(gui=True)
+
+        self.assertEqual(environment["BYTEWOLF_GZ_GUI"], "1")
+
+    def test_headless_is_an_explicit_opt_out(self) -> None:
+        environment = _simulation_environment(gui=False)
+
+        self.assertNotIn("BYTEWOLF_GZ_GUI", environment)
 
 
 class _TerminationAction:

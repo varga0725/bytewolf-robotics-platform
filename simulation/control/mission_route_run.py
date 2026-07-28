@@ -160,14 +160,15 @@ def run_mission_route_scenario(
     target_north_m: float = 15.0,
     route_timeout_s: float = 25.0,
     startup_wait_s: float = 32.0,
+    gui: bool = True,
 ) -> MissionRouteReport:
-    """Run one active static-obstacle mission leg and persist its evidence."""
+    """Run one active static-obstacle mission leg and persist its evidence.
+
+    GUI is the acceptance default: a human can watch the X500, obstacle and
+    safety response.  ``gui=False`` exists only for fast unattended regression.
+    """
     artifact_directory.mkdir(parents=True, exist_ok=True)
-    environment = {
-        **os.environ,
-        "GZ_IP": "127.0.0.1",
-        "PX4_GZ_WORLD": SCENARIO_WORLD,
-    }
+    environment = _simulation_environment(gui=gui)
     launcher = subprocess.Popen(
         (str(_LAUNCHER), "lidar-2d"),
         cwd=_ROOT,
@@ -540,6 +541,19 @@ def _spawn_route_obstacle(environment: dict[str, str]) -> None:
         raise RuntimeError(f"Could not spawn the route obstacle: {detail}")
 
 
+def _simulation_environment(*, gui: bool) -> dict[str, str]:
+    environment = {
+        **os.environ,
+        "GZ_IP": "127.0.0.1",
+        "PX4_GZ_WORLD": SCENARIO_WORLD,
+    }
+    if gui:
+        environment["BYTEWOLF_GZ_GUI"] = "1"
+    else:
+        environment.pop("BYTEWOLF_GZ_GUI", None)
+    return environment
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Prove the shielded mission route in PX4/Gazebo SITL."
@@ -553,6 +567,11 @@ def main() -> int:
     parser.add_argument("--target-north-metres", type=float, default=15.0)
     parser.add_argument("--route-timeout-seconds", type=float, default=25.0)
     parser.add_argument("--startup-wait-seconds", type=float, default=32.0)
+    parser.add_argument(
+        "--no-gui",
+        action="store_true",
+        help="Fast unattended regression only; GUI acceptance is the default.",
+    )
     args = parser.parse_args()
     report = run_mission_route_scenario(
         args.artifact_dir,
@@ -560,6 +579,7 @@ def main() -> int:
         target_north_m=args.target_north_metres,
         route_timeout_s=args.route_timeout_seconds,
         startup_wait_s=args.startup_wait_seconds,
+        gui=not args.no_gui,
     )
     for finding in report.findings:
         print(f"FAIL: {finding}")
