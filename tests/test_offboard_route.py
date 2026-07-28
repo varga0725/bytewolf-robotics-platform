@@ -11,6 +11,7 @@ from brain.navigation.offboard_route import (
     cross_track_error_m,
     along_track_error_m,
     plan_body_velocity,
+    yaw_alignment_velocity,
 )
 
 
@@ -124,6 +125,16 @@ class OffboardRoutePlannerTests(unittest.TestCase):
             ),
             3.0,
         )
+
+    def test_yaw_alignment_turns_in_place_toward_the_target(self) -> None:
+        velocity = yaw_alignment_velocity(
+            north_error_m=10.0, east_error_m=0.0,
+            heading_deg=90.0, max_yaw_rate_deg_s=45.0,
+        )
+        self.assertEqual(velocity.x_m_s, 0.0)
+        self.assertEqual(velocity.y_m_s, 0.0)
+        self.assertEqual(velocity.z_m_s, 0.0)
+        self.assertEqual(velocity.yaw_rate_deg_s, -45.0)
 
     def test_heading_outside_the_telemetry_contract_fails_closed(self) -> None:
         for heading in (-180.001, 180.001, sys.float_info.max):

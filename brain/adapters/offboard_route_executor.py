@@ -23,6 +23,7 @@ from brain.navigation.offboard_route import (
     body_cross_track_velocity,
     cross_track_error_m,
     plan_body_velocity,
+    yaw_alignment_velocity,
 )
 from brain.safety.profile import SafetyProfile
 from brain.telemetry.observation import Observation
@@ -317,6 +318,19 @@ class OffboardRouteExecutor:
                 )
                 decision = primary_decision
                 selected_mode = ReplanMode.DIRECT
+                if (
+                    self._replanner is not None
+                    and self._replanner.mode is ReplanMode.DIRECT
+                    and primary_decision.verdict is ShieldVerdict.UNOBSERVED_SECTOR
+                ):
+                    alignment = yaw_alignment_velocity(
+                        north_error_m=state.north_error_m,
+                        east_error_m=state.east_error_m,
+                        heading_deg=state.heading_deg,
+                        max_yaw_rate_deg_s=self._profile.offboard.max_yaw_rate_deg_s,
+                    )
+                    decision = self._shield.evaluate(alignment, observation, now)
+                    selected_mode = ReplanMode.ALIGN
                 detour_active = self._replanner is not None and self._replanner.mode is not ReplanMode.DIRECT
                 cross_track_error = None
                 along_track_error = None

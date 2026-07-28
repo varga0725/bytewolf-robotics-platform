@@ -19,6 +19,7 @@ class ReplanMode(str, Enum):
     RIGHT = "right"
     LEFT = "left"
     ADVANCE = "advance"
+    ALIGN = "align"
 
 
 @dataclass(frozen=True)

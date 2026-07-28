@@ -98,6 +98,24 @@ def _observation_with_side_clearance(*, at: datetime = NOW):
     )
 
 
+def _observation_with_unobserved_bearing(*, yaw_deg: float, at: datetime = NOW):
+    return load_observation(
+        {
+            "contract_version": "v0.1",
+            "vehicle_id": "x500v2_reference_01",
+            "observed_at": at.isoformat().replace("+00:00", "Z"),
+            "max_age_s": 1.0,
+            "kind": "obstacle",
+            "validity": "valid",
+            "payload": {
+                "frame": "body_frd",
+                "sensor": {"id": "lidar_2d_v2", "min_range_m": 0.1, "max_range_m": 30.0},
+                "sectors": [{"yaw_deg": yaw_deg, "width_deg": 30.0, "coverage": "unobserved"}],
+            },
+        }
+    )
+
+
 class FakeClock:
     def __init__(self) -> None:
         self.current = NOW
@@ -385,6 +403,21 @@ class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(detour.x_m_s, 0.4 / 2**0.5, places=3)
         self.assertAlmostEqual(detour.y_m_s, 0.4 / 2**0.5, places=3)
         self.assertEqual(fallback.calls, [("zero_velocity", "hold", "land")])
+
+    async def test_unobserved_direct_path_turns_in_place_before_any_translation(self) -> None:
+        executor, events, _fallback = self.executor(
+            [RouteState(5.0, 0.0, 0.0, 90.0, NOW)],
+            [_observation_with_unobserved_bearing(yaw_deg=-90.0)],
+            replanner=LocalReplanner(lateral_speed_m_s=0.4),
+        )
+
+        with self.assertRaises(OffboardRouteExecutionError):
+            await executor.run(arrival_tolerance_m=0.5, timeout_s=1.0)
+
+        sent = [event[1] for event in events if isinstance(event, tuple) and event[0] == "send"]
+        alignment = next(velocity for velocity in sent if velocity.yaw_rate_deg_s != 0.0)
+        self.assertEqual(alignment.speed_m_s, 0.0)
+        self.assertEqual(alignment.yaw_rate_deg_s, -45.0)
 
     async def test_replanner_stops_a_cruising_vehicle_before_a_slewed_detour(self) -> None:
         ticks = []

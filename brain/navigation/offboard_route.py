@@ -9,7 +9,7 @@ command before the Offboard boundary can deliver it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import cos, hypot, isfinite, radians, sin
+from math import atan2, cos, degrees, hypot, isfinite, radians, sin
 
 from brain.control.contract import Velocity
 
@@ -236,6 +236,38 @@ def body_along_track_velocity(
         y_m_s=-sin(yaw) * north_velocity + cos(yaw) * east_velocity,
         z_m_s=0.0, yaw_rate_deg_s=0.0,
     )
+
+
+def yaw_alignment_velocity(
+    *,
+    north_error_m: float,
+    east_error_m: float,
+    heading_deg: float,
+    max_yaw_rate_deg_s: float,
+    alignment_gain: float = 1.0,
+) -> Velocity:
+    """Turn in place toward the NED target without translating into a blind sector."""
+    for name, value in {
+        "north_error_m": north_error_m,
+        "east_error_m": east_error_m,
+        "heading_deg": heading_deg,
+        "max_yaw_rate_deg_s": max_yaw_rate_deg_s,
+        "alignment_gain": alignment_gain,
+    }.items():
+        _require_finite(name, value)
+    if not -180.0 <= heading_deg <= 180.0:
+        raise OffboardRouteError("heading_deg must use the canonical [-180, 180] telemetry range.")
+    _require_positive("max_yaw_rate_deg_s", max_yaw_rate_deg_s)
+    _require_positive("alignment_gain", alignment_gain)
+    if hypot(north_error_m, east_error_m) <= 0.0:
+        raise OffboardRouteError("Yaw alignment needs a non-zero target error.")
+    desired_heading = degrees(atan2(east_error_m, north_error_m))
+    heading_error = (desired_heading - heading_deg + 180.0) % 360.0 - 180.0
+    yaw_rate = max(
+        -max_yaw_rate_deg_s,
+        min(max_yaw_rate_deg_s, heading_error * alignment_gain),
+    )
+    return Velocity(0.0, 0.0, 0.0, yaw_rate)
 
 
 def _require_finite(name: str, value: float) -> None:
