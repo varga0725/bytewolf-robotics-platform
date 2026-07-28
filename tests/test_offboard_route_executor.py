@@ -375,7 +375,9 @@ class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
             replanner=LocalReplanner(lateral_speed_m_s=0.4),
         )
 
-        with self.assertRaisesRegex(OffboardRouteExecutionError, "due-north"):
+        with self.assertRaisesRegex(
+            OffboardRouteExecutionError, r"due-north.*45\.000"
+        ):
             await executor.run(arrival_tolerance_m=0.5, timeout_s=1.0)
 
         self.assertEqual(fallback.calls, [("zero_velocity", "hold", "land")])
