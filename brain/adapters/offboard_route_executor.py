@@ -443,6 +443,7 @@ class OffboardRouteExecutor:
                         self._replanner.advance()
                 elif (
                     self._replanner is not None
+                    and self._replanner.mode is ReplanMode.DIRECT
                     and primary_decision.verdict is ShieldVerdict.CLEAR
                 ):
                     self._replanner.clear()
