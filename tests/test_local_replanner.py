@@ -72,6 +72,32 @@ class LocalReplannerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.replanner.advance()
 
+    def test_safe_rejoin_overshoot_is_explicit_and_non_negative(self) -> None:
+        replanner = LocalReplanner(
+            lateral_speed_m_s=0.4,
+            safe_rejoin_overshoot_m=0.5,
+        )
+
+        self.assertEqual(replanner.safe_rejoin_overshoot_m, 0.5)
+        for overshoot in (-0.1, float("nan"), float("inf")):
+            with self.subTest(overshoot=overshoot):
+                with self.assertRaises(ValueError):
+                    LocalReplanner(
+                        lateral_speed_m_s=0.4,
+                        safe_rejoin_overshoot_m=overshoot,
+                    )
+
+    def test_advance_continues_through_the_target_until_the_safe_overshoot(self) -> None:
+        replanner = LocalReplanner(
+            lateral_speed_m_s=0.4,
+            safe_rejoin_overshoot_m=0.5,
+        )
+
+        self.assertTrue(replanner.must_advance(along_track_error_m=0.001))
+        self.assertTrue(replanner.must_advance(along_track_error_m=-0.499))
+        self.assertFalse(replanner.must_advance(along_track_error_m=-0.5))
+        self.assertFalse(replanner.must_advance(along_track_error_m=-0.501))
+
 
 if __name__ == "__main__":
     unittest.main()

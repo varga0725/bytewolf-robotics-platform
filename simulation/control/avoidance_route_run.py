@@ -59,6 +59,11 @@ _REQUIRED_BYPASS_OFFSET_M = _WALL_HALF_EXTENTS_XY[0] + _REQUIRED_CLEARANCE_M
 # Includes a 0.3 m numerical/actuation margin above the analytic 6.2 m rejoin
 # geometry, so the scored Gazebo trajectory cannot graze the 2 m envelope.
 _DETOUR_RELEASE_OFFSET_M = 6.5
+# At the far edge, the previous direct rejoin began up to 0.2 m before the
+# target and cut the finite wall's clearance envelope.  Pass the target before
+# turning home; this is a route-geometry policy, not a relaxation of the
+# shield or the scored 2 m limit.
+_SAFE_REJOIN_OVERSHOOT_M = 0.5
 
 
 def run_avoidance_route_scenario(
@@ -223,6 +228,7 @@ async def _fly_avoidance_route(
                 # longitudinal station is deliberately bounded, not open-ended.
                 max_detour_s=60.0,
                 required_bypass_offset_m=_DETOUR_RELEASE_OFFSET_M,
+                safe_rejoin_overshoot_m=_SAFE_REJOIN_OVERSHOOT_M,
             ),
             tick_observer=record_tick,
         )

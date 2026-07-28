@@ -359,7 +359,13 @@ class OffboardRouteExecutor:
                 if (
                     self._replanner is not None
                     and self._replanner.mode is ReplanMode.ADVANCE
-                    and abs(along_track_error) > arrival_tolerance_m
+                    # A finite obstacle can extend beyond the nominal target
+                    # line.  The active route must therefore pass the target
+                    # by its explicit, scenario-derived margin before its
+                    # final direct leg is even considered.
+                    and self._replanner.must_advance(
+                        along_track_error_m=along_track_error
+                    )
                 ):
                     advance_velocity = body_along_track_velocity(
                         path_north_m=path_north_m,

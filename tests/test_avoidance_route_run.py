@@ -3,6 +3,7 @@ import unittest
 from simulation.control.avoidance_route_run import (
     _DETOUR_RELEASE_OFFSET_M,
     _REQUIRED_BYPASS_OFFSET_M,
+    _SAFE_REJOIN_OVERSHOOT_M,
     _wall_clearance,
 )
 
@@ -15,6 +16,10 @@ class AvoidanceWallGeometryTests(unittest.TestCase):
     def test_detour_release_accounts_for_the_target_rejoin_diagonal(self) -> None:
         self.assertGreater(_DETOUR_RELEASE_OFFSET_M, _REQUIRED_BYPASS_OFFSET_M)
         self.assertEqual(_DETOUR_RELEASE_OFFSET_M, 6.5)
+
+    def test_rejoin_overshoots_the_far_wall_edge_before_turning_home(self) -> None:
+        # Rejoining at y=target - tolerance grazed the 2 m finite-wall envelope.
+        self.assertGreater(_SAFE_REJOIN_OVERSHOOT_M, 0.0)
 
     def test_acceptance_does_not_treat_the_wall_corner_as_a_goal(self) -> None:
         # The runner uses a tight endpoint tolerance because the wall's safety
