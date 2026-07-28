@@ -44,6 +44,34 @@ akku nélkül.** A Pixhawk USB-C-ről táplálható és teljesen konfigurálhat�
 **Elfogadási kritérium:** minden kalibráció „OK", a FC arm-preflightot csak a
 várt hiányzó feltételek (pl. nincs akku, nincs távadó) blokkolják.
 
+### USB bench diagnosztika (read-only, nem repülési engedély)
+
+A QGroundControl ellenőrzése mellett a repó saját, csak telemetria-olvasó
+ellenőrzője is futtatható. Ez **nem** importál repülési vezérlési felületet, nem
+kér paraméterírást, és nem küld arm/takeoff/land/mission/offboard parancsot.
+Az akku hiánya itt mérési eredmény, nem CLI-hiba; a `flight_readiness` emiatt
+kötelezően `blocked` marad.
+
+```bash
+.venv/bin/python -m brain.cli.check_usb_bench \
+  --endpoint 'serial:///dev/cu.usbmodem01:57600' \
+  --connection-timeout 25 --sample-timeout 5 \
+  --artifact-dir simulation/artifacts/hardware-bench
+```
+
+A parancs atomikus JSON-artefaktot ír. Kiolvassa a kapcsolat, health, globális
+pozíció, GPS, battery, armed és in-air telemetriát; egy-egy hiányzó vagy hibás
+minta `unavailable`/`invalid`, nem kitalált érték. A `completed` csak azt
+jelenti, hogy a diagnosztikai kapcsolat és a mintavétel lefutott — **nem** azt,
+hogy a jármű repülésre engedélyezett.
+
+**2026-07-28, tényleges USB bench eredmény (LiPo nélkül):** kapcsolat
+megfigyelve; GPS `FIX_3D`, 20 műhold; globális pozíció megfigyelve;
+`armed=false`, `in_air=false`; `home` állapot igaz. A `global_position_ok`
+hamis és a battery minta nem véges, ezért a `flight_readiness=blocked`. Ez az
+elvárt, fail-closed eredmény akkumentes asztali teszten; semmilyen motor- vagy
+repülési parancs nem ment ki.
+
 ### 2. IMU / barométer zajmérés (Allan variance) → twin null-ok feloldása
 
 A `sensors.imu.gyro_noise_density`, `sensors.imu.accel_noise_density` és a
