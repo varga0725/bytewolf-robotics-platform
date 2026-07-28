@@ -56,7 +56,9 @@ _REQUIRED_BYPASS_OFFSET_M = _WALL_HALF_EXTENTS_XY[0] + _REQUIRED_CLEARANCE_M
 # Rejoining the final target from the minimum side clearance would cut the
 # diagonal through the wall's envelope.  This finite-wall fixture therefore
 # holds a larger, geometry-derived detour before it resumes the direct leg.
-_DETOUR_RELEASE_OFFSET_M = 6.2
+# Includes a 0.3 m numerical/actuation margin above the analytic 6.2 m rejoin
+# geometry, so the scored Gazebo trajectory cannot graze the 2 m envelope.
+_DETOUR_RELEASE_OFFSET_M = 6.5
 
 
 def run_avoidance_route_scenario(
