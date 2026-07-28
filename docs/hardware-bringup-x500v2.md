@@ -72,6 +72,15 @@ hamis és a battery minta nem véges, ezért a `flight_readiness=blocked`. Ez az
 elvárt, fail-closed eredmény akkumentes asztali teszten; semmilyen motor- vagy
 repülési parancs nem ment ki.
 
+**Fizikai flottaazonosítás:** a második, identity-bearing USB bench a Pixhawk
+nem nulla MAVLink `uid2` hardverazonosítóját és a PX4 firmware-faktumait is
+rögzítette. A jármű helyi flottaazonosítója
+`e7421f04-b811-46b2-90a5-d594f66fd9fb`; a registry a hardver UID-t, a bench
+artefakt hash-ét és a firmware-leletet együtt tárolja. A tényleges firmware
+**PX4 v1.16.0**, míg a projekt SITL baseline `v1.17.0`: ez verzióeltérés,
+nem kompatibilitási jóváhagyás. Fizikai küldetés vagy Offboard teszt előtt a
+firmware-döntést külön kell rögzíteni.
+
 ### 2. IMU / barométer zajmérés (Allan variance) → twin null-ok feloldása
 
 A `sensors.imu.gyro_noise_density`, `sensors.imu.accel_noise_density` és a

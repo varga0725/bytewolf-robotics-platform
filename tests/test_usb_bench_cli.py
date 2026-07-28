@@ -46,6 +46,24 @@ class _BatteryWithoutPack:
     remaining_percent = float("nan")
 
 
+class _Identification:
+    hardware_uid = "2c0038000b51323232393933"
+    legacy_uid = 123456789
+
+
+class _Product:
+    vendor_name = "Holybro"
+    product_name = "Pixhawk 6C"
+
+
+class _Version:
+    flight_sw_major = 1
+    flight_sw_minor = 17
+    flight_sw_patch = 0
+    flight_sw_git_hash = "a1b2c3d4"
+    flight_sw_version_type = "RELEASE"
+
+
 class _Telemetry:
     def health(self):
         return _samples(_Health())
@@ -100,6 +118,9 @@ class UsbBenchCliTests(unittest.TestCase):
         system.connect = AsyncMock()
         system.core.connection_state.return_value = _samples(_Connected())
         system.telemetry = _Telemetry()
+        system.info.get_identification = AsyncMock(return_value=_Identification())
+        system.info.get_product = AsyncMock(return_value=_Product())
+        system.info.get_version = AsyncMock(return_value=_Version())
         mavsdk = ModuleType("mavsdk")
         mavsdk.System = MagicMock(return_value=system)  # type: ignore[attr-defined]
 
@@ -116,6 +137,9 @@ class UsbBenchCliTests(unittest.TestCase):
         self.assertEqual(artifact["outcome"], "completed")
         self.assertEqual(artifact["flight_readiness"]["status"], "blocked")
         self.assertEqual(artifact["checks"]["battery"]["status"], "invalid")
+        self.assertEqual(artifact["px4_identity"]["status"], "observed")
+        self.assertEqual(artifact["px4_identity"]["hardware_uid"], _Identification.hardware_uid)
+        self.assertEqual(artifact["px4_identity"]["firmware"]["version"], "1.17.0")
         self.assertFalse(artifact["checks"]["armed"]["value"])
         system.action.assert_not_called()
         system._stop_mavsdk_server.assert_called_once()

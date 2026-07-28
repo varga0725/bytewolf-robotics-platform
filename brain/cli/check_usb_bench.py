@@ -115,6 +115,33 @@ def _flight_readiness(checks: dict[str, dict[str, object]]) -> dict[str, object]
     return {"status": "blocked", "reasons": reasons}
 
 
+async def _px4_identity_observation(system: object, timeout_s: float) -> dict[str, object]:
+    """Read identity/version facts only; a missing Info plugin is recorded, never inferred."""
+    try:
+        info = getattr(system, "info")
+        identification, product, version = await asyncio.gather(
+            asyncio.wait_for(info.get_identification(), timeout=timeout_s),
+            asyncio.wait_for(info.get_product(), timeout=timeout_s),
+            asyncio.wait_for(info.get_version(), timeout=timeout_s),
+        )
+    except Exception as error:  # The diagnostics remain useful if a firmware omits Info.
+        return {"status": "unavailable", "reason": f"{type(error).__name__}: {error}"}
+    hardware_uid = str(getattr(identification, "hardware_uid", "")).rstrip("\0").strip()
+    if not hardware_uid or set(hardware_uid) == {"0"}:
+        return {"status": "unavailable", "reason": "PX4 did not provide a non-zero MAVLink uid2."}
+    release_type = getattr(version, "flight_sw_version_type", None)
+    return {
+        "status": "observed", "hardware_uid": hardware_uid,
+        "legacy_uid": str(getattr(identification, "legacy_uid", "")).rstrip("\0"),
+        "product": {"vendor_name": str(getattr(product, "vendor_name", "")).rstrip("\0"), "product_name": str(getattr(product, "product_name", "")).rstrip("\0")},
+        "firmware": {
+            "version": ".".join(str(getattr(version, field, 0)) for field in ("flight_sw_major", "flight_sw_minor", "flight_sw_patch")),
+            "git_hash": str(getattr(version, "flight_sw_git_hash", "")).rstrip("\0"),
+            "release_type": str(getattr(release_type, "name", release_type or "")),
+        },
+    }
+
+
 def _write_artifact(directory: Path, document: dict[str, object]) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / f"usb-bench-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex}.json"
@@ -151,6 +178,7 @@ async def run(arguments: argparse.Namespace) -> Path:
         if connected is None or not bool(getattr(connected, "is_connected", False)):
             raise RuntimeError("PX4 did not report a connected MAVLink state.")
         telemetry = system.telemetry
+        identity_task = asyncio.create_task(_px4_identity_observation(system, arguments.sample_timeout))
         health, position, gps, battery, armed, in_air = await asyncio.gather(
             _sample(telemetry.health(), arguments.sample_timeout),
             _sample(telemetry.position(), arguments.sample_timeout),
@@ -169,6 +197,7 @@ async def run(arguments: argparse.Namespace) -> Path:
             "in_air": _observation(in_air if isinstance(in_air, bool) else None),
         }
         document["checks"] = checks
+        document["px4_identity"] = await identity_task
         document["flight_readiness"] = _flight_readiness(checks)
         document["outcome"] = "completed"
     except Exception as error:
