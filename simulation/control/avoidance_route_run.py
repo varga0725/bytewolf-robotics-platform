@@ -217,7 +217,9 @@ async def _fly_avoidance_route(
             slowdown_radius_m=3.0,
             replanner=LocalReplanner(
                 lateral_speed_m_s=0.4,
-                max_detour_s=20.0,
+                # 6.2 m side-step plus an along-path advance to the target's
+                # longitudinal station is deliberately bounded, not open-ended.
+                max_detour_s=60.0,
                 required_bypass_offset_m=_DETOUR_RELEASE_OFFSET_M,
             ),
             tick_observer=record_tick,

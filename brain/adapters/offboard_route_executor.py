@@ -18,6 +18,8 @@ from brain.control.shield import RuntimeSafetyShield, ShieldMode, ShieldVerdict
 from brain.navigation.local_replanner import LocalReplanner, ReplanMode
 from brain.navigation.offboard_route import (
     OffboardRouteError,
+    along_track_error_m,
+    body_along_track_velocity,
     body_cross_track_velocity,
     cross_track_error_m,
     plan_body_velocity,
@@ -317,6 +319,7 @@ class OffboardRouteExecutor:
                 selected_mode = ReplanMode.DIRECT
                 detour_active = self._replanner is not None and self._replanner.mode is not ReplanMode.DIRECT
                 cross_track_error = None
+                along_track_error = None
                 if self._replanner is not None:
                     if path_north_m is None or path_east_m is None:
                         raise RuntimeError("The replanner route basis was not initialized.")
@@ -326,22 +329,60 @@ class OffboardRouteExecutor:
                         path_north_m=path_north_m,
                         path_east_m=path_east_m,
                     )
+                    along_track_error = along_track_error_m(
+                        north_error_m=state.north_error_m,
+                        east_error_m=state.east_error_m,
+                        path_north_m=path_north_m,
+                        path_east_m=path_east_m,
+                    )
+                if self._replanner is not None and self._replanner.exhausted(
+                    now_s=issuance_monotonic
+                ):
+                    await fail(
+                        "The bounded local detour made no route progress.",
+                        RouteTerminalReason.INTERNAL_FAILURE,
+                    )
+                if (
+                    self._replanner is not None
+                    and self._replanner.mode is ReplanMode.ADVANCE
+                    and abs(along_track_error) > arrival_tolerance_m
+                ):
+                    advance_velocity = body_along_track_velocity(
+                        path_north_m=path_north_m,
+                        path_east_m=path_east_m,
+                        heading_deg=state.heading_deg,
+                        speed_m_s=self._replanner.lateral_speed_m_s,
+                    )
+                    candidate_velocity = _slew_velocity(
+                        last_delivered, advance_velocity, slew_budget_m_s
+                    )
+                    candidate_decision = self._shield.evaluate(
+                        candidate_velocity, observation, now
+                    )
+                    if candidate_decision.verdict is ShieldVerdict.CLEAR:
+                        decision = candidate_decision
+                        selected_mode = ReplanMode.ADVANCE
+                    else:
+                        decision = candidate_decision
+                        selected_mode = ReplanMode.ADVANCE
+                elif (
+                    self._replanner is not None
+                    and self._replanner.mode is ReplanMode.ADVANCE
+                ):
+                    self._replanner.clear()
                 if self._replanner is not None and (
+                    self._replanner.mode is not ReplanMode.ADVANCE
+                    and (
                     primary_decision.verdict is ShieldVerdict.INSUFFICIENT_CLEARANCE
                     or (detour_active and not self._replanner.may_resume_direct(
                         cross_track_error_m=cross_track_error
-                    ))
+                    )))
                 ):
                     self._replanner.note_blocked(
                         now_s=issuance_monotonic,
                         stop_duration_s=self._shield.stopping_time_s(
                             last_delivered.speed_m_s
                         ),
-                    )
-                    if self._replanner.exhausted(now_s=issuance_monotonic):
-                        await fail(
-                            "The bounded local detour made no route progress.",
-                            RouteTerminalReason.INTERNAL_FAILURE,
                     )
                     if self._replanner.ready(now_s=issuance_monotonic):
                         right_velocity = body_cross_track_velocity(
@@ -377,6 +418,29 @@ class OffboardRouteExecutor:
                                     cross_track_error_m=cross_track_error,
                                 )
                                 break
+                elif (
+                    self._replanner is not None
+                    and self._replanner.mode in (ReplanMode.RIGHT, ReplanMode.LEFT)
+                    and self._replanner.may_resume_direct(
+                        cross_track_error_m=cross_track_error
+                    )
+                ):
+                    advance_velocity = body_along_track_velocity(
+                        path_north_m=path_north_m,
+                        path_east_m=path_east_m,
+                        heading_deg=state.heading_deg,
+                        speed_m_s=self._replanner.lateral_speed_m_s,
+                    )
+                    candidate_velocity = _slew_velocity(
+                        last_delivered, advance_velocity, slew_budget_m_s
+                    )
+                    candidate_decision = self._shield.evaluate(
+                        candidate_velocity, observation, now
+                    )
+                    if candidate_decision.verdict is ShieldVerdict.CLEAR:
+                        decision = candidate_decision
+                        selected_mode = ReplanMode.ADVANCE
+                        self._replanner.advance()
                 elif (
                     self._replanner is not None
                     and primary_decision.verdict is ShieldVerdict.CLEAR

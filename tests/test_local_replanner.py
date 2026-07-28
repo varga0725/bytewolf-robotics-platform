@@ -63,6 +63,15 @@ class LocalReplannerTests(unittest.TestCase):
         self.assertFalse(self.replanner.may_resume_direct(cross_track_error_m=2.1))
         self.assertTrue(self.replanner.may_resume_direct(cross_track_error_m=2.0))
 
+    def test_lateral_detour_transitions_to_forward_advance_before_direct(self) -> None:
+        self.replanner.select(ReplanMode.RIGHT, now_s=1.0)
+
+        self.replanner.advance()
+
+        self.assertEqual(self.replanner.mode, ReplanMode.ADVANCE)
+        with self.assertRaises(ValueError):
+            self.replanner.advance()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,6 +18,7 @@ class ReplanMode(str, Enum):
     DIRECT = "direct"
     RIGHT = "right"
     LEFT = "left"
+    ADVANCE = "advance"
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,11 @@ class LocalReplanner:
         return self._detour_cross_track_error_m is not None and abs(
             cross_track_error_m - self._detour_cross_track_error_m
         ) >= self._required_bypass_offset_m
+
+    def advance(self) -> None:
+        if self._mode not in (ReplanMode.RIGHT, ReplanMode.LEFT):
+            raise ValueError("Advance requires an accepted lateral detour.")
+        self._mode = ReplanMode.ADVANCE
 
     def candidates(
         self, *, right_velocity: Velocity, left_velocity: Velocity

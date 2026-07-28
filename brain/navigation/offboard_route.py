@@ -198,6 +198,46 @@ def cross_track_error_m(
     ) / path_length_m
 
 
+def along_track_error_m(
+    *, north_error_m: float, east_error_m: float,
+    path_north_m: float, path_east_m: float,
+) -> float:
+    """Return remaining target error projected onto the frozen path tangent."""
+    for name, value in {
+        "north_error_m": north_error_m, "east_error_m": east_error_m,
+        "path_north_m": path_north_m, "path_east_m": path_east_m,
+    }.items():
+        _require_finite(name, value)
+    length = hypot(path_north_m, path_east_m)
+    if not isfinite(length) or length <= 0.0:
+        raise OffboardRouteError("The mission path direction must be non-zero.")
+    return (north_error_m * path_north_m + east_error_m * path_east_m) / length
+
+
+def body_along_track_velocity(
+    *, path_north_m: float, path_east_m: float, heading_deg: float,
+    speed_m_s: float,
+) -> Velocity:
+    """Map a forward frozen-path velocity into the current body-FRD frame."""
+    _require_positive("speed_m_s", speed_m_s)
+    _require_finite("path_north_m", path_north_m)
+    _require_finite("path_east_m", path_east_m)
+    _require_finite("heading_deg", heading_deg)
+    if not -180.0 <= heading_deg <= 180.0:
+        raise OffboardRouteError("heading_deg must use the canonical [-180, 180] telemetry range.")
+    length = hypot(path_north_m, path_east_m)
+    if not isfinite(length) or length <= 0.0:
+        raise OffboardRouteError("The mission path direction must be non-zero.")
+    north_velocity = path_north_m / length * speed_m_s
+    east_velocity = path_east_m / length * speed_m_s
+    yaw = radians(heading_deg)
+    return Velocity(
+        x_m_s=cos(yaw) * north_velocity + sin(yaw) * east_velocity,
+        y_m_s=-sin(yaw) * north_velocity + cos(yaw) * east_velocity,
+        z_m_s=0.0, yaw_rate_deg_s=0.0,
+    )
+
+
 def _require_finite(name: str, value: float) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
         raise OffboardRouteError(f"{name} must be a finite number.")

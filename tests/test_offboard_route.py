@@ -7,7 +7,9 @@ from brain.navigation.offboard_route import (
     OffboardRouteError,
     RouteVelocityDecision,
     body_cross_track_velocity,
+    body_along_track_velocity,
     cross_track_error_m,
+    along_track_error_m,
     plan_body_velocity,
 )
 
@@ -106,6 +108,21 @@ class OffboardRoutePlannerTests(unittest.TestCase):
                 path_east_m=0.0,
             ),
             -3.0,
+        )
+
+    def test_advance_command_remains_on_the_frozen_path_axis(self) -> None:
+        advance = body_along_track_velocity(
+            path_north_m=15.0, path_east_m=0.0,
+            heading_deg=96.552, speed_m_s=0.4,
+        )
+        self.assertAlmostEqual(advance.x_m_s, -0.0457, places=3)
+        self.assertAlmostEqual(advance.y_m_s, -0.3974, places=3)
+        self.assertEqual(
+            along_track_error_m(
+                north_error_m=3.0, east_error_m=-6.2,
+                path_north_m=15.0, path_east_m=0.0,
+            ),
+            3.0,
         )
 
     def test_heading_outside_the_telemetry_contract_fails_closed(self) -> None:
