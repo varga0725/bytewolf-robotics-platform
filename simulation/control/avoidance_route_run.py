@@ -228,7 +228,10 @@ async def _fly_avoidance_route(
         )
         control_started = time.monotonic()
         try:
-            await executor.run(arrival_tolerance_m=1.0, timeout_s=route_timeout_s)
+            # A 1 m arrival radius can still intersect the finite wall's 2 m
+            # safety envelope near its far corner.  This acceptance route must
+            # actually clear the obstacle, not merely arrive close to its goal.
+            await executor.run(arrival_tolerance_m=0.2, timeout_s=route_timeout_s)
             route_reached = True
         finally:
             control_ended = time.monotonic()

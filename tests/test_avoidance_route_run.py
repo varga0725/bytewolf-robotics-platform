@@ -16,6 +16,13 @@ class AvoidanceWallGeometryTests(unittest.TestCase):
         self.assertGreater(_DETOUR_RELEASE_OFFSET_M, _REQUIRED_BYPASS_OFFSET_M)
         self.assertEqual(_DETOUR_RELEASE_OFFSET_M, 6.5)
 
+    def test_acceptance_does_not_treat_the_wall_corner_as_a_goal(self) -> None:
+        # The runner uses a tight endpoint tolerance because the wall's safety
+        # envelope extends past its finite collision box.
+        import inspect
+        from simulation.control.avoidance_route_run import _fly_avoidance_route
+        self.assertIn("arrival_tolerance_m=0.2", inspect.getsource(_fly_avoidance_route))
+
     def test_clearance_is_measured_to_the_finite_wall_surface(self) -> None:
         self.assertEqual(_wall_clearance(0.0, 8.0), 3.0)
         self.assertEqual(_wall_clearance(0.0, 12.0), 0.0)
