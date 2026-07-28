@@ -368,6 +368,18 @@ class OffboardRouteExecutorTests(unittest.IsolatedAsyncioTestCase):
                 replanner=LocalReplanner(lateral_speed_m_s=0.7),
             )
 
+    async def test_replanner_refuses_a_non_north_heading_until_cross_track_projection_exists(self) -> None:
+        executor, _events, fallback = self.executor(
+            [RouteState(5.0, 0.0, 0.0, 45.0, NOW)],
+            [_observation_with_side_clearance()],
+            replanner=LocalReplanner(lateral_speed_m_s=0.4),
+        )
+
+        with self.assertRaisesRegex(OffboardRouteExecutionError, "due-north"):
+            await executor.run(arrival_tolerance_m=0.5, timeout_s=1.0)
+
+        self.assertEqual(fallback.calls, [("zero_velocity", "hold", "land")])
+
     async def test_replanner_stops_a_cruising_vehicle_before_a_slewed_detour(self) -> None:
         ticks = []
         executor, events, _fallback = self.executor(

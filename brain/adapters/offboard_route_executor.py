@@ -265,6 +265,10 @@ class OffboardRouteExecutor:
                     now = self._utc_now()
                     issuance_monotonic = self._monotonic()
                     self._require_fresh_state(state, now)
+                    if self._replanner is not None and abs(state.heading_deg) > 5.0:
+                        raise OffboardRouteError(
+                            "The v0 local detour is restricted to the due-north GUI scenario."
+                        )
                     nominal = plan_body_velocity(
                         north_error_m=state.north_error_m,
                         east_error_m=state.east_error_m,
