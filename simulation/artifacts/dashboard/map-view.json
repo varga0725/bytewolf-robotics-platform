@@ -1,0 +1,13 @@
+{
+  "contract_version": "v0.1",
+  "captured_at": "2026-07-27T10:07:31.519114Z",
+  "world": "baylands",
+  "source": "gz bytewolf/map_camera",
+  "centre_north_m": 0.0,
+  "centre_east_m": 0.0,
+  "metres_per_pixel": 0.5772185759016859,
+  "width": 1600,
+  "height": 1600,
+  "height_above_ground_m": 800.0,
+  "orientation": "north_up_east_right"
+}
