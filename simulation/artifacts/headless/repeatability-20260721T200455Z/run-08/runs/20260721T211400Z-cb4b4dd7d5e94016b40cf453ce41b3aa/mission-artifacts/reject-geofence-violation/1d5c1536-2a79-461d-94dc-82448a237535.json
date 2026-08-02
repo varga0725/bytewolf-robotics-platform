@@ -1,0 +1,1 @@
+{"events":[],"failure_reason":"SafetyViolation: Waypoint is outside the allowed geofence.","outcome":"completed","recorded_at":"2026-07-21T21:19:16.835679Z","run_id":"1d5c1536-2a79-461d-94dc-82448a237535","safety_decision":"rejected","telemetry":null,"version":"v0.2"}

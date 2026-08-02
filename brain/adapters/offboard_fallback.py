@@ -21,6 +21,7 @@ may fly must not be able to reach either.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -65,9 +66,14 @@ class OffboardFallbackExecutor:
     velocity because the command to leave Offboard happened to error.
     """
 
-    def __init__(self, system: Any, adapter: Any) -> None:
+    def __init__(
+        self, system: Any, adapter: Any, *, action_timeout_s: float = 5.0
+    ) -> None:
+        if action_timeout_s <= 0:
+            raise ValueError("action_timeout_s must be positive.")
         self._system = system
         self._adapter = adapter
+        self._action_timeout_s = action_timeout_s
 
     async def execute(self, sequence: Sequence[str]) -> FallbackRecord:
         """Run the sequence and report what each step did."""
@@ -79,7 +85,9 @@ class OffboardFallbackExecutor:
         record = FallbackRecord()
         for step in sequence:
             try:
-                await self._perform(step)
+                await asyncio.wait_for(
+                    self._perform(step), timeout=self._action_timeout_s
+                )
             except Exception as error:  # noqa: BLE001 - a failed step must not stop the rest
                 record.failed[step] = str(error)
             else:

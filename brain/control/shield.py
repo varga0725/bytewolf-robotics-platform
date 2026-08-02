@@ -155,6 +155,14 @@ class RuntimeSafetyShield:
         braking_m = (speed_m_s * speed_m_s) / (2.0 * self._limits.braking_deceleration_m_s2)
         return reaction_m + braking_m + self._limits.minimum_clearance_m
 
+    def stopping_time_s(self, speed_m_s: float) -> float:
+        """Conservative time from a stop command until horizontal arrest."""
+        if speed_m_s <= 0.0:
+            return 0.0
+        return self._limits.reaction_latency_s + (
+            speed_m_s / self._limits.braking_deceleration_m_s2
+        )
+
     def _judge(
         self, velocity: Velocity, observation: Observation | None, now: datetime
     ) -> tuple[ShieldVerdict, str, float | None, float | None]:
