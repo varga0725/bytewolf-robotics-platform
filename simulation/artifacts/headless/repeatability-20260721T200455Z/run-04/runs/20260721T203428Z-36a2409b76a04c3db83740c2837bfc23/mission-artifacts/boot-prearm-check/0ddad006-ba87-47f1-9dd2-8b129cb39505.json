@@ -1,0 +1,1 @@
+{"events":[],"failure_reason":null,"outcome":"completed","recorded_at":"2026-07-21T20:35:19.205909Z","run_id":"0ddad006-ba87-47f1-9dd2-8b129cb39505","safety_decision":"approved","telemetry":{"battery_percent":100.0,"captured_at":"2026-07-21T20:35:19.205444Z","global_position_valid":true,"home_position_valid":true,"navigation_ready":true},"version":"v0.2"}
