@@ -49,3 +49,10 @@ simulation/artifacts/**/*.tmp
 .coverage
 graphify-out/
 .codex/environments/
+
+# Physical bench diagnostics. A real USB bench records a real GNSS fix, so these
+# carry the operator's own position to roughly ten metres, plus the Pixhawk's
+# uid2 hardware fingerprint -- and this repository is public. The bench outcome
+# that matters is written up in docs/hardware-bringup-x500v2.md without either.
+# Committing one of these needs the position redacted first, deliberately.
+simulation/artifacts/hardware-bench/
