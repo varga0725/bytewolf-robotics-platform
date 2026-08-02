@@ -31,3 +31,21 @@ simulation/worlds/generated/
 # They are working files, never evidence: the evidence is the JSON report.
 simulation/artifacts/**/.*-scans.jsonl
 simulation/artifacts/**/.*-pose.jsonl
+
+# Per-mission raw telemetry sample streams. One 10-run P0.v2 matrix writes 168 MB
+# of these, and the five retained 2026-07-21 matrices came to 547 MB between them
+# -- against 6.6 MB for everything else those same runs produced. The verdict a
+# gate turns on lives in the p0-*.json report and the mission artifacts, both of
+# which stay committed; this is the sample-by-sample record behind them. Dropping
+# it costs the ability to re-derive a run's telemetry offline, which is a real
+# loss and the reason this is a deliberate trade rather than cleanup.
+simulation/artifacts/**/telemetry-history/
+
+# Atomic-write temporaries. A writer renames these into place, so one only
+# survives a crash mid-write; two were tracked by accident in fcf317e.
+simulation/artifacts/**/*.tmp
+
+# Local tool output, not project state.
+.coverage
+graphify-out/
+.codex/environments/
