@@ -1,0 +1,36 @@
+{
+  "minimum_success_rate": 0.9,
+  "nominal_scenarios": [
+    "boot-prearm-check",
+    "takeoff-2m-hover-10s-land",
+    "waypoint-square-land",
+    "mission-interrupt-hold-cleanup-land",
+    "mission-interrupt-land",
+    "reject-geofence-violation",
+    "takeoff-hover-land-wind-3ms",
+    "takeoff-hover-land-wind-6ms",
+    "takeoff-hover-land-wind-10ms"
+  ],
+  "overall_status": "passed",
+  "repetitions": 5,
+  "run_reports": [
+    "simulation/artifacts/headless/repeatability-20260803T121009Z/run-01/p0-20260803T121009Z.json",
+    "simulation/artifacts/headless/repeatability-20260803T121009Z/run-02/p0-20260803T121958Z.json",
+    "simulation/artifacts/headless/repeatability-20260803T121009Z/run-03/p0-20260803T122947Z.json",
+    "simulation/artifacts/headless/repeatability-20260803T121009Z/run-04/p0-20260803T123936Z.json",
+    "simulation/artifacts/headless/repeatability-20260803T121009Z/run-05/p0-20260803T124926Z.json"
+  ],
+  "started_at": "2026-08-03T12:10:09.056250+00:00",
+  "success_rates": {
+    "boot-prearm-check": 1.0,
+    "takeoff-2m-hover-10s-land": 1.0,
+    "waypoint-square-land": 1.0,
+    "mission-interrupt-hold-cleanup-land": 1.0,
+    "mission-interrupt-land": 1.0,
+    "reject-geofence-violation": 1.0,
+    "low-battery-land-fallback": 1.0,
+    "takeoff-hover-land-wind-3ms": 1.0,
+    "takeoff-hover-land-wind-6ms": 1.0,
+    "takeoff-hover-land-wind-10ms": 1.0
+  }
+}
