@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 import tempfile
 import time
@@ -13,6 +14,7 @@ from robots.drone.x500v2.ros2.bridge_runtime import (
     TelemetryBridgeRuntime,
     route_declared_topics_to,
 )
+from brain.cli.ros2_telemetry_bridge import parse_arguments
 from robots.drone.x500v2.ros2.telemetry_adapter import declared_telemetry_topics
 
 
@@ -275,6 +277,75 @@ class DeclaredTopicRoutingTests(unittest.TestCase):
         for topic in self.UNDECLARED:
             with self.subTest(topic=topic):
                 route(_Event(topic))
+
+
+class BridgeRunArtifactTests(unittest.IsolatedAsyncioTestCase):
+    """The bridge records its own run, in its own place.
+
+    A mission artifact says what was flown; this says what was observed. They are
+    written by different processes on different interpreters, and keeping the
+    files apart is what stops a flight report from appearing to carry telemetry
+    proof it never produced.
+    """
+
+    async def test_records_what_it_relayed_outside_the_mission_artifact_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifacts = root / "ros2-bridge"
+            runtime = TelemetryBridgeRuntime(
+                vehicle=Vehicle(),
+                ros_client=RosClient(),
+                node_factory=Node,
+                destination=root / "missions" / "telemetry.json",
+                endpoint="udpin://0.0.0.0:14540",
+                clock=lambda: datetime(2026, 8, 3, 15, 0, tzinfo=UTC),
+                artifact_dir=artifacts,
+            )
+            stopped = asyncio.Event()
+            task = asyncio.create_task(runtime.run(stopped))
+            deadline = time.monotonic() + 5.0
+            while not any(artifacts.glob("*.json")) and time.monotonic() < deadline:
+                await asyncio.sleep(0.005)
+                stopped.set()
+            await task
+
+            written = sorted(artifacts.glob("ros2-bridge-*.json"))
+            self.assertEqual(len(written), 1, "the bridge must record exactly one run")
+            document = json.loads(written[0].read_text(encoding="utf-8"))
+
+            self.assertEqual(document["version"], "ros2_telemetry_bridge_run.v1")
+            self.assertEqual(document["endpoint"], "udpin://0.0.0.0:14540")
+            self.assertEqual(sorted(document["declared_topics"]), sorted(declared_telemetry_topics()))
+            self.assertNotIn("missions", str(written[0]))
+
+    async def test_a_run_that_cannot_record_itself_still_shuts_down_cleanly(self) -> None:
+        """Telemetry-only evidence must never be able to take the bridge down."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            blocked = root / "blocked"
+            blocked.write_text("not a directory", encoding="utf-8")
+            ros = RosClient()
+            node = Node()
+            runtime = TelemetryBridgeRuntime(
+                vehicle=Vehicle(),
+                ros_client=ros,
+                node_factory=lambda: node,
+                destination=root / "telemetry.json",
+                endpoint="udpin://0.0.0.0:14540",
+                artifact_dir=blocked,
+            )
+            stopped = asyncio.Event()
+            stopped.set()
+            await runtime.run(stopped)
+
+        self.assertEqual(ros.shutdowns, 1)
+        self.assertEqual(node.destroyed, 1)
+
+    def test_the_default_artifact_directory_is_not_the_mission_tree(self) -> None:
+        arguments = parse_arguments([])
+
+        self.assertEqual(arguments.artifact_dir, Path("simulation/artifacts/ros2-bridge"))
+        self.assertNotIn("headless", str(arguments.artifact_dir))
 
 
 class MavsdkShapeTests(unittest.TestCase):

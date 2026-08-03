@@ -30,6 +30,17 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         type=Path,
         default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
     )
+    parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        default=Path("simulation/artifacts/ros2-bridge"),
+        help=(
+            "Where this bridge records its own run. Deliberately outside the mission "
+            "artifact tree: a mission artifact says what was flown, this says what was "
+            "observed, and merging them would let a flight appear to carry telemetry "
+            "proof it never produced."
+        ),
+    )
     return parser.parse_args(arguments)
 
 
@@ -59,6 +70,7 @@ async def run(arguments: argparse.Namespace) -> None:
         destination=arguments.dashboard_snapshot,
         endpoint=arguments.endpoint,
         connection_timeout=arguments.connection_timeout,
+        artifact_dir=arguments.artifact_dir,
     )
     try:
         await runtime.run(stop_event)
