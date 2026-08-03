@@ -1,0 +1,37 @@
+[Unit]
+Description=ByteWolf X500 V2 headless PX4 SITL and Gazebo
+Documentation=file:///home/bytewolf/bytewolf-robotics/platform/docs/ros2-humble-bridge-ubuntu-runbook.md
+PartOf=bytewolf.target
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bytewolf
+Group=bytewolf
+WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
+Environment=PATH=/home/bytewolf/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=GZ_IP=127.0.0.1
+ExecStart=/home/bytewolf/bytewolf-robotics/platform/simulation/gazebo/launch/run_px4_gazebo_headless.zsh base
+
+# The launcher owns the Gazebo server and the PX4 process and tears both down in
+# its own `trap cleanup EXIT INT TERM`. KillMode=mixed sends SIGTERM to the
+# script alone so that trap can run; the default control-group kill would take
+# its children out from under it and leave a half-torn-down simulator behind.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+Restart=on-failure
+RestartSec=10
+
+# PX4 runs in daemon mode here, so its output is bounded. It was not always:
+# the interactive pxh prompt once filled an unread pipe until the log reached
+# 11 GB. RateLimit keeps a future regression from doing that to the journal.
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=30
+LogRateLimitBurst=1000
+
+[Install]
+WantedBy=bytewolf.target

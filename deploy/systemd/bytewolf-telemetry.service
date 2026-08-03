@@ -1,0 +1,31 @@
+[Unit]
+Description=ByteWolf dashboard telemetry relay (MAVSDK to live snapshot)
+PartOf=bytewolf.target
+After=bytewolf-sitl.service
+Wants=bytewolf-sitl.service
+
+[Service]
+Type=simple
+User=bytewolf
+Group=bytewolf
+WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
+ExecStart=/home/bytewolf/bytewolf-robotics/platform/.venv/bin/python -m brain.cli.dashboard_telemetry
+
+# PX4 discovery is not instant and systemd cannot know when MAVLink is up, so
+# ordering alone is not enough. The relay exits if it cannot find PX4 within its
+# own bounded timeout; restarting until it does is the readiness check.
+Restart=always
+RestartSec=10
+
+# This relay holds the PX4 link but hands it over: a mission announces itself,
+# the relay steps aside and reconnects afterwards. That is why it can be a
+# long-running service without blocking flights. The ROS 2 bridge does NOT do
+# this - it keeps the link - which is why it is deliberately not a unit here.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=bytewolf.target

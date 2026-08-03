@@ -1,0 +1,11 @@
+[Unit]
+Description=ByteWolf simulation and Control Room stack
+Documentation=file:///home/bytewolf/bytewolf-robotics/platform/deploy/systemd/README.md
+# Grouping the three services under one target means `systemctl stop
+# bytewolf.target` tears down the whole stack in dependency order instead of
+# leaving a simulator running behind a stopped dashboard.
+Requires=bytewolf-sitl.service bytewolf-telemetry.service bytewolf-controlroom.service
+After=bytewolf-sitl.service bytewolf-telemetry.service bytewolf-controlroom.service
+
+[Install]
+WantedBy=multi-user.target
