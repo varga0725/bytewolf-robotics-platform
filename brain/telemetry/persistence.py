@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 from math import isfinite
 from pathlib import Path
@@ -295,10 +295,10 @@ def _timestamp(value: str, line_number: int) -> datetime:
         raise ValueError(f"Telemetry history line {line_number} observed_at must be RFC 3339.") from error
     if timestamp.tzinfo is None or timestamp.utcoffset() is None:
         raise ValueError(f"Telemetry history line {line_number} observed_at must include an offset.")
-    return timestamp.astimezone(UTC)
+    return timestamp.astimezone(timezone.utc)
 
 
 def _format_timestamp(timestamp: datetime) -> str:
     if timestamp.tzinfo is None or timestamp.utcoffset() is None:
         raise ValueError("Telemetry event timestamp must include an offset.")
-    return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")

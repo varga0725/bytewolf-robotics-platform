@@ -9,7 +9,11 @@ import tempfile
 import time
 import unittest
 
-from robots.drone.x500v2.ros2.bridge_runtime import TelemetryBridgeRuntime
+from robots.drone.x500v2.ros2.bridge_runtime import (
+    TelemetryBridgeRuntime,
+    route_declared_topics_to,
+)
+from robots.drone.x500v2.ros2.telemetry_adapter import declared_telemetry_topics
 
 
 class Position:
@@ -39,16 +43,43 @@ class Telemetry:
         return self._stream(True)
 
 
+class _Event:
+    """The only thing routing looks at is the topic."""
+
+    def __init__(self, topic: str) -> None:
+        self.topic = topic
+
+
+class VehicleCore:
+    """Mirrors MAVSDK's ``System.core``, which is where link state really lives.
+
+    The fake used to answer ``connection_state()`` directly on the vehicle, so
+    the suite stayed green while the real bridge could never connect. Keeping the
+    nesting here is what makes these tests evidence about MAVSDK rather than
+    about themselves.
+    """
+
+    def __init__(self, vehicle: "Vehicle") -> None:
+        self._vehicle = vehicle
+
+    def connection_state(self):
+        return self._vehicle.connection_states()
+
+
 class Vehicle:
     telemetry = Telemetry()
 
     def __init__(self) -> None:
         self.connected_to: str | None = None
 
+    @property
+    def core(self) -> VehicleCore:
+        return VehicleCore(self)
+
     async def connect(self, *, system_address: str) -> None:
         self.connected_to = system_address
 
-    async def connection_state(self):
+    async def connection_states(self):
         yield type("State", (), {"is_connected": True})()
 
 
@@ -140,7 +171,7 @@ class TelemetryBridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stop_cancels_never_connected_discovery_and_cleans_up(self) -> None:
         class NeverConnectedVehicle(Vehicle):
-            async def connection_state(self):
+            async def connection_states(self):
                 while True:
                     await asyncio.sleep(60)
                     yield type("State", (), {"is_connected": False})()
@@ -168,7 +199,7 @@ class TelemetryBridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_never_connected_discovery_has_a_bounded_timeout(self) -> None:
         class NeverConnectedVehicle(Vehicle):
-            async def connection_state(self):
+            async def connection_states(self):
                 while True:
                     await asyncio.sleep(60)
                     yield type("State", (), {"is_connected": False})()
@@ -193,6 +224,94 @@ class TelemetryBridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
     def _node_after_ros_init(self, ros: RosClient, node: Node) -> Node:
         self.assertEqual(ros.initialized, 1)
         return node
+
+
+class DeclaredTopicRoutingTests(unittest.TestCase):
+    """The relay carries more streams than ROS declares; only the declared ones may cross.
+
+    On the first run against a real vehicle the relay delivered seven extra
+    history streams, the publisher rejected the first one exactly as its contract
+    says it must, and that rejection killed the entire bridge. The publisher was
+    right; the bridge was wrong to hand it everything.
+    """
+
+    UNDECLARED = (
+        "telemetry/history/imu",
+        "telemetry/history/gps_info",
+        "telemetry/history/attitude_euler",
+        "telemetry/history/velocity_ned",
+        "telemetry/history/position_velocity_ned",
+        "telemetry/history/landed_state",
+        "telemetry/history/battery_diagnostics",
+    )
+
+    def setUp(self) -> None:
+        self.published: list[object] = []
+        self.route = route_declared_topics_to(self.published.append)
+
+    def test_declared_topics_reach_ros(self) -> None:
+        for topic in declared_telemetry_topics():
+            with self.subTest(topic=topic):
+                self.published.clear()
+                self.route(_Event(topic))
+
+                self.assertEqual([event.topic for event in self.published], [topic])
+
+    def test_the_relays_history_streams_never_reach_ros(self) -> None:
+        for topic in self.UNDECLARED:
+            with self.subTest(topic=topic):
+                self.published.clear()
+                self.route(_Event(topic))
+
+                self.assertEqual(self.published, [], f"{topic} is not in the ROS contract")
+
+    def test_an_undeclared_topic_does_not_raise_and_stop_the_bridge(self) -> None:
+        """The whole point: an extra stream must be a non-event, not a crash."""
+        def exploding_publish(event: object) -> None:
+            raise AssertionError(f"{getattr(event, 'topic', event)!r} must never be published to ROS")
+
+        route = route_declared_topics_to(exploding_publish)
+
+        for topic in self.UNDECLARED:
+            with self.subTest(topic=topic):
+                route(_Event(topic))
+
+
+class MavsdkShapeTests(unittest.TestCase):
+    """Hold the fake to the library it stands in for.
+
+    Every other test here talks to a fake, which is what keeps them fast and
+    simulator-free - but a fake only proves something while it still resembles
+    MAVSDK. The bridge shipped for weeks calling ``connection_state()`` on the
+    system object, a method the library has never had, and no test could see it
+    because the fake offered one. These assertions read the real class, so the
+    next such divergence fails here instead of on a live vehicle.
+    """
+
+    def setUp(self) -> None:
+        try:
+            from mavsdk import System
+        except ModuleNotFoundError:
+            self.skipTest("MAVSDK is not installed in this interpreter.")
+        self.system = System
+
+    def test_link_state_lives_under_core_not_on_the_system(self) -> None:
+        from mavsdk.core import Core
+
+        self.assertTrue(hasattr(self.system, "core"), "MAVSDK System must expose `core`")
+        self.assertTrue(
+            hasattr(Core, "connection_state"),
+            "MAVSDK Core must expose `connection_state`; the bridge's discovery depends on it",
+        )
+        self.assertFalse(
+            hasattr(self.system, "connection_state"),
+            "If MAVSDK ever put `connection_state` on System, this bridge's nesting should be revisited",
+        )
+
+    def test_the_system_offers_what_the_bridge_calls_on_it(self) -> None:
+        for attribute in ("connect", "core", "telemetry"):
+            with self.subTest(attribute=attribute):
+                self.assertTrue(hasattr(self.system, attribute))
 
 
 if __name__ == "__main__":
