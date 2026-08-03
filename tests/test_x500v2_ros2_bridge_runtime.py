@@ -116,11 +116,12 @@ class TelemetryBridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
         node = Node()
         stopped = asyncio.Event()
         with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "telemetry.json"
             runtime = TelemetryBridgeRuntime(
                 vehicle=vehicle,
                 ros_client=ros,
                 node_factory=lambda: self._node_after_ros_init(ros, node),
-                destination=Path(directory) / "telemetry.json",
+                destination=snapshot,
                 endpoint="udpin://0.0.0.0:14540",
                 clock=lambda: datetime(2026, 7, 16, 19, 0, tzinfo=UTC),
             )
@@ -129,8 +130,15 @@ class TelemetryBridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
             # asyncio.sleep(0) only yields control; it does not let time pass, so
             # a fixed count of yields is a bet on how many turns the runtime
             # needs, and under scheduling pressure that bet loses.
+            #
+            # It also waits for the snapshot, not just for the publishes. The
+            # relay writes the file *after* handing the event on, in a worker
+            # thread, so stopping as soon as the third publish lands can cancel
+            # the run before the write completes. That made this test pass only
+            # in company: run alone it failed, because a warm thread pool and a
+            # busier loop were doing the waiting the test had not asked for.
             deadline = time.monotonic() + 5.0
-            while len(node.events) < 3 and time.monotonic() < deadline:
+            while (len(node.events) < 3 or not snapshot.exists()) and time.monotonic() < deadline:
                 await asyncio.sleep(0.005)
             stopped.set()
             await task
@@ -148,7 +156,7 @@ class TelemetryBridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     "/bytewolf/x500v2_reference_01/telemetry/flight_state",
                 },
             )
-            self.assertTrue((Path(directory) / "telemetry.json").exists())
+            self.assertTrue(snapshot.exists())
 
     async def test_cleans_up_ros_when_connection_fails_before_relay(self) -> None:
         class FailingVehicle(Vehicle):
