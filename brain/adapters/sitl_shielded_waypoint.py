@@ -91,7 +91,7 @@ class SitlShieldedWaypointNavigator:
                 stream_hz=5.0, telemetry_max_age_s=0.5, max_vertical_speed_m_s=0.5,
                 slowdown_radius_m=3.0,
                 replanner=LocalReplanner(
-                    lateral_speed_m_s=min(1.0, self.profile.max_speed_m_s*0.5),
+                    lateral_speed_m_s=min(0.8, self.profile.max_speed_m_s*0.4),
                     max_detour_s=45.0,
                 ),
             )
