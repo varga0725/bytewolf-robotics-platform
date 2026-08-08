@@ -1,0 +1,21 @@
+[Unit]
+Description=ByteWolf continuous dual-camera YOLO inference
+PartOf=bytewolf.target
+After=bytewolf-camera-front.service bytewolf-camera-down.service
+Wants=bytewolf-camera-front.service bytewolf-camera-down.service
+
+[Service]
+Type=simple
+User=bytewolf
+Group=bytewolf
+WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/bytewolf/bytewolf-robotics/platform/.venv/bin/python -m brain.cli.dashboard_yolo --weights /home/bytewolf/.cache/bytewolf-vision/yolo11n.pt --camera front simulation/artifacts/dashboard/camera.jpg simulation/artifacts/dashboard/detections.json --camera down simulation/artifacts/dashboard/camera-down.jpg simulation/artifacts/dashboard/detections-down.json
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=bytewolf.target

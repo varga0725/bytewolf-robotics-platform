@@ -16,7 +16,7 @@ WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
 Environment=GZ_IP=127.0.0.1
 Environment=PYTHONPATH=/home/bytewolf/bytewolf-robotics/platform
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3.10 -s -m simulation.perception.camera_stream --sensor front --full-sensors
+ExecStart=/usr/bin/python3.10 -s -m simulation.perception.camera_stream --sensor front --full-sensors --no-detections
 
 # Topic publication starts after the simulator process, not at the same instant.
 # A bounded failure followed by restart is the service's readiness loop.

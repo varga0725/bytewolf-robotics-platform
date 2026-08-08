@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from apps.gateway.nim_mission_agent import MissionAgentRequest, NIMMissionAgent
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
+from brain.adapters.sitl_shielded_waypoint import SitlShieldedWaypointNavigator
 from brain.cli.artifacts import (
     FlightRunRecording,
     prepare_flight_run_recording,
@@ -169,7 +170,16 @@ async def run(arguments: argparse.Namespace) -> None:
         # would leave an empty history file behind for a flight that never was.
         recording = prepare_flight_run_recording(arguments.artifact_dir, arguments.telemetry_history)
         system = System(port=arguments.mavsdk_server_port)
-        adapter = MavsdkMissionAdapter(system, safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
+        protected_waypoint = (
+            SitlShieldedWaypointNavigator(system, profile)
+            if arguments.deployment_mode == "simulation"
+            else None
+        )
+        adapter = MavsdkMissionAdapter(
+            system, safety_profile=profile,
+            preflight_wait_s=arguments.preflight_wait_seconds,
+            protected_waypoint=protected_waypoint,
+        )
         print(f"Connecting to PX4 SITL at {arguments.endpoint}...")
         # Take the endpoint before MAVSDK binds it; the bridge yields to this.
         acquire_px4_link("agent-mission")

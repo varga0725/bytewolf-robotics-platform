@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -87,6 +87,39 @@ def create_app(
     gateway: DashboardCommandGateway | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ByteWolf Command Gateway", version="0.1")
+
+    @app.middleware("http")
+    async def tailscale_identity_boundary(request: Request, call_next):
+        """Trust identity only when Tailscale Serve has injected it.
+
+        Direct development/test traffic remains loopback-only. Any request for
+        the tailnet hostname must carry a Serve identity and the login must be
+        explicitly authorized; this applies to camera reads as well as flight
+        mutations so the dashboard is never anonymously exposed.
+        """
+        hostname = request.url.hostname or ""
+        is_local = hostname in {"127.0.0.1", "localhost", "testserver"}
+        if not is_local:
+            login = request.headers.get("Tailscale-User-Login", "").strip().lower()
+            allowed = {
+                item.strip().lower()
+                for item in os.environ.get("BYTEWOLF_TAILSCALE_OPERATORS", "").split(",")
+                if item.strip()
+            }
+            if not hostname.endswith(".ts.net") or not login:
+                return Response("Tailscale Serve identity required", status_code=401)
+            if login not in allowed:
+                return Response("Tailnet user is not an authorized operator", status_code=403)
+            request.state.operator = login
+        else:
+            request.state.operator = "local"
+        response = await call_next(request)
+        response.headers["X-ByteWolf-Operator"] = request.state.operator
+        return response
+
+    @app.get("/api/v1/auth/session")
+    def auth_session(request: Request) -> dict[str, object]:
+        return {"authenticated": True, "operator": request.state.operator}
     # The conversational turn runs on the Python Cognitive Runtime: NIM directly,
     # the read-only plugins as tools, the reserved draft-flight path, and the
     # cognitive-hooks memory pipeline. The Node runner is no longer on the live

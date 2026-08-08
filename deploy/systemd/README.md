@@ -2,7 +2,7 @@
 
 These run the integrated ByteWolf stack on a dedicated Ubuntu host: PX4 SITL
 with the `full-sensors` X500 (front camera, down camera and 2D lidar), dashboard
-telemetry, two read-only camera relays, the occupancy-map observer, and the
+telemetry, two read-only camera relays, continuous dual-camera YOLO, the occupancy-map observer, and the
 Control Room API. They exist so the stack survives a reboot and a crash, which
 a hand-started `nohup` does not.
 
@@ -55,16 +55,15 @@ relay steps aside and reconnects — which is why that one can run continuously.
 **Remote access.** The API binds to `127.0.0.1` in code and must keep doing so.
 It is not purely read-only: its mission endpoints can reach the simulation
 executor after review and approval, while network authentication and RBAC are
-not implemented. The installer therefore does not call `tailscale serve` or
-publish the socket through any other tunnel. Remote publication remains
-blocked until authentication, role separation, target allowlisting, rate and
-replay protection, and an independently reviewed deployment policy are in
-place. A tailnet alone is not an application authorization boundary.
+implemented through Tailscale Serve identity headers and an explicit operator
+allowlist. The backend remains bound to loopback and the installer publishes it
+only through tailnet HTTPS. Configure `BYTEWOLF_TAILSCALE_OPERATORS` in the
+ignored `.env` as a comma-separated login list. The installer calls
+`tailscale serve`; do not publish the socket through any other tunnel. Tailscale
+identity plus the application allowlist form the remote authorization boundary.
 
-If an older installation already configured Tailscale Serve, inspect that
-external state and remove the specific ByteWolf forwarding rule through a
-separate, human-reviewed maintenance action. This installer intentionally does
-not issue a broad `tailscale serve reset`, because that could delete unrelated
+The installer intentionally does not issue a broad `tailscale serve reset`,
+because that could delete unrelated
 services on the host.
 
 **`simulation.gazebo.map_view`.** It injects a camera model into the running

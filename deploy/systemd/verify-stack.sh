@@ -9,6 +9,7 @@ units=(
   bytewolf-camera-front.service
   bytewolf-camera-down.service
   bytewolf-world-map.service
+  bytewolf-yolo.service
   bytewolf-controlroom.service
   bytewolf.target
 )

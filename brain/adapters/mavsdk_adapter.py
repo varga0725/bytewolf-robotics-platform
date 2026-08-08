@@ -80,12 +80,14 @@ class MavsdkMissionAdapter:
         runtime_policy: RuntimePolicy | None = None,
         safety_profile: SafetyProfile | None = None,
         preflight_wait_s: float = 0.0,
+        protected_waypoint: Callable[[WaypointCommand], Awaitable[GlobalPosition]] | None = None,
     ) -> None:
         self._drone = drone
         self._sleep = sleep
         self._runtime_policy = runtime_policy or load_runtime_policy()
         self._safety_profile = safety_profile or load_safety_profile()
         self._preflight_wait_s = preflight_wait_s
+        self._protected_waypoint = protected_waypoint
         self._preflight_telemetry: MissionTelemetrySnapshot | None = None
         self._execution = MissionExecution.empty()
         self._runtime_watchdog = RuntimeTelemetryWatchdog(
@@ -176,6 +178,8 @@ class MavsdkMissionAdapter:
         return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
 
     async def goto_relative_waypoint(self, command: WaypointCommand) -> GlobalPosition:
+        if self._protected_waypoint is not None:
+            return await self._protected_waypoint(command)
         position = await anext(self._drone.telemetry.position())
         self._require_runtime_global_position(position, "waypoint origin")
         target = relative_waypoint_to_global(
