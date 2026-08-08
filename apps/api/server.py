@@ -8,6 +8,7 @@ import json
 from math import isfinite
 import os
 from pathlib import Path
+import xml.etree.ElementTree as ET
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -418,7 +419,7 @@ def create_app(
         now = datetime.now(UTC)
         cells = map_view(memory.recall(now), memory.disputed(now))
         return {
-            "cells": [cell.as_dict() for cell in cells],
+            "cells": [_label_simulated_cell(cell.as_dict()) for cell in cells],
             "occupancy_only": True,
         }
 
@@ -758,6 +759,49 @@ def _handle_gateway(call: object) -> DashboardReply:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except (RuntimeError, ValueError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+def _label_simulated_cell(document: dict[str, object]) -> dict[str, object]:
+    """Attach simulator semantics without pretending LiDAR classified them.
+
+    Occupancy remains measured by LiDAR. The optional label comes from the
+    controlled Forest world's named entity catalogue and is explicitly marked
+    as simulator ground truth, never as a camera-model conclusion.
+    """
+    try:
+        north, east = float(document["north_m"]), float(document["east_m"])
+    except (KeyError, TypeError, ValueError):
+        return document
+    nearest: tuple[float, str] | None = None
+    for entity_north, entity_east, label in _forest_semantic_entities():
+        distance = ((north-entity_north)**2 + (east-entity_east)**2) ** 0.5
+        if distance <= 4.0 and (nearest is None or distance < nearest[0]):
+            nearest = (distance, label)
+    if nearest is None:
+        return document
+    return {**document, "semantic_label": nearest[1], "semantic_source": "simulator_ground_truth"}
+
+
+def _forest_semantic_entities() -> tuple[tuple[float, float, str], ...]:
+    path = Path("/home/bytewolf/bytewolf-robotics/PX4-Autopilot/Tools/simulation/gz/worlds/forest.sdf")
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError):
+        return ()
+    entities: list[tuple[float, float, str]] = []
+    for include in root.findall(".//include"):
+        name = (include.findtext("name") or "").strip()
+        pose = (include.findtext("pose") or "").split()
+        lowered = name.lower()
+        label = "fa" if "tree" in lowered else "épület" if any(token in lowered for token in ("building", "house", "warehouse")) else None
+        if label is None or len(pose) < 2:
+            continue
+        try:
+            east, north = float(pose[0]), float(pose[1])
+        except ValueError:
+            continue
+        entities.append((north, east, label))
+    return tuple(entities)
 
 
 def main(argv: list[str] | None = None) -> None:

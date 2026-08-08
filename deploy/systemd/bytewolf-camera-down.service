@@ -10,6 +10,7 @@ User=bytewolf
 Group=bytewolf
 WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
 Environment=GZ_IP=127.0.0.1
+Environment=PX4_GZ_WORLD=forest
 Environment=PYTHONPATH=/home/bytewolf/bytewolf-robotics/platform
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3.10 -s -m simulation.perception.camera_stream --sensor down --full-sensors --no-detections

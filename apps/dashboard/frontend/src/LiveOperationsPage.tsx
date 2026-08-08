@@ -4,7 +4,7 @@ import { api } from "./api";
 
 type Telemetry = { capturedAt: string; inAir: boolean | null; battery: number | null; altitude: number | null; position: string | null };
 type SafetyEnvelope = { maxAltitude: number; maxRadius: number; minBattery: number };
-type OccupancyCell = { north: number; east: number; size: number; disputed: boolean };
+type OccupancyCell = { north: number; east: number; size: number; disputed: boolean; label: string | null };
 type CameraEvidence = { state: "fresh" | "stale" | "unavailable"; capturedAt: string | null; detections: Array<{ label: string; confidence: number }> };
 type OperationsState = {
   telemetry: Telemetry | null;
@@ -79,7 +79,7 @@ function readCells(value: unknown): { verified: boolean; cells: OccupancyCell[] 
     verified: true,
     cells: value.cells.flatMap((item) => {
       if (!isRecord(item) || !finiteNumber(item.north_m) || !finiteNumber(item.east_m) || !finiteNumber(item.cell_size_m) || item.cell_size_m <= 0 || (item.disputed !== undefined && typeof item.disputed !== "boolean")) return [];
-      return [{ north: item.north_m, east: item.east_m, size: item.cell_size_m, disputed: item.disputed === true }];
+      return [{ north: item.north_m, east: item.east_m, size: item.cell_size_m, disputed: item.disputed === true, label: typeof item.semantic_label === "string" ? item.semantic_label : null }];
     }),
   };
 }
@@ -121,7 +121,8 @@ function OccupancyPreview({ verified, cells }: { verified: boolean; cells: Occup
       <circle className="map-home" cx="150" cy="150" r="4" /><text className="map-label" x="158" y="18">É</text>
       {verified && cells.map((cell, index) => {
         const side = Math.max(3, cell.size * scale);
-        return <rect key={`${cell.north}-${cell.east}-${index}`} className={cell.disputed ? "world-map-cell world-map-cell--disputed" : "world-map-cell"} x={150 + cell.east * scale - side / 2} y={150 - cell.north * scale - side / 2} width={side} height={side} rx="2" aria-label={`${cell.disputed ? "Vitatott" : "Mért"} akadály: É ${cell.north} m, K ${cell.east} m`} />;
+        const x=150+cell.east*scale, y=150-cell.north*scale;
+        return <g key={`${cell.north}-${cell.east}-${index}`}><rect className={cell.disputed ? "world-map-cell world-map-cell--disputed" : "world-map-cell"} x={x-side/2} y={y-side/2} width={side} height={side} rx="2" aria-label={`${cell.disputed ? "Vitatott" : "Mért"} akadály${cell.label ? `, ${cell.label}` : ""}: É ${cell.north} m, K ${cell.east} m`} />{cell.label && <text className="world-map-entity-label" x={x+5} y={y-5}>{cell.label}</text>}</g>;
       })}
     </svg>
     <p className="muted">{verified ? "Az üres terület ismeretlen, nem akadálymentes. A cellák kizárólag mért akadályt jelentenek." : "A forrás foglaltsági jelentése nem igazolt; a térképcellák rejtve maradnak."}</p>

@@ -12,6 +12,9 @@ Group=bytewolf
 WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
 Environment=PATH=/home/bytewolf/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=GZ_IP=127.0.0.1
+# Forest provides a flat launch plane plus named tree obstacles. Baylands starts
+# on a six-degree terrain slope and has produced a real attitude/roll failure.
+Environment=PX4_GZ_WORLD=forest
 # The deployed Control Room is the integrated digital twin, not the cheapest
 # diagnostic profile: two RGB cameras and the reviewed 270-degree 2D lidar.
 ExecStart=/home/bytewolf/bytewolf-robotics/platform/simulation/gazebo/launch/run_px4_gazebo_headless.zsh full-sensors

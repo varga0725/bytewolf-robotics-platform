@@ -19,9 +19,9 @@ from brain.navigation.local_replanner import LocalReplanner
 from brain.navigation.waypoints import GlobalPosition, relative_waypoint_to_global
 from brain.safety.profile import SafetyProfile
 from simulation.control.shield_run import _enabled, _latest_observation
+from simulation.perception.survey_recorder import discover_scan_topic
 
 _EARTH_RADIUS_M = 6_371_000.0
-_SCAN_TOPIC = "/world/baylands/model/x500_mono_cam_down_0/link/link/sensor/lidar_2d_v2/scan"
 
 
 class _StateSource:
@@ -59,8 +59,9 @@ class SitlShieldedWaypointNavigator:
         self.scan_path.parent.mkdir(parents=True, exist_ok=True)
         stream = self.scan_path.open("w", encoding="utf-8")
         environment = dict(os.environ, GZ_IP="127.0.0.1")
+        scan_topic = discover_scan_topic()
         capture = subprocess.Popen(
-            ("gz", "topic", "-e", "-t", _SCAN_TOPIC, "--json-output"),
+            ("gz", "topic", "-e", "-t", scan_topic, "--json-output"),
             stdout=stream, stderr=subprocess.DEVNULL, env=environment,
         )
         try:

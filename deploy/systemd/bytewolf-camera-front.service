@@ -14,6 +14,7 @@ WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
 # with Ubuntu 22.04's system Python 3.10 packages.  -s excludes user-site
 # packages so a newer protobuf installed for MAVSDK cannot shadow that pair.
 Environment=GZ_IP=127.0.0.1
+Environment=PX4_GZ_WORLD=forest
 Environment=PYTHONPATH=/home/bytewolf/bytewolf-robotics/platform
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3.10 -s -m simulation.perception.camera_stream --sensor front --full-sensors --no-detections

@@ -152,8 +152,11 @@ def camera_topic(sensor: str, *, full_sensors: bool = False) -> str:
     if sensor not in {"down", "front"}:
         raise ValueError(f"Unknown camera sensor: {sensor}")
     if full_sensors:
-        return FULL_DOWN_CAMERA_TOPIC if sensor == "down" else FULL_FRONT_CAMERA_TOPIC
-    return DOWN_CAMERA_TOPIC if sensor == "down" else FRONT_CAMERA_TOPIC
+        topic = FULL_DOWN_CAMERA_TOPIC if sensor == "down" else FULL_FRONT_CAMERA_TOPIC
+    else:
+        topic = DOWN_CAMERA_TOPIC if sensor == "down" else FRONT_CAMERA_TOPIC
+    world = os.environ.get("PX4_GZ_WORLD", "baylands").strip() or "baylands"
+    return topic.replace("/world/baylands/", f"/world/{world}/")
 
 
 def publish_frame(
