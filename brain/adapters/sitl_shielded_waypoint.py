@@ -72,6 +72,12 @@ class SitlShieldedWaypointNavigator:
             )
             active = replace(
                 self.profile,
+                # The generic mission envelope allows 5 m/s, but the current
+                # conservative braking model would need 17 m of clear lidar at
+                # that speed. The commissioned simulator route is deliberately
+                # capped at 1 m/s, keeping its full-stop requirement below the
+                # 9.9 m measured scene clearance.
+                max_speed_m_s=min(1.0, self.profile.max_speed_m_s),
                 offboard=_enabled(self.profile.offboard),
                 shield=_enabled(self.profile.shield),
             )
