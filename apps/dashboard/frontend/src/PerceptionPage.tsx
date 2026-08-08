@@ -131,17 +131,19 @@ export function PerceptionPage() {
     <div className="field-label"><label htmlFor="perception-sensor">Szenzorforrás</label><select id="perception-sensor" value={sensor} onChange={(event) => setSensor(event.target.value as SensorId)}>{sensors.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></div>
     <p className={`telemetry-sample telemetry-sample--${evidence.state === "fresh" ? "fresh" : evidence.state === "stale" ? "stale" : "unavailable"}`} role="status">ÉSZLELÉSI FORRÁS: {statusLabel(evidence.state)}</p>
     <p className="muted">{evidence.reason}{evidence.capturedAt ? <> Rögzítve: <time dateTime={evidence.capturedAt}>{evidence.capturedAt}</time>.</> : null}</p>
-    <div className="live-operations-grid">
-      <section className="live-operations-zone" aria-labelledby="perception-evidence-title"><p className="eyebrow">01 · KÉPI BIZONYÍTÉK</p><h3 id="perception-evidence-title">Validált észlelések</h3>
+    <div className="perception-grid">
+      <section className="live-operations-zone perception-camera" aria-labelledby="perception-evidence-title"><p className="eyebrow">01 · KÉPI BIZONYÍTÉK</p><h3 id="perception-evidence-title">Élőkép és validált észlelések</h3>
         <img className="camera-stream-frame" src={`/api/v1/cameras/${sensor}/stream`} alt={`${source.label} élőkép`} />
         {evidence.state === "fresh" && <ul className="data-list" aria-label="Validált objektumészlelések">{evidence.detections.length ? evidence.detections.map((detection, index) => <li key={`${detection.label}-${index}`}><strong>{detection.label}</strong><span>Bizonyossági jelzés: {Math.round(detection.confidence * 100)}% (nem kalibrált valószínűség)</span></li>) : <li>Nincs észlelés az érvényes képkockában. Ez nem igazol akadálymentességet.</li>}</ul>}
         {evidence.state !== "fresh" && <p className="muted">Az objektumészlelések visszatartva maradnak, amíg nincs friss és érvényes bizonyíték.</p>}
       </section>
-      <section className="live-operations-zone" aria-labelledby="perception-coverage-title"><p className="eyebrow">02 · LEFEDETTSÉGI HATÁR</p><h3 id="perception-coverage-title">Szenzor coverage</h3>
+      <div className="perception-side-stack">
+      <section className="live-operations-zone perception-coverage" aria-labelledby="perception-coverage-title"><p className="eyebrow">02 · LEFEDETTSÉGI HATÁR</p><h3 id="perception-coverage-title">Szenzorlefedettség</h3>
         {evidence.state === "fresh" && evidence.coverage.length > 0 ? <><ul className="data-list" aria-label="Igazolt szenzorlefedettség">{evidence.coverage.map((sector, index) => <li key={`${sector.from}-${sector.to}-${index}`}><strong>{sector.from}° – {sector.to}°</strong><span>Igazolt határ: legfeljebb {sector.distance} m</span></li>)}</ul><p className="muted">Az ezen kívüli terület ismeretlen; ebből a nézetből nem vezetünk le biztonságos mozgási teret.</p></> : <p className="muted"><strong>NINCS IGAZOLT LEFEDETTSÉG.</strong> Az ezen kívüli terület ismeretlen; ebből a nézetből nem vezetünk le biztonságos mozgási teret.</p>}
         <p className="muted">A képi észlelés, az akadályfoglaltság és a lefedettség külön bizonyítéklánc. Egyik sem helyettesíti a futásidejű safety shieldet.</p>
       </section>
       <section className="live-operations-zone" aria-labelledby="perception-obstacle-title"><p className="eyebrow">03 · LOKÁLIS AKADÁLYBIZONYÍTÉK</p><h3 id="perception-obstacle-title">Foglaltsági térkép</h3><OccupancyMap map={map} /></section>
+      </div>
     </div>
   </section>;
 }

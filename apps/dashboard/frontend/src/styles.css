@@ -359,6 +359,15 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .event-record { display: grid; gap: 8px; margin: 14px 0 20px; padding: 15px; border: 1px solid var(--color-status-warning-border); border-left: 3px solid var(--color-warning); border-radius: 10px; background: var(--color-surface-list); }.event-record strong { color: var(--color-text-strong); font-family: var(--mono); font-size: .8rem; letter-spacing: .02em; }.event-record small { color: var(--color-text-data-muted); font-family: var(--mono); font-size: .75rem; line-height: 1.5; }
 .live-operations-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 20px; }.live-operations-zone { min-width: 0; padding: 16px; border: 1px solid var(--color-card-border); border-radius: 12px; background: var(--color-surface-card-strong); box-shadow: inset 0 1px var(--color-card-highlight); }.live-operations-zone > h3 { margin: 5px 0 13px; }.live-operations-zone .telemetry-details { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 14px 0; }.live-operations-zone .telemetry-details div { min-height: 70px; }.live-operations-zone .world-map { max-width: 100%; }.live-operations-zone .camera-stream-frame { margin-top: 15px; }.live-operations-zone .mission-events { display: grid; gap: 8px; margin: 14px 0 0; padding: 0; border: 0; list-style: none; }.live-operations-zone .mission-events li { display: grid; gap: 4px; padding: 10px; border-left-color: var(--color-accent); }.live-operations-zone .mission-events small { color: var(--color-text-data-muted); font-family: var(--mono); font-size: .72rem; }
 
+.perception-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(20rem, .85fr); gap: 16px; align-items: start; margin-top: 20px; }
+.perception-side-stack { display: grid; min-width: 0; gap: 16px; }
+.perception-camera .camera-stream-frame { display: block; width: 100%; height: auto; max-height: min(62vh, 620px); aspect-ratio: 16 / 9; object-fit: cover; }
+.perception-camera .data-list { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.perception-coverage { min-height: 0; }
+.perception-coverage > .muted:last-child { margin-bottom: 0; padding-top: 12px; border-top: 1px solid var(--color-card-border); font-size: .88rem; }
+.perception-side-stack .world-map-panel { margin-top: 12px; padding-top: 12px; }
+.perception-side-stack .world-map { width: min(100%, 390px); margin-inline: auto; }
+
 @media (max-width: 800px) {
   .control-room { padding: 24px var(--content-inline-gutter) calc(48px + env(safe-area-inset-bottom)); }
   .topbar, .section-heading { align-items: flex-start; flex-direction: column; gap: 13px; }
@@ -368,6 +377,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
   .operation-status-strip > div { min-height: var(--touch-target); padding: 12px 14px; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .live-operations-grid { grid-template-columns: 1fr; }
+  .perception-grid { grid-template-columns: 1fr; }
   .live-operations-zone { padding: 15px; }
   .telemetry-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mission-form { grid-template-columns: 1fr; gap: 16px; }
