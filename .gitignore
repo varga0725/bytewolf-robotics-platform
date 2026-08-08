@@ -1,5 +1,6 @@
 .DS_Store
 .venv/
+.venv-ros/
 .venv-vision/
 .venv-vision313/
 node_modules/

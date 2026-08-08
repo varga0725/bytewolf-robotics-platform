@@ -310,6 +310,10 @@ def _converse_with_nim(text: str) -> ConversationReply:
 
 
 def _execute_with_cli(plan_name: str) -> str:
+    if os.environ.get("BYTEWOLF_MISSION_EXECUTION_ENABLED", "false").strip().lower() not in {"1", "true", "yes"}:
+        raise TelegramGatewayError(
+            "A SITL küldetés-végrehajtás karanténban van a stabil felszállási acceptance teszt lezárásáig."
+        )
     plan_path = _DEFAULT_PLAN_DIRECTORY / plan_name
     if not _PLAN_NAME.fullmatch(plan_name) or not plan_path.is_file():
         raise TelegramGatewayError("Reviewed plan does not exist.")
@@ -344,7 +348,16 @@ def _execute_with_cli(plan_name: str) -> str:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log = log_path.open("w")
         _active_execution = subprocess.Popen(
-            [sys.executable, "-m", "brain.cli.fly_nim_mission", "--mission-spec-file", str(plan_path), "--execute"],
+            [
+                sys.executable,
+                "-m",
+                "brain.cli.fly_nim_mission",
+                "--mission-spec-file",
+                str(plan_path),
+                "--execute",
+                "--deployment-mode",
+                "simulation",
+            ],
             start_new_session=True,
             stdout=log,
             stderr=subprocess.STDOUT,

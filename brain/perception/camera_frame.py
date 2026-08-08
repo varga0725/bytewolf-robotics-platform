@@ -21,7 +21,7 @@ how a perception pipeline silently starts seeing things that are not there.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 
@@ -116,4 +116,4 @@ class CameraFrame:
         return expected is None or len(self.data) == expected
 
     def utc_captured_at(self) -> datetime:
-        return self.captured_at.astimezone(UTC)
+        return self.captured_at.astimezone(timezone.utc)

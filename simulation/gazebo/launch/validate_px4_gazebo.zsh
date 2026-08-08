@@ -20,7 +20,17 @@ require_command() {
   fi
 }
 
-for command_name in brew cmake ninja gz make; do
+# Homebrew is how macOS supplies this native toolchain, so it stays required
+# there. On Linux the same dependencies come from the distribution and no
+# Homebrew exists; demanding it would fail a host that satisfies every actual
+# prerequisite. This check is the single source of the environment contract for
+# both hosts — a second, per-platform validator would drift from this one.
+required_commands=(cmake ninja gz make)
+if [[ "$(uname)" == "Darwin" ]]; then
+  required_commands+=(brew)
+fi
+
+for command_name in $required_commands; do
   require_command "$command_name"
 done
 

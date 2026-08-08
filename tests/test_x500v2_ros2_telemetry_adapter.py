@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 import importlib
 import math
+import shutil
+import subprocess
 import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 from brain.telemetry.domain import (
     BatteryTelemetryEvent,
@@ -76,6 +82,79 @@ class X500V2Ros2TelemetryAdapterTests(unittest.TestCase):
                     POSITION_TOPIC, math.nan, 19.0402, 125.5, 15.0, OBSERVED_AT
                 )
             )
+
+
+class RosInterpreterCompatibilityTests(unittest.TestCase):
+    """The bridge must stay importable on the Python its ROS distribution ships.
+
+    ROS 2 Humble builds ``rclpy`` against Python 3.10, while the rest of this
+    platform requires 3.11 or newer. The bridge therefore runs in a separate
+    interpreter, and the only thing that makes that possible is the import chain
+    below staying free of 3.11+ syntax and library names. Nothing about that
+    constraint is visible while editing ``brain/telemetry``, so this test is what
+    stops a future change from breaking the bridge silently.
+    """
+
+    CHAIN = (
+        "brain.telemetry.domain",
+        "brain.telemetry.observation",
+        "brain.telemetry.persistence",
+        "brain.telemetry.mavsdk_relay",
+        "brain.telemetry.ulog",
+        "brain.telemetry.ros2_contract",
+        "robots.drone.x500v2.ros2.telemetry_adapter",
+        "robots.drone.x500v2.ros2.bridge_runtime",
+    )
+    # The interpreters ROS 2 distributions pin. Humble is the one this project
+    # declares; the others let the check keep working if that ever moves.
+    CANDIDATES = ("python3.10", "python3.11", "python3.12")
+
+    def _interpreter(self) -> str:
+        """Return a ROS-era interpreter that can already satisfy the chain's third-party deps."""
+        for name in self.CANDIDATES:
+            executable = shutil.which(name)
+            if executable is None:
+                continue
+            probe = subprocess.run(
+                (executable, "-c", "import yaml, jsonschema"),
+                capture_output=True,
+                text=True,
+                timeout=60.0,
+                check=False,
+            )
+            if probe.returncode == 0:
+                return executable
+        self.skipTest("No interpreter with PyYAML and jsonschema available to check the ROS chain.")
+
+    def test_the_bridge_chain_imports_on_the_ros_interpreter(self) -> None:
+        executable = self._interpreter()
+        program = "import sys; sys.path.insert(0, %r)\n" % str(ROOT) + "".join(
+            f"import {module}\n" for module in self.CHAIN
+        )
+
+        completed = subprocess.run(
+            (executable, "-c", program), capture_output=True, text=True, timeout=120.0, check=False
+        )
+
+        self.assertEqual(
+            completed.returncode,
+            0,
+            f"{executable} cannot import the ROS bridge chain, so the bridge cannot run beside "
+            f"rclpy:\n{completed.stderr.strip()}",
+        )
+
+    def test_importing_the_chain_does_not_pull_in_rclpy(self) -> None:
+        """A bridge that imported rclpy eagerly would stop being optional."""
+        executable = self._interpreter()
+        program = "import sys; sys.path.insert(0, %r)\n" % str(ROOT) + "".join(
+            f"import {module}\n" for module in self.CHAIN
+        ) + "raise SystemExit(1 if 'rclpy' in sys.modules else 0)\n"
+
+        completed = subprocess.run(
+            (executable, "-c", program), capture_output=True, text=True, timeout=120.0, check=False
+        )
+
+        self.assertEqual(completed.returncode, 0, "Importing the bridge chain must not import rclpy.")
 
 
 if __name__ == "__main__":

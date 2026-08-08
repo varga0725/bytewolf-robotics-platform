@@ -8,8 +8,9 @@ does not change mission execution. Existing PX4/MAVSDK mission commands remain
 the only active flight-control path.
 
 The contract is intentionally readable and validated by the normal Python test
-suite, so it can be reviewed on the native macOS simulator environment before a
-Linux ROS 2 deployment is introduced.
+suite. The live bridge was exercised on the dedicated Ubuntu 22.04 / ROS 2
+Humble host on 2026-08-03; macOS remains suitable for ROS-independent contract
+review but does not provide `rclpy`.
 
 ## Versioned inputs
 
@@ -46,24 +47,25 @@ not a flight-control user interface.
 For the exact native macOS visual replay/SITL procedure and the separately
 scoped Ubuntu Humble smoke procedure, see
 [`visual-simulation-verification.md`](visual-simulation-verification.md).
-The replay dashboard is not a live flight display.  The separate, optional
+The replay dashboard is not a live flight display. The separate, optional
 `brain.cli.ros2_telemetry_bridge` process owns the live MAVSDK → ROS → JSON
-telemetry lifecycle in Ubuntu Humble; it must be verified there before it is
-represented as a live display.
+telemetry lifecycle in Ubuntu Humble. Its default is an explicit `simulation`
+deployment and the loopback endpoint `udpin://127.0.0.1:14540`; it has no
+actuation surface.
 
-## Future Humble implementation runbook
+## Verified Ubuntu Humble state
 
-1. Provision ROS 2 Humble in the optional Linux VM; do not add ROS as a V1
-   Python dependency.
-2. Run the separate bridge process which reads the v0.2 configuration and
-   publishes only the declared topic names, message types, and QoS profiles.
-3. Convert MAVSDK values with explicit timestamps. Global position is emitted
-   as `NavSatFix`; do not transform it to a local frame without a new contract.
-4. Run the contract tests before integration, then test with PX4 SITL/Gazebo in
-   the VM. Capture bridge logs separately from mission audit artifacts.
-5. Keep the bridge process optional and fail closed: if it is unavailable,
-   telemetry publication may be absent, but it must never block or alter the
-   existing MAVSDK mission safety path.
+The preserved SITL-only run artifact
+`simulation/artifacts/ros2-bridge/ros2-bridge-20260803T154829Z-5a78027bee68435c9d884b241197155f.json`
+records a completed bridge lifecycle with 1,351 position, 17 battery, and 136
+flight-state publications. Ten richer history streams were explicitly withheld
+from the public ROS contract. This proves the Ubuntu SITL telemetry path only;
+it is not physical-vehicle or flight-control evidence.
+
+The exact host setup and repeatable checks are in
+[`ros2-humble-bridge-ubuntu-runbook.md`](ros2-humble-bridge-ubuntu-runbook.md).
+Keep the bridge optional and fail closed: if it is unavailable, telemetry
+publication may be absent, but it must never block or alter mission safety.
 
 ## Contract changes
 

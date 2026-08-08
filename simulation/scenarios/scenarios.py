@@ -160,7 +160,7 @@ P0_SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         "link-unavailable",
         "brain.cli.fly_takeoff_hover_land",
-        ("--endpoint", "udpin://0.0.0.0:14541", "--connection-timeout", "2"),
+        ("--endpoint", "udpin://127.0.0.1:14541", "--connection-timeout", "2"),
         safety_rejection="must-fail-closed-before-arm-on-link-loss",
         fallback_expectation="no-flight-command",
         expected_returncode=1,

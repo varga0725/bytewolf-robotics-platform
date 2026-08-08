@@ -8,9 +8,10 @@ import json
 from math import isfinite
 import os
 from pathlib import Path
+import xml.etree.ElementTree as ET
 from uuid import UUID
 
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -87,6 +88,39 @@ def create_app(
     gateway: DashboardCommandGateway | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ByteWolf Command Gateway", version="0.1")
+
+    @app.middleware("http")
+    async def tailscale_identity_boundary(request: Request, call_next):
+        """Trust identity only when Tailscale Serve has injected it.
+
+        Direct development/test traffic remains loopback-only. Any request for
+        the tailnet hostname must carry a Serve identity and the login must be
+        explicitly authorized; this applies to camera reads as well as flight
+        mutations so the dashboard is never anonymously exposed.
+        """
+        hostname = request.url.hostname or ""
+        is_local = hostname in {"127.0.0.1", "localhost", "testserver"}
+        if not is_local:
+            login = request.headers.get("Tailscale-User-Login", "").strip().lower()
+            allowed = {
+                item.strip().lower()
+                for item in os.environ.get("BYTEWOLF_TAILSCALE_OPERATORS", "").split(",")
+                if item.strip()
+            }
+            if not hostname.endswith(".ts.net") or not login:
+                return Response("Tailscale Serve identity required", status_code=401)
+            if login not in allowed:
+                return Response("Tailnet user is not an authorized operator", status_code=403)
+            request.state.operator = login
+        else:
+            request.state.operator = "local"
+        response = await call_next(request)
+        response.headers["X-ByteWolf-Operator"] = request.state.operator
+        return response
+
+    @app.get("/api/v1/auth/session")
+    def auth_session(request: Request) -> dict[str, object]:
+        return {"authenticated": True, "operator": request.state.operator}
     # The conversational turn runs on the Python Cognitive Runtime: NIM directly,
     # the read-only plugins as tools, the reserved draft-flight path, and the
     # cognitive-hooks memory pipeline. The Node runner is no longer on the live
@@ -385,7 +419,7 @@ def create_app(
         now = datetime.now(UTC)
         cells = map_view(memory.recall(now), memory.disputed(now))
         return {
-            "cells": [cell.as_dict() for cell in cells],
+            "cells": [_label_simulated_cell(cell.as_dict()) for cell in cells],
             "occupancy_only": True,
         }
 
@@ -725,6 +759,49 @@ def _handle_gateway(call: object) -> DashboardReply:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except (RuntimeError, ValueError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+def _label_simulated_cell(document: dict[str, object]) -> dict[str, object]:
+    """Attach simulator semantics without pretending LiDAR classified them.
+
+    Occupancy remains measured by LiDAR. The optional label comes from the
+    controlled Forest world's named entity catalogue and is explicitly marked
+    as simulator ground truth, never as a camera-model conclusion.
+    """
+    try:
+        north, east = float(document["north_m"]), float(document["east_m"])
+    except (KeyError, TypeError, ValueError):
+        return document
+    nearest: tuple[float, str] | None = None
+    for entity_north, entity_east, label in _forest_semantic_entities():
+        distance = ((north-entity_north)**2 + (east-entity_east)**2) ** 0.5
+        if distance <= 4.0 and (nearest is None or distance < nearest[0]):
+            nearest = (distance, label)
+    if nearest is None:
+        return document
+    return {**document, "semantic_label": nearest[1], "semantic_source": "simulator_ground_truth"}
+
+
+def _forest_semantic_entities() -> tuple[tuple[float, float, str], ...]:
+    path = Path("/home/bytewolf/bytewolf-robotics/PX4-Autopilot/Tools/simulation/gz/worlds/forest.sdf")
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError):
+        return ()
+    entities: list[tuple[float, float, str]] = []
+    for include in root.findall(".//include"):
+        name = (include.findtext("name") or "").strip()
+        pose = (include.findtext("pose") or "").split()
+        lowered = name.lower()
+        label = "fa" if "tree" in lowered else "épület" if any(token in lowered for token in ("building", "house", "warehouse")) else None
+        if label is None or len(pose) < 2:
+            continue
+        try:
+            east, north = float(pose[0]), float(pose[1])
+        except ValueError:
+            continue
+        entities.append((north, east, label))
+    return tuple(entities)
 
 
 def main(argv: list[str] | None = None) -> None:

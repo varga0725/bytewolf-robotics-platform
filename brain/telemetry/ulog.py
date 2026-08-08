@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
@@ -31,7 +31,7 @@ class ULogCapture:
 
     def to_document(self) -> dict[str, object]:
         return {
-            "captured_at": self.captured_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            "captured_at": self.captured_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
             "relative_path": self.relative_path,
             "run_id": self.run_id,
             "sha256": self.sha256_hex,
@@ -52,7 +52,7 @@ def write_ulog_unavailable_manifest(artifact_directory: Path, run_id: str, reaso
     _write_document(
         destination,
         {
-            "captured_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "reason": reason,
             "run_id": run_id,
             "status": "unavailable",
@@ -89,7 +89,7 @@ def archive_px4_ulog(source: Path, artifact_directory: Path, run_id: str) -> ULo
         relative_path=str(destination.relative_to(artifact_directory)),
         sha256_hex=digest,
         size_bytes=size,
-        captured_at=datetime.now(UTC),
+        captured_at=datetime.now(timezone.utc),
     )
     _write_manifest(archive_directory / f"{run_id}.manifest.json", capture)
     return capture

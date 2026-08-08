@@ -9,6 +9,7 @@ import base64
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
 import time
 import unittest
@@ -34,6 +35,7 @@ from simulation.perception.camera_stream import (
 
 _NOW = datetime(2026, 7, 18, 9, 0, 0, tzinfo=UTC)
 _RED = (220, 20, 20)
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _gz_image(width: int, height: int, red_box: tuple[int, int, int, int] | None = None) -> dict:
@@ -292,6 +294,44 @@ class DestinationTests(unittest.TestCase):
         self.assertEqual(detections, "/tmp/b.json")
 
 
+class UbuntuGazeboInterpreterCompatibilityTests(unittest.TestCase):
+    """The deployed camera relay runs beside Jammy's Python 3.10 gz bindings."""
+
+    CHAIN = (
+        "brain.perception.camera_frame",
+        "brain.perception.detector",
+        "brain.perception.colour_marker_backend",
+        "brain.perception.jpeg_encoder",
+        "simulation.perception.camera_stream",
+    )
+
+    def _interpreter(self) -> str:
+        candidate = Path("/usr/bin/python3.10")
+        if not candidate.is_file():
+            self.skipTest("Ubuntu's system Python 3.10 is not available.")
+        probe = subprocess.run(
+            (str(candidate), "-s", "-c", "import PIL, jsonschema, gz.transport13, gz.msgs10.image_pb2"),
+            capture_output=True, text=True, timeout=60.0, check=False,
+        )
+        if probe.returncode != 0:
+            self.skipTest("System Python 3.10 does not have the Gazebo camera relay dependencies.")
+        return str(candidate)
+
+    def test_the_camera_relay_chain_imports_on_python_3_10(self) -> None:
+        executable = self._interpreter()
+        program = "import sys; sys.path.insert(0, %r)\n" % str(ROOT) + "".join(
+            f"import {module}\n" for module in self.CHAIN
+        )
+
+        completed = subprocess.run(
+            (executable, "-s", "-c", program), capture_output=True, text=True, timeout=120.0, check=False,
+        )
+
+        self.assertEqual(
+            completed.returncode, 0,
+            f"{executable} cannot import the deployed camera relay chain:\n{completed.stderr.strip()}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
-

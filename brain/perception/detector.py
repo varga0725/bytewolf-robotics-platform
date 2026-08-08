@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 from functools import lru_cache
 import json
@@ -121,7 +121,7 @@ class DetectionResult:
             frame["frame_id"] = self.frame_id
         document: dict[str, Any] = {
             "contract_version": DETECTION_CONTRACT_VERSION,
-            "captured_at": self.captured_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            "captured_at": self.captured_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
             "max_age_s": self.max_age_s,
             "validity": self.declared_validity,
             "frame": frame,
@@ -214,7 +214,7 @@ class DetectorAdapter:
 
     def _empty_result(self, width: int, height: int, frame_id: str | None, validity: str) -> DetectionResult:
         return DetectionResult(
-            captured_at=datetime.now(UTC),
+            captured_at=datetime.now(timezone.utc),
             max_age_s=self._max_age_s,
             declared_validity=validity,
             frame_width=width or 1,
@@ -269,4 +269,4 @@ def _check_boxes_within_frame(result: DetectionResult) -> None:
 def _utc(moment: datetime) -> datetime:
     if moment.tzinfo is None or moment.utcoffset() is None:
         raise DetectionContractError("A detection time must be timezone-aware to measure an age.")
-    return moment.astimezone(UTC)
+    return moment.astimezone(timezone.utc)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 from math import isfinite
 import os
@@ -127,7 +127,7 @@ class MavsdkTelemetryRelay:
     ) -> None:
         self._telemetry = vehicle.telemetry
         self._destination = destination
-        self._clock = clock or (lambda: datetime.now(UTC))
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._on_event = on_event
         self._state = DashboardTelemetryState()
 
@@ -222,7 +222,7 @@ _OPTIONAL_STREAMS = (
 def _format_timestamp(timestamp: datetime) -> str:
     if timestamp.tzinfo is None or timestamp.utcoffset() is None:
         raise ValueError("Telemetry clock must return a timezone-aware timestamp.")
-    return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _write_atomic_json(destination: Path, document: dict[str, object]) -> None:

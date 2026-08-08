@@ -1,7 +1,8 @@
 # ByteWolf Command Gateway API
 
-The local FastAPI service is the shared boundary for the authenticated Control
-Room and the later mobile client. It also serves the separate public marketing
+The local FastAPI service is the shared boundary for the session-scoped Control
+Room and the later mobile client. It does not yet provide network
+Tailscale Serve identity authentication and an operator allowlist. It also serves the separate public marketing
 site at `/`. Its conversational layer is a local Pi SDK runner backed
 by NVIDIA NIM; it is the only user-interface route that may ask the Mission
 Agent to create a plan. It never exposes PX4, MAVSDK, motors, or raw actuator
@@ -45,7 +46,9 @@ suite mocks only read APIs and does not approve or execute a mission.
 
 Pi persists the conversation and explicitly admitted, non-sensitive user facts
 under the Git-ignored `var/pi-agent/` directory, keyed by the browser-generated
-local session UUID. Network authentication, mobile credentials, and remote
-deployment are deliberate next steps; this server is local-only on `127.0.0.1`.
+local session UUID. That UUID is correlation state, not authentication. The
+server is local-only on `127.0.0.1`; the installer exposes it to the tailnet
+only through authenticated Tailscale HTTPS. The gateway pins executable
+missions to `--deployment-mode simulation`; physical actuation remains disabled.
 See [`docs/pi-agent-v0_1.md`](../../docs/pi-agent-v0_1.md) for the tool and
 safety boundary.

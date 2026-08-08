@@ -1,0 +1,28 @@
+[Unit]
+Description=ByteWolf read-only lidar world-map observer
+PartOf=bytewolf.target
+After=bytewolf-sitl.service bytewolf-telemetry.service
+Wants=bytewolf-sitl.service bytewolf-telemetry.service
+
+[Service]
+Type=simple
+User=bytewolf
+Group=bytewolf
+WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
+Environment=GZ_IP=127.0.0.1
+Environment=PYTHONUNBUFFERED=1
+
+# The observer never commands the vehicle.  It samples the reviewed lidar
+# contract and fresh dashboard pose, then writes expiring occupancy claims.
+# One bounded day keeps every run auditable; systemd starts the next window.
+ExecStart=/home/bytewolf/bytewolf-robotics/platform/.venv/bin/python -m simulation.perception.survey_recorder --duration 86400 --interval 2
+
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=bytewolf.target

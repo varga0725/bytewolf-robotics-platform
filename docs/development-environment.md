@@ -1,11 +1,17 @@
 # Fejlesztői környezet
 
-## Elsődleges környezet
+## Támogatott környezetek
 
-A PX4 SITL és a Gazebo Harmonic elsődlegesen natív Apple Silicon macOS-en fut.
-Az alapértelmezett indítás a PX4 beépített `default` világát és az X500 modellt
-használja. Más telepített világ választható a `PX4_GZ_WORLD` környezeti
-változóval.
+Az Ubuntu 22.04 x86_64 a dedikált operatív és bizonyítékgyűjtő host (PX4 SITL
+v1.17.0, Gazebo Harmonic 8.14.0, headless systemd, opcionális ROS 2 Humble
+bridge). A natív Apple Silicon macOS továbbra is támogatott vizuális fejlesztői
+host a rögzített PX4-patchcsel és Gazebo Harmonic 8.12.0-val. Az eltérő Gazebo-
+verziók miatt a két host bizonyítékai nem felcserélhetők; a pontos pineket a
+`shared/config/x500v2/baseline.yaml` tartja.
+
+Az alapértelmezett indítás mindkét hoston a PX4 beépített `default` világát és
+az X500 modellt használja. Más telepített világ választható a `PX4_GZ_WORLD`
+környezeti változóval.
 
 ## PX4 forrás
 
@@ -33,10 +39,13 @@ szándékosan `null` értékűek.
 Elérhető profilok: `base`, `vision`, `depth`, `mono-front`, `mono-down`,
 `lidar-down`, `lidar-front`, `lidar-2d`.
 
-## Linux VM
+## Ubuntu 22.04
 
-Az Ubuntu/UTM virtuális gép nincs törölve, de a 3D szimulátorhoz nem szükséges.
-Később ROS 2-specifikus fejlesztéshez használható.
+Az Ubuntu környezet már nem jövőbeli opció: a dedikált szerveren P0.v2 és élő,
+csak telemetriai ROS 2 Humble bridge bizonyíték készült. A reprodukálható
+telepítési és ellenőrzési lépések a
+[`ros2-humble-bridge-ubuntu-runbook.md`](ros2-humble-bridge-ubuntu-runbook.md)
+útmutatóban vannak.
 
 ## Vizuális P1 ellenőrzés
 
@@ -44,7 +53,8 @@ A helyi, csak olvasható Control Room replay, a látható Gazebo SITL repülése
 külön Ubuntu ROS 2 Humble smoke pontos lépései a
 [`visual-simulation-verification.md`](visual-simulation-verification.md)
 útmutatóban vannak. A dashboard nem repülésvezérlő felület; az élő MAVSDK → ROS
-életciklus csak a külön P1 integrációs belépési pont elkészülte után tesztelhető.
+életciklus külön, csak olvasható `brain.cli.ros2_telemetry_bridge` belépési
+ponton már igazolt Ubuntu Humble környezetben.
 
 ## Automatizált és integrációs ellenőrzések
 
@@ -70,10 +80,13 @@ PX4 SITL + Gazebo elindítása után a következő parancsok külön, kézi inte
 ellenőrzések; a jelenlegi tesztcsomag nem indít headless SITL-regressziót:
 
 ```zsh
-.venv/bin/python -m brain.cli.fly_takeoff_hover_land
-.venv/bin/python -m brain.cli.fly_waypoint_land
-.venv/bin/python -m brain.cli.fly_return_to_home
+.venv/bin/python -m brain.cli.fly_takeoff_hover_land --deployment-mode simulation
+.venv/bin/python -m brain.cli.fly_waypoint_land --deployment-mode simulation
+.venv/bin/python -m brain.cli.fly_return_to_home --deployment-mode simulation
 ```
+
+A `simulation` mód kizárólag loopback UDP endpointot fogad. A fizikai aktuáció
+a verziózott twinben tiltott; ezek a parancsok nem fizikai bring-up lépések.
 
 Minden connected flight CLI kötelezően külön, append-only, csak olvasható
 telemetria-előzményt ír a mission artifact könyvtárán belül. Ez nem vezérlési

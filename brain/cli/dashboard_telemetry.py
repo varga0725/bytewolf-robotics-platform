@@ -21,6 +21,7 @@ from pathlib import Path
 import time
 
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
+from brain.safety.deployment import add_deployment_arguments, authorize_readonly_connection
 from brain.telemetry.link_lease import default_lease_path, link_is_leased
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
 
@@ -32,7 +33,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser = argparse.ArgumentParser(
         description="Stream PX4 telemetry into the dashboard snapshot. Reads only; commands nothing.",
     )
-    parser.add_argument("--endpoint", default="udpin://0.0.0.0:14540")
+    parser.add_argument("--endpoint", default="udpin://127.0.0.1:14540")
     parser.add_argument("--connection-timeout", type=float, default=30.0)
     parser.add_argument("--mavsdk-server-port", type=int, default=50051)
     parser.add_argument("--snapshot-file", type=Path, default=DEFAULT_SNAPSHOT_PATH)
@@ -46,6 +47,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=None,
         help="Stop after this many seconds. Without it the bridge runs until interrupted.",
     )
+    add_deployment_arguments(parser, actuation_capable=False)
     return parser.parse_args(arguments)
 
 
@@ -57,6 +59,7 @@ async def run(arguments: argparse.Namespace) -> None:
     live lease and reconnects afterwards. The flying CLI writes the same
     snapshot in the meantime, so the dashboard never goes dark.
     """
+    authorize_readonly_connection(arguments.deployment_mode, arguments.endpoint)
     deadline = None if arguments.seconds is None else time.monotonic() + arguments.seconds
     announced_wait = False
     while True:
