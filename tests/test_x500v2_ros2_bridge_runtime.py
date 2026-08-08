@@ -93,6 +93,9 @@ class RosClient:
     def init(self, *, args: object = None) -> None:
         self.initialized += 1
 
+    def ok(self) -> bool:
+        return True
+
     def shutdown(self) -> None:
         self.shutdowns += 1
 
@@ -205,6 +208,28 @@ class TelemetryBridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(task, timeout=0.1)
 
         self.assertEqual(ros.shutdowns, 1)
+        self.assertEqual(node.destroyed, 1)
+
+    async def test_external_ros_shutdown_is_not_repeated(self) -> None:
+        class ExternallyStoppedRos(RosClient):
+            def ok(self) -> bool:
+                return False
+
+        ros = ExternallyStoppedRos()
+        node = Node()
+        stopped = asyncio.Event()
+        stopped.set()
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = TelemetryBridgeRuntime(
+                vehicle=Vehicle(),
+                ros_client=ros,
+                node_factory=lambda: node,
+                destination=Path(directory) / "telemetry.json",
+                endpoint="udpin://0.0.0.0:14540",
+            )
+            await runtime.run(stopped)
+
+        self.assertEqual(ros.shutdowns, 0)
         self.assertEqual(node.destroyed, 1)
 
     async def test_never_connected_discovery_has_a_bounded_timeout(self) -> None:

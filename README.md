@@ -19,15 +19,50 @@ The current X500 V2 twin configuration is shared by the flight brain and the
 simulator under `shared/config/x500v2`; PX4's third-party source tree remains
 outside this structure at `PX4-Autopilot`.
 
-## Current local environment
+## Supported development and evidence hosts
 
-- Primary simulation environment: native Apple Silicon macOS.
-- Flight controller: PX4 SITL v1.17.0.
-- Simulator: Gazebo Harmonic (gz-sim 8.12.0).
-- Baseline world: PX4's built-in `default` world.
+- Ubuntu 22.04 x86_64 is the dedicated operational/evidence host: PX4 SITL
+  v1.17.0, Gazebo Harmonic 8.14.0, headless systemd services, and the optional
+  ROS 2 Humble telemetry bridge have been exercised there.
+- Native Apple Silicon macOS remains the visual development host: PX4 SITL
+  v1.17.0 with the recorded compatibility patch and Gazebo Harmonic 8.12.0.
+- Both use PX4's built-in `default` world for the baseline. Host-specific
+  evidence is recorded separately because the Gazebo releases are not
+  numerically interchangeable.
 
-The Linux VM remains optional for future ROS 2 development; it is not needed to
-run the native macOS PX4/Gazebo simulator.
+`shared/config/x500v2/baseline.yaml` is the authoritative host-profile pin.
+
+## Product and physical-hardware status
+
+The product direction is now DJI-inspired and includes a separately evaluated
+DJI Enterprise track: a predictable camera/map/telemetry operator experience
+with progressive disclosure and explicit review, without copying DJI branding
+or treating integrated-drone convenience as permission to weaken the safety
+boundary. The X500/PX4 repository remains the engineering and safety lab; it is
+not evidence for a DJI vehicle integration. See
+[`docs/product-direction-dji-inspired-v0_1.md`](docs/product-direction-dji-inspired-v0_1.md).
+
+| Area | Current proof/status |
+| --- | --- |
+| Simulation | Linux and macOS PX4/Gazebo evidence exists; proof remains host-specific. |
+| Physical airframe | Holybro X500 V2 and Hawkeye camera are acquired. |
+| Physical controller | USB bench identity/telemetry observed; installed PX4 is v1.16.0, not the v1.17.0 SITL baseline. |
+| Missing hardware | Flight battery and onboard companion computer/Jetson are not acquired or installed. |
+| Physical actuation | Disabled in the versioned twin; no server process is cleared to arm, take off, or drive motors. |
+
+## Deployment safety modes
+
+Every MAVSDK CLI now declares one of four fail-closed modes:
+
+| Mode | Allowed capability |
+| --- | --- |
+| `simulation` | Read or actuate only through a loopback UDP SITL endpoint. |
+| `bench_readonly` | Read a directly attached serial flight controller; no actuation. |
+| `physical_telemetry` | Read physical telemetry; no actuation. |
+| `physical_actuation` | Reserved for a separately reviewed physical release; disabled by the shipped twin even if a permit is presented. |
+
+The complete boundary, known limitations, and staged server-control path are in
+[`docs/server-control-safety-v0_1.md`](docs/server-control-safety-v0_1.md).
 
 ## Verify the simulation baseline
 
@@ -113,7 +148,7 @@ SHA-256 hash, so an edited or unreviewed plan is refused before PX4 connects:
 ```zsh
 .venv/bin/python -m brain.cli.fly_nim_mission \
   --mission-spec-file simulation/artifacts/agent-missions/<mission-id>.mission-spec.json \
-  --execute
+  --execute --deployment-mode simulation
 ```
 
 See [`docs/nim-mission-agent-v0_1.md`](docs/nim-mission-agent-v0_1.md) for the
@@ -238,6 +273,9 @@ sent.
 ```zsh
 .venv/bin/python -m brain.cli.fly_takeoff_hover_land
 ```
+
+This command defaults to `--deployment-mode simulation` and accepts only a
+loopback UDP endpoint. It does not authorize a physical vehicle.
 
 For a different bounded test, pass explicit mission values. The active versioned
 safety profile remains the upper bound and cannot be loosened by CLI flags:

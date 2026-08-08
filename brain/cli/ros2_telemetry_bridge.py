@@ -9,6 +9,7 @@ from pathlib import Path
 import signal
 
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
+from brain.safety.deployment import add_deployment_arguments, authorize_readonly_connection
 from robots.drone.x500v2.ros2.bridge_runtime import TelemetryBridgeRuntime
 from robots.drone.x500v2.ros2.telemetry_adapter import create_ros2_telemetry_node
 
@@ -17,7 +18,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser = argparse.ArgumentParser(
         description="Relay MAVSDK telemetry to ROS 2 and the read-only local dashboard."
     )
-    parser.add_argument("--endpoint", default="udpin://0.0.0.0:14540")
+    parser.add_argument("--endpoint", default="udpin://127.0.0.1:14540")
     parser.add_argument("--mavsdk-server-port", type=int, default=50051)
     parser.add_argument(
         "--connection-timeout",
@@ -41,11 +42,13 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             "proof it never produced."
         ),
     )
+    add_deployment_arguments(parser, actuation_capable=False)
     return parser.parse_args(arguments)
 
 
 async def run(arguments: argparse.Namespace) -> None:
     """Own all optional bridge resources until SIGINT/SIGTERM requests shutdown."""
+    authorize_readonly_connection(arguments.deployment_mode, arguments.endpoint)
     try:
         import rclpy
         from mavsdk import System

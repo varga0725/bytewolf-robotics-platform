@@ -17,10 +17,10 @@ and later scene understanding — not a marker-only pipeline.
    The planned sensor set is a front RGB camera, a down camera, a depth or stereo
    camera, and a lidar or rangefinder. None is selected as hardware yet; the
    contracts must already carry more than one.
-2. **Hardware-independent compute.** Development runs on a Mac today; the
-   physical drone may later use a Raspberry Pi 5, an AI accelerator, or a Jetson.
-   All of it sits behind the same adapter boundary, so the software is not bound
-   to one compute platform.
+2. **Hardware-independent compute.** Development runs on the dedicated Ubuntu
+   host and on Apple Silicon macOS. The physical drone has no onboard companion
+   computer today; a future Jetson or another reviewed target must sit behind
+   the same adapter boundary, so the software is not bound to one platform.
 3. **Format-agnostic pipeline.** The internal pipeline is not MJPEG-specific. One
    `CameraFrame` contract carries raw RGB/YUV, grayscale, depth, and compressed
    frames alike. JPEG/MJPEG is a streaming and UI convenience, never the basis of

@@ -344,7 +344,16 @@ def _execute_with_cli(plan_name: str) -> str:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log = log_path.open("w")
         _active_execution = subprocess.Popen(
-            [sys.executable, "-m", "brain.cli.fly_nim_mission", "--mission-spec-file", str(plan_path), "--execute"],
+            [
+                sys.executable,
+                "-m",
+                "brain.cli.fly_nim_mission",
+                "--mission-spec-file",
+                str(plan_path),
+                "--execute",
+                "--deployment-mode",
+                "simulation",
+            ],
             start_new_session=True,
             stdout=log,
             stderr=subprocess.STDOUT,

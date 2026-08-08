@@ -9,6 +9,8 @@ Type=simple
 User=bytewolf
 Group=bytewolf
 WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
+Environment=PYTHONUNBUFFERED=1
+Environment=BYTEWOLF_DEPLOYMENT_MODE=simulation
 ExecStart=/home/bytewolf/bytewolf-robotics/platform/.venv/bin/python -m apps.api.server
 
 # Deliberately independent of the simulator. The artefact and replay views are
@@ -23,8 +25,9 @@ TimeoutStopSec=20
 # The bind address is hard-coded to 127.0.0.1 in apps/api/server.py and must stay
 # that way. This API is not purely read-only: it carries mission endpoints that
 # reach PX4 through MissionSpec validation, the SafetyGate and an explicit
-# operator approval. Remote access belongs to `tailscale serve`, which proxies
-# from the tailnet to this loopback socket without widening the bind.
+# operator approval. Do not publish this loopback socket through Tailscale,
+# another tunnel, or a reverse proxy until network authentication, RBAC,
+# target allowlisting, and deployment-policy enforcement have their own review.
 StandardOutput=journal
 StandardError=journal
 

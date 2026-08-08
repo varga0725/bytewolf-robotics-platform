@@ -60,15 +60,15 @@ class BridgeArgumentTests(unittest.TestCase):
         parsed = dashboard_telemetry.parse_arguments([])
 
         self.assertEqual(parsed.snapshot_file, dashboard_telemetry.DEFAULT_SNAPSHOT_PATH)
-        self.assertEqual(parsed.endpoint, "udpin://0.0.0.0:14540")
+        self.assertEqual(parsed.endpoint, "udpin://127.0.0.1:14540")
         self.assertIsNone(parsed.seconds, "without a limit it runs until interrupted")
 
     def test_the_endpoint_and_destination_can_be_moved(self) -> None:
         parsed = dashboard_telemetry.parse_arguments(
-            ["--endpoint", "udpin://0.0.0.0:14550", "--snapshot-file", "/tmp/x.json", "--seconds", "5"]
+            ["--endpoint", "udpin://127.0.0.1:14550", "--snapshot-file", "/tmp/x.json", "--seconds", "5"]
         )
 
-        self.assertEqual(parsed.endpoint, "udpin://0.0.0.0:14550")
+        self.assertEqual(parsed.endpoint, "udpin://127.0.0.1:14550")
         self.assertEqual(parsed.snapshot_file, Path("/tmp/x.json"))
         self.assertEqual(parsed.seconds, 5.0)
 

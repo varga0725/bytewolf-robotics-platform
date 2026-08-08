@@ -9,6 +9,8 @@ Type=simple
 User=bytewolf
 Group=bytewolf
 WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
+Environment=PYTHONUNBUFFERED=1
+Environment=BYTEWOLF_DEPLOYMENT_MODE=simulation
 ExecStart=/home/bytewolf/bytewolf-robotics/platform/.venv/bin/python -m brain.cli.dashboard_telemetry
 
 # PX4 discovery is not instant and systemd cannot know when MAVLink is up, so

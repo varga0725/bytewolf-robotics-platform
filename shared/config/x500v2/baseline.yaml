@@ -14,8 +14,9 @@
 # on every host, so a real drift cannot hide behind a profile.
 version: v0.2
 
-# Used when no profile is named. macOS is the host the committed evidence under
-# simulation/artifacts/ was recorded on.
+# Compatibility fallback when host auto-detection is unavailable. Evidence now
+# exists on both host profiles and remains labelled per host; this default does
+# not make macOS the only or preferred evidence environment.
 default_profile: macos
 
 profiles:

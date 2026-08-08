@@ -1,27 +1,35 @@
 # systemd units for the simulation and Control Room stack
 
-These run the ByteWolf stack on a dedicated Ubuntu host: PX4 SITL with Gazebo,
-the dashboard telemetry relay, and the Control Room API. They exist so the stack
-survives a reboot and a crash, which a hand-started `nohup` does not.
+These run the integrated ByteWolf stack on a dedicated Ubuntu host: PX4 SITL
+with the `full-sensors` X500 (front camera, down camera and 2D lidar), dashboard
+telemetry, two read-only camera relays, the occupancy-map observer, and the
+Control Room API. They exist so the stack survives a reboot and a crash, which
+a hand-started `nohup` does not.
 
 They assume the layout the Ubuntu runbook produces
 (`docs/ros2-humble-bridge-ubuntu-runbook.md`): the checkout at
 `~/bytewolf-robotics/platform`, the platform venv at `.venv`, and a built PX4 at
 `../PX4-Autopilot/build/px4_sitl_default/bin/px4`.
 
-## Install
+## Install or update
 
 ```bash
-sudo cp deploy/systemd/bytewolf-*.service deploy/systemd/bytewolf.target /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now bytewolf.target
+deploy/systemd/install-stack.sh
+deploy/systemd/verify-stack.sh
 ```
+
+The installer is idempotent. It validates the pinned PX4/Gazebo baseline and
+the Python 3.10 Gazebo bindings, builds both frontends, verifies and installs
+the units, and restarts the target. It deliberately does not install packages,
+credentials, or publish the loopback API; the Ubuntu runbook owns host
+prerequisites and remote access remains blocked.
 
 ## Operate
 
 ```bash
 systemctl status bytewolf.target          # the whole stack
 systemctl status bytewolf-sitl.service    # one component
+journalctl -u bytewolf-camera-front -f    # follow one camera relay
 journalctl -u bytewolf-sitl -f            # follow its log
 
 sudo systemctl stop bytewolf.target       # tears down in dependency order
@@ -44,30 +52,33 @@ PYTHONPATH="$PWD:$PYTHONPATH" .venv-ros/bin/python -m brain.cli.ros2_telemetry_b
 The dashboard relay *does* hand the link over — a mission announces itself, the
 relay steps aside and reconnects — which is why that one can run continuously.
 
-**Remote access.** The API binds to `127.0.0.1` in code and must keep doing so:
-it is not purely read-only, and its mission endpoints reach PX4 through
-MissionSpec validation, the SafetyGate and an explicit operator approval.
-Exposure belongs to `tailscale serve`, which proxies from the tailnet to the
-loopback socket without widening the bind:
+**Remote access.** The API binds to `127.0.0.1` in code and must keep doing so.
+It is not purely read-only: its mission endpoints can reach the simulation
+executor after review and approval, while network authentication and RBAC are
+not implemented. The installer therefore does not call `tailscale serve` or
+publish the socket through any other tunnel. Remote publication remains
+blocked until authentication, role separation, target allowlisting, rate and
+replay protection, and an independently reviewed deployment policy are in
+place. A tailnet alone is not an application authorization boundary.
 
-```bash
-sudo tailscale serve --bg 8080
-```
-
-Note what that means in practice: the Control Room becomes reachable by every
-node on the tailnet, not only by you. Narrow it with ACLs if that is not what you
-want.
+If an older installation already configured Tailscale Serve, inspect that
+external state and remove the specific ByteWolf forwarding rule through a
+separate, human-reviewed maintenance action. This installer intentionally does
+not issue a broad `tailscale serve reset`, because that could delete unrelated
+services on the host.
 
 **`simulation.gazebo.map_view`.** It injects a camera model into the running
 world, so it must not run during any evidence run. Render with `--once` when you
 need a background, never on an interval.
 
-## Airframe profile
+## Deployed airframe profile
 
-`bytewolf-sitl.service` starts the `base` profile (`gz_x500`), which carries no
-camera and no lidar. For a camera or lidar airframe, change `ExecStart` to pass
-another profile — `hawkeye-front`, `lidar-2d`, `full-sensors` — and reload. The
-world map only fills for a lidar airframe; `base` can never produce a map cell.
+`bytewolf-sitl.service` starts `full-sensors`. The front and down relays write
+different atomic JPEG and detection artifacts, and `bytewolf-world-map` turns
+only fresh 2D-lidar observations with a fresh vehicle pose into expiring
+occupancy claims. The cheaper `base` profile remains useful for diagnosis, but
+it is not the integrated deployment: it has neither camera nor lidar and can
+never populate the camera panels or world map.
 
 ## Evidence runs
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import base64
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -244,7 +244,7 @@ def run_camera_stream(
     subscribe: Callable[..., object] = subscribe_camera_frames,
 ) -> None:
     """Relay frames from the camera topic to the dashboard until stopped."""
-    clock = now or (lambda: datetime.now(UTC))
+    clock = now or (lambda: datetime.now(timezone.utc))
     keep_going = should_continue or (lambda: True)
     camera_path.parent.mkdir(parents=True, exist_ok=True)
     detections_path.parent.mkdir(parents=True, exist_ok=True)

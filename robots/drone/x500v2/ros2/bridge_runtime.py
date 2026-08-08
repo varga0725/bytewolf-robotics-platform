@@ -27,6 +27,8 @@ class RosClient(Protocol):
 
     def init(self, *, args: object = None) -> None: ...
 
+    def ok(self) -> bool: ...
+
     def shutdown(self) -> None: ...
 
 
@@ -168,7 +170,8 @@ class TelemetryBridgeRuntime:
                 if node is not None:
                     node.destroy_node()
             finally:
-                if initialized:
+                ok = getattr(self._ros_client, "ok", None)
+                if initialized and (not callable(ok) or ok()):
                     self._ros_client.shutdown()
 
     def _write_artifact(

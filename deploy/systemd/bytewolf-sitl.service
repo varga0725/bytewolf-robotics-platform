@@ -12,7 +12,9 @@ Group=bytewolf
 WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
 Environment=PATH=/home/bytewolf/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=GZ_IP=127.0.0.1
-ExecStart=/home/bytewolf/bytewolf-robotics/platform/simulation/gazebo/launch/run_px4_gazebo_headless.zsh base
+# The deployed Control Room is the integrated digital twin, not the cheapest
+# diagnostic profile: two RGB cameras and the reviewed 270-degree 2D lidar.
+ExecStart=/home/bytewolf/bytewolf-robotics/platform/simulation/gazebo/launch/run_px4_gazebo_headless.zsh full-sensors
 
 # The launcher owns the Gazebo server and the PX4 process and tears both down in
 # its own `trap cleanup EXIT INT TERM`. KillMode=mixed sends SIGTERM to the

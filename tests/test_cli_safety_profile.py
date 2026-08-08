@@ -3,27 +3,44 @@ from contextlib import redirect_stderr
 from io import StringIO
 import unittest
 
-from brain.cli import fly_return_to_home, fly_takeoff_hover_land, fly_waypoint_land
+from brain.cli import (
+    fly_controlled_interruption,
+    fly_nim_mission,
+    fly_return_to_home,
+    fly_takeoff_hover_land,
+    fly_waypoint_land,
+    fly_waypoint_square_land,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE_PATH = ROOT / "shared/config/x500v2/twin.yaml"
+FLIGHT_CLIS = (
+    (fly_takeoff_hover_land, ()),
+    (fly_waypoint_land, ()),
+    (fly_return_to_home, ()),
+    (fly_waypoint_square_land, ()),
+    (fly_controlled_interruption, ("--interruption-action", "hold")),
+    (fly_nim_mission, ("--mission-spec-file", "reviewed.json")),
+)
 
 
 class CliSafetyProfileTests(unittest.TestCase):
     def test_every_flight_cli_uses_the_versioned_safety_profile_by_default(self) -> None:
-        for module in (fly_takeoff_hover_land, fly_waypoint_land, fly_return_to_home):
+        for module, required in FLIGHT_CLIS:
             with self.subTest(cli=module.__name__):
-                arguments = module.parse_arguments(())
+                arguments = module.parse_arguments(required)
                 self.assertEqual(arguments.safety_profile, PROFILE_PATH)
 
     def test_profile_path_can_be_selected_but_safety_limits_cannot_be_overridden(self) -> None:
-        for module in (fly_takeoff_hover_land, fly_waypoint_land, fly_return_to_home):
+        for module, required in FLIGHT_CLIS:
             with self.subTest(cli=module.__name__):
-                arguments = module.parse_arguments(("--safety-profile", str(PROFILE_PATH)))
+                arguments = module.parse_arguments(
+                    (*required, "--safety-profile", str(PROFILE_PATH))
+                )
                 self.assertEqual(arguments.safety_profile, PROFILE_PATH)
                 with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
-                    module.parse_arguments(("--max-altitude", "100"))
+                    module.parse_arguments((*required, "--max-altitude", "100"))
 
 
 if __name__ == "__main__":

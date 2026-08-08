@@ -123,6 +123,12 @@ python3.10 -m venv --system-site-packages .venv-ros
 `--system-site-packages` is what lets this venv see Humble's `rclpy` after the
 ROS setup script is sourced.
 
+The deployed camera relays use `/usr/bin/python3.10 -s` rather than this venv.
+Gazebo Harmonic's generated messages require Ubuntu's matching protobuf package,
+while current MAVSDK releases require a newer protobuf in `.venv-ros`. Keeping
+the processes separate avoids either dependency shadowing the other. Ubuntu's
+`python3-pil` supplies the camera relays' JPEG edge encoder.
+
 ## Baseline
 
 ```bash

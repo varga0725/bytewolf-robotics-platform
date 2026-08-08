@@ -34,6 +34,11 @@ from brain.mission_spec.validation import (
     load_mission_safety_profile,
     validate_and_compile_mission_spec,
 )
+from brain.safety.deployment import (
+    add_deployment_arguments,
+    authorize_actuation_connection,
+    file_sha256,
+)
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
 from brain.telemetry.persistence import TelemetryHistoryStore
@@ -58,7 +63,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="Where a reviewed NIM MissionSpec is saved. Defaults under the ignored agent artifact directory.",
     )
     parser.add_argument("--safety-profile", type=Path, default=DEFAULT_SAFETY_PROFILE_PATH)
-    parser.add_argument("--endpoint", default="udpin://0.0.0.0:14540")
+    parser.add_argument("--endpoint", default="udpin://127.0.0.1:14540")
     parser.add_argument("--connection-timeout", type=float, default=15.0)
     parser.add_argument("--preflight-wait-seconds", type=float, default=120.0)
     parser.add_argument("--mavsdk-server-port", type=int, default=50051)
@@ -85,6 +90,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         action="store_true",
         help="Run without remembering the outcome; the mission audit artifact is unaffected.",
     )
+    add_deployment_arguments(parser, actuation_capable=True)
     return parser.parse_args(arguments)
 
 
@@ -141,11 +147,23 @@ async def run(arguments: argparse.Namespace) -> None:
             return
 
         assert mission is not None
+        profile = load_safety_profile(arguments.safety_profile)
+        authorize_actuation_connection(
+            arguments.deployment_mode,
+            arguments.endpoint,
+            vehicle_id=mission.vehicle_id,
+            operation="agent-mission",
+            request_sha256=mission.source_hash,
+            safety_profile_sha256=file_sha256(arguments.safety_profile),
+            physical_actuation_enabled=profile.physical_actuation_enabled,
+            permit_path=arguments.physical_actuation_permit,
+        )
         try:
             from mavsdk import System
         except ModuleNotFoundError as error:
-            raise RuntimeError("MAVSDK is not installed. Run: .venv/bin/pip install -r requirements.txt") from error
-        profile = load_safety_profile(arguments.safety_profile)
+            raise RuntimeError(
+                "MAVSDK is not installed. Run: .venv/bin/pip install -r requirements.txt"
+            ) from error
         # Allocated only once this run is going to fly. The other CLIs prepare
         # it up front because they always connect; a review-only invocation here
         # would leave an empty history file behind for a flight that never was.

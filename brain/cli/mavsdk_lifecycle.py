@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from typing import Protocol
 
 from brain.telemetry.link_lease import (
@@ -29,7 +30,24 @@ def stop_owned_mavsdk_server(system: MavsdkSystem | None) -> None:
     unconditionally would hand a flying mission's link to whoever asked next.
     """
     if system is not None:
+        # MAVSDK 3.10 kills its embedded child and immediately drops the Popen
+        # reference without waiting for it.  A long-running telemetry relay
+        # repeatedly gives the PX4 link to missions, so every hand-off used to
+        # leave one defunct mavsdk_server child behind.  Capture the child before
+        # MAVSDK reinitialises itself, then reap it after the library has stopped
+        # it.  The fallback kill is defensive for alternate MAVSDK builds whose
+        # stop hook returns before the child has actually exited.
+        process = getattr(system, "_server_process", None)
         system._stop_mavsdk_server()
+        wait = getattr(process, "wait", None)
+        if callable(wait):
+            try:
+                wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                kill = getattr(process, "kill", None)
+                if callable(kill):
+                    kill()
+                wait(timeout=5.0)
     release_link_if_mine()
 
 

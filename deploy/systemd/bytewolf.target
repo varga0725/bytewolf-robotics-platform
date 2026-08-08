@@ -5,7 +5,12 @@ Documentation=file:///home/bytewolf/bytewolf-robotics/platform/deploy/systemd/RE
 # bytewolf.target` tears down the whole stack in dependency order instead of
 # leaving a simulator running behind a stopped dashboard.
 Requires=bytewolf-sitl.service bytewolf-telemetry.service bytewolf-controlroom.service
+# Read-only observers must not be able to tear down PX4 when a Gazebo topic is
+# late or an encoder fails. They remain part of the target lifecycle, but are
+# deliberately soft dependencies of the flight-independent core.
+Wants=bytewolf-camera-front.service bytewolf-camera-down.service bytewolf-world-map.service
 After=bytewolf-sitl.service bytewolf-telemetry.service bytewolf-controlroom.service
+After=bytewolf-camera-front.service bytewolf-camera-down.service bytewolf-world-map.service
 
 [Install]
 WantedBy=multi-user.target
