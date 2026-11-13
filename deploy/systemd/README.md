@@ -54,17 +54,14 @@ relay steps aside and reconnects — which is why that one can run continuously.
 
 **Remote access.** The API binds to `127.0.0.1` in code and must keep doing so.
 It is not purely read-only: its mission endpoints can reach the simulation
-executor after review and approval, while network authentication and RBAC are
-implemented through Tailscale Serve identity headers and an explicit operator
-allowlist. The backend remains bound to loopback and the installer publishes it
-only through tailnet HTTPS. Configure `BYTEWOLF_TAILSCALE_OPERATORS` in the
-ignored `.env` as a comma-separated login list. The installer calls
-`tailscale serve`; do not publish the socket through any other tunnel. Tailscale
-identity plus the application allowlist form the remote authorization boundary.
-
-The installer intentionally does not issue a broad `tailscale serve reset`,
-because that could delete unrelated
-services on the host.
+executor after review and approval when mission execution is explicitly enabled.
+The installer does not publish the loopback socket. If an operator needs remote
+Control Room access, they must configure an authenticated path themselves — for
+example a VPN or reverse proxy with identity checks — and keep the upstream
+target at `127.0.0.1:8080`. Requests that arrive on a non-loopback hostname
+still require Tailscale Serve identity headers and an allowlist when
+`BYTEWOLF_TAILSCALE_OPERATORS` is set in the ignored `.env`; that boundary is
+application-side, not something this installer configures.
 
 **`simulation.gazebo.map_view`.** It injects a camera model into the running
 world, so it must not run during any evidence run. Render with `--once` when you

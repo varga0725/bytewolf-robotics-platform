@@ -18,7 +18,6 @@ required=(
   /usr/bin/gz
   /usr/bin/npm
   /usr/bin/systemctl
-  /usr/bin/tailscale
 )
 for path in "${required[@]}"; do
   if [[ ! -e "$path" ]]; then
@@ -52,9 +51,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable bytewolf.target
 sudo systemctl restart bytewolf.target
 
-# The backend remains loopback-only. Tailscale Serve terminates HTTPS and
-# injects the signed-in tailnet identity; the API allowlist enforces operator
-# authorization on every remotely served endpoint.
-sudo tailscale serve --bg --https=443 http://127.0.0.1:8080
-echo "ByteWolf stack installed locally and on its authenticated Tailscale HTTPS URL."
+# The Control Room API stays bound to loopback in code. Remote access, if the
+# operator chooses it, is configured outside this installer.
+echo "ByteWolf stack installed. The Control Room API remains at http://127.0.0.1:8080."
 echo "Verify with: deploy/systemd/verify-stack.sh"
