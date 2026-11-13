@@ -1,6 +1,7 @@
 """MAVSDK adapter for executing an approved, bounded mission on PX4."""
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
@@ -97,6 +98,9 @@ class MavsdkMissionAdapter:
             minimum_battery_percent=self._runtime_policy.minimum_battery_percent_to_continue,
             telemetry_sample_timeout_s=self._runtime_policy.telemetry_sample_timeout_s,
         )
+        self._peak_relative_altitude_m = 0.0
+        self._peak_altitude_stop: asyncio.Event | None = None
+        self._peak_altitude_task: asyncio.Task[None] | None = None
 
     @property
     def preflight_telemetry(self) -> MissionTelemetrySnapshot | None:
@@ -143,11 +147,17 @@ class MavsdkMissionAdapter:
         execution = self._begin_execution()
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
+        await self._start_peak_altitude_tracking()
         try:
             await self._drone.action.arm()
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
+            await self.wait_until_relative_altitude_at_least(
+                mission.takeoff.target_altitude_m,
+                tolerance_m=0.3,
+                timeout_s=self._runtime_policy.waypoint_timeout_s,
+            )
             execution = self._record(execution, MissionPhase.HOVERING)
             await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
         except Exception:
@@ -155,6 +165,8 @@ class MavsdkMissionAdapter:
                 execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
             )
             raise
+        finally:
+            await self._stop_peak_altitude_tracking()
         return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
 
     async def execute_controlled_interruption_mission(
@@ -170,11 +182,17 @@ class MavsdkMissionAdapter:
         execution = self._begin_execution()
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
+        await self._start_peak_altitude_tracking()
         try:
             await self._drone.action.arm()
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
+            await self.wait_until_relative_altitude_at_least(
+                mission.takeoff.target_altitude_m,
+                tolerance_m=0.3,
+                timeout_s=self._runtime_policy.waypoint_timeout_s,
+            )
             execution = self._record(execution, MissionPhase.HOVERING)
             await self._sleep_with_runtime_watchdog(mission.interrupt_after_s)
             if mission.interruption_action is InterruptionAction.HOLD:
@@ -186,6 +204,8 @@ class MavsdkMissionAdapter:
                 execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
             )
             raise
+        finally:
+            await self._stop_peak_altitude_tracking()
         return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
 
     async def goto_relative_waypoint(self, command: WaypointCommand) -> GlobalPosition:
@@ -220,6 +240,54 @@ class MavsdkMissionAdapter:
             raise RuntimeError("PX4 position telemetry ended before reaching the waypoint.")
 
         await asyncio.wait_for(wait_for_match(), timeout=timeout_s)
+
+    async def wait_until_relative_altitude_at_least(
+        self, target_altitude_m: float, *, tolerance_m: float, timeout_s: float
+    ) -> None:
+        threshold_m = max(0.0, target_altitude_m - tolerance_m)
+
+        async def wait_for_altitude() -> None:
+            async for position in self._drone.telemetry.position():
+                altitude_m = float(position.relative_altitude_m)
+                self._peak_relative_altitude_m = max(self._peak_relative_altitude_m, altitude_m)
+                if altitude_m >= threshold_m:
+                    return
+            raise RuntimeError("PX4 position telemetry ended before reaching takeoff altitude.")
+
+        await asyncio.wait_for(wait_for_altitude(), timeout=timeout_s)
+
+    async def _start_peak_altitude_tracking(self) -> None:
+        self._peak_relative_altitude_m = 0.0
+        stop = asyncio.Event()
+        self._peak_altitude_stop = stop
+
+        async def watch() -> None:
+            try:
+                async for position in self._drone.telemetry.position():
+                    if stop.is_set():
+                        return
+                    altitude_m = float(position.relative_altitude_m)
+                    if altitude_m > self._peak_relative_altitude_m:
+                        self._peak_relative_altitude_m = altitude_m
+            except asyncio.CancelledError:
+                return
+
+        self._peak_altitude_task = asyncio.create_task(watch())
+
+    async def _stop_peak_altitude_tracking(self) -> None:
+        if self._peak_altitude_stop is not None:
+            self._peak_altitude_stop.set()
+        task = self._peak_altitude_task
+        self._peak_altitude_task = None
+        self._peak_altitude_stop = None
+        if task is None:
+            return
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (TimeoutError, asyncio.TimeoutError):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     async def execute_waypoint_mission(
         self, mission: TakeoffWaypointLandMission

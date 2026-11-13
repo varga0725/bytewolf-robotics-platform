@@ -1,5 +1,7 @@
 """Coverage for deliberate, bounded interruption safety paths."""
 
+import asyncio
+from types import SimpleNamespace
 import unittest
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
@@ -33,10 +35,24 @@ class _Action:
         self._events.append("land")
 
 
+class _Telemetry:
+    async def position(self):
+        sample = SimpleNamespace(
+            relative_altitude_m=2.0,
+            latitude_deg=47.397742,
+            longitude_deg=8.545594,
+            absolute_altitude_m=489.4,
+        )
+        while True:
+            yield sample
+            await asyncio.sleep(0)
+
+
 class _Drone:
     def __init__(self) -> None:
         self.events: list[object] = []
         self.action = _Action(self.events)
+        self.telemetry = _Telemetry()
 
 
 class _Adapter(MavsdkMissionAdapter):

@@ -172,6 +172,7 @@ async def run(arguments: argparse.Namespace) -> None:
             getattr(adapter, "preflight_telemetry", None),
             recording.run_id,
             arguments.px4_ulog,
+            getattr(adapter, "_peak_relative_altitude_m", None),
         )
         if relay_error is not None and failure_reason and "mandatory telemetry relay failed" in failure_reason:
             raise relay_error

@@ -231,7 +231,15 @@ With SITL running and the platform venv active:
 cd ~/bytewolf-robotics/platform
 export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
 export BYTEWOLF_SITL_ACCEPTANCE=1
-.venv/bin/python -m unittest tests.test_demo_point_rtl.DemoPointRtlAcceptanceTests -v
+.venv/bin/python -m brain.cli.acceptance_demo_point_rtl
+```
+
+The platform venv may install a third-party top-level `tests` package that shadows
+`python -m unittest tests.test_demo_point_rtl`. Prefer the CLI above, or discover
+from the repository root with an explicit `top_level_dir`:
+
+```bash
+PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -p 'test_demo_point_rtl.py' --top-level-dir .
 ```
 
 On success the run writes

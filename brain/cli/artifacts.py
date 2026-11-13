@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import os
+from math import isfinite
 from uuid import uuid4
 from dataclasses import dataclass
 
@@ -13,7 +14,11 @@ from brain.mission.artifacts import (
 from brain.memory.recorder import WorldMemoryRecorder
 from brain.mission.execution import MissionExecution
 from brain.mission.artifacts import DEFAULT_MISSION_RUNS_DIRECTORY
-from brain.telemetry.ulog import archive_px4_ulog, write_ulog_unavailable_manifest
+from brain.telemetry.ulog import (
+    archive_px4_ulog,
+    discover_newest_px4_ulog,
+    write_ulog_unavailable_manifest,
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,7 @@ def write_run_artifact(
     telemetry: MissionTelemetrySnapshot | None = None,
     run_id: str | None = None,
     px4_ulog: Path | None = None,
+    peak_relative_altitude_m: float | None = None,
     world_recorder: WorldMemoryRecorder | None = None,
 ) -> Path:
     """Persist the audit trail collected for this invocation under a safe unique ID.
@@ -67,6 +73,9 @@ def write_run_artifact(
     can never cost the run its audit trail.
     """
     safe_telemetry = telemetry if isinstance(telemetry, MissionTelemetrySnapshot) else None
+    safe_peak: float | None = None
+    if isinstance(peak_relative_altitude_m, (int, float)) and isfinite(float(peak_relative_altitude_m)):
+        safe_peak = float(peak_relative_altitude_m)
     artifact = MissionAuditArtifact.from_execution(
         run_id or str(uuid4()),
         execution,
@@ -74,11 +83,21 @@ def write_run_artifact(
         outcome=outcome,
         failure_reason=failure_reason,
         telemetry=safe_telemetry,
+        peak_relative_altitude_m=safe_peak,
     )
     writer = MissionArtifactWriter() if directory is None else MissionArtifactWriter(directory)
     artifact_path = writer.write(artifact)
     if px4_ulog is None:
-        write_ulog_unavailable_manifest(writer.directory, artifact.run_id, "No PX4 ULog source was supplied.")
+        run_dir = os.environ.get("BYTEWOLF_PX4_RUN_DIR")
+        if run_dir:
+            px4_ulog = discover_newest_px4_ulog(Path(run_dir))
+    if px4_ulog is None:
+        reason = (
+            "No PX4 ULog source was supplied."
+            if not os.environ.get("BYTEWOLF_PX4_RUN_DIR")
+            else "No .ulg file was found under BYTEWOLF_PX4_RUN_DIR after the mission."
+        )
+        write_ulog_unavailable_manifest(writer.directory, artifact.run_id, reason)
     else:
         archive_px4_ulog(px4_ulog, writer.directory, artifact.run_id)
     if world_recorder is not None:

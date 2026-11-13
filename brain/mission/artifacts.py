@@ -45,6 +45,7 @@ class MissionAuditArtifact:
     outcome: str = "failed"
     failure_reason: str | None = None
     telemetry: MissionTelemetrySnapshot | None = None
+    peak_relative_altitude_m: float | None = None
 
     @classmethod
     def from_execution(
@@ -56,6 +57,7 @@ class MissionAuditArtifact:
         outcome: str = "failed",
         failure_reason: str | None = None,
         telemetry: MissionTelemetrySnapshot | None = None,
+        peak_relative_altitude_m: float | None = None,
     ) -> "MissionAuditArtifact":
         """Capture an execution without retaining mutable storage state."""
         return cls(
@@ -67,11 +69,12 @@ class MissionAuditArtifact:
             outcome=outcome,
             failure_reason=failure_reason,
             telemetry=telemetry,
+            peak_relative_altitude_m=peak_relative_altitude_m,
         )
 
     def to_document(self) -> dict[str, object]:
         """Return the stable JSON-compatible representation for this artifact version."""
-        return {
+        document: dict[str, object] = {
             "events": [
                 {"phase": event.phase.value, "timestamp": _format_timestamp(event.timestamp)}
                 for event in self.events
@@ -84,6 +87,9 @@ class MissionAuditArtifact:
             "telemetry": self.telemetry.to_document() if self.telemetry else None,
             "version": self.version,
         }
+        if self.peak_relative_altitude_m is not None:
+            document["peak_relative_altitude_m"] = self.peak_relative_altitude_m
+        return document
 
 
 @dataclass(frozen=True)
