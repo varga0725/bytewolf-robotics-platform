@@ -55,9 +55,11 @@ else
   fi
 fi
 
-if command -v brew >/dev/null 2>&1 && [[ ! -d "$(brew --prefix qt@5 2>/dev/null)" ]]; then
-  print -u2 "A Qt 5 Homebrew csomag nem található (brew install qt@5)."
-  failed=1
+if [[ "$(uname)" == "Darwin" ]]; then
+  if command -v brew >/dev/null 2>&1 && [[ ! -d "$(brew --prefix qt@5 2>/dev/null)" ]]; then
+    print -u2 "A Qt 5 Homebrew csomag nem található (brew install qt@5)."
+    failed=1
+  fi
 fi
 
 if (( failed )); then

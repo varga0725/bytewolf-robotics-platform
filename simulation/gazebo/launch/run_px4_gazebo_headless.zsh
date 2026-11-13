@@ -45,7 +45,13 @@ fi
 
 export HEADLESS=1
 export PX4_GZ_WORLD="$WORLD"
-export CMAKE_PREFIX_PATH="$(brew --prefix qt@5):${CMAKE_PREFIX_PATH:-}"
+if [[ "$(uname)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+  typeset qt_prefix
+  qt_prefix="$(brew --prefix qt@5 2>/dev/null || true)"
+  if [[ -n "$qt_prefix" && -d "$qt_prefix" ]]; then
+    export CMAKE_PREFIX_PATH="${qt_prefix}:${CMAKE_PREFIX_PATH:-}"
+  fi
+fi
 WORLD_FILE=${PX4_GZ_WORLD_FILE:-$PX4_ROOT/Tools/simulation/gz/worlds/$WORLD.sdf}
 WORLD_FILE=${WORLD_FILE:A}
 
