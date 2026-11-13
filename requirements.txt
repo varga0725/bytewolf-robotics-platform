@@ -1,4 +1,6 @@
-mavsdk
+# CI and local unittest need mavsdk-grpc (<4). Install vision extras for the
+# full suite: pip install -r requirements.txt -r requirements-vision-research.txt
+mavsdk>=2.6,<4
 jsonschema>=4,<5
 PyYAML>=6,<7
 certifi
