@@ -21,8 +21,8 @@ outside this structure at `PX4-Autopilot`.
 
 ## Supported development and evidence hosts
 
-- Ubuntu 22.04 x86_64 is the dedicated operational/evidence host: PX4 SITL
-  v1.17.0, Gazebo Harmonic 8.15.0 (noble), headless systemd services, and the optional
+- Ubuntu 24.04 (noble) x86_64 is the dedicated operational/evidence host: PX4 SITL
+  v1.17.0, Gazebo Harmonic 8.15.0, headless systemd services, and the optional
   ROS 2 Humble telemetry bridge have been exercised there.
 - Native Apple Silicon macOS remains the visual development host: PX4 SITL
   v1.17.0 with the recorded compatibility patch and Gazebo Harmonic 8.12.0.
