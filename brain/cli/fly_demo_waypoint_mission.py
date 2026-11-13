@@ -108,7 +108,7 @@ async def run(arguments: argparse.Namespace) -> None:
     flight_capture: DemoFlightScreenCapture | None = None
     screen_capture_result: dict[str, object] | None = None
     position_samples: list[dict[str, object]] = []
-    mission_started_monotonic: float | None = None
+    mission_started_epoch: float | None = None
     ulog_failure_reason: str | None = None
     try:
         gate = SafetyGate(profile.flight_limits())
@@ -182,7 +182,7 @@ async def run(arguments: argparse.Namespace) -> None:
                 )
                 screen_capture_result = (await asyncio.to_thread(flight_capture.start)).as_dict()
         try:
-            mission_started_monotonic = time.monotonic()
+            mission_started_epoch = time.time()
             execution = await execute_demo_waypoint_mission(adapter, config)
         finally:
             sampler_stop.set()
@@ -202,7 +202,7 @@ async def run(arguments: argparse.Namespace) -> None:
                 arguments.artifact_dir,
                 recording.run_id,
                 px4_ulog=arguments.px4_ulog,
-                run_started_monotonic=mission_started_monotonic,
+                run_started_epoch=mission_started_epoch,
             )
         evidence_paths = _write_acceptance_evidence(
             execution=execution,
@@ -254,7 +254,7 @@ async def run(arguments: argparse.Namespace) -> None:
             peak,
         )
         if sitl_acceptance and safety_decision == "approved" and outcome != "completed":
-            if arguments.artifact_dir is not None and mission_started_monotonic is not None:
+            if arguments.artifact_dir is not None and mission_started_epoch is not None:
                 (
                     _ulog_rel,
                     _ulog_status,
@@ -263,7 +263,7 @@ async def run(arguments: argparse.Namespace) -> None:
                     arguments.artifact_dir,
                     recording.run_id,
                     px4_ulog=arguments.px4_ulog,
-                    run_started_monotonic=mission_started_monotonic,
+                    run_started_epoch=mission_started_epoch,
                 )
             _write_failed_acceptance_record(
                 execution=recorded_execution(adapter, execution),
@@ -317,8 +317,11 @@ def _write_acceptance_evidence(
     if screen_capture_status and screen_capture_status.get("status") == "captured":
         screen_path = str(screen_capture_status.get("relative_path"))
 
+    ulog_sha256: str | None = None
     if artifact_dir is not None and ulog_relative is None:
-        ulog_relative, ulog_status = _resolve_ulog_evidence(artifact_dir, run_id)
+        ulog_relative, ulog_status, ulog_sha256 = _resolve_ulog_evidence(artifact_dir, run_id)
+    elif artifact_dir is not None:
+        _rel, _status, ulog_sha256 = _resolve_ulog_evidence(artifact_dir, run_id)
 
     document = demo_waypoint_mission_evidence_document(
         execution=execution,
@@ -343,6 +346,8 @@ def _write_acceptance_evidence(
         started_at=execution.events[0].timestamp if execution.events else datetime.now(UTC),
     )
     document["ulog_status"] = ulog_status
+    if ulog_sha256 is not None:
+        document["px4_ulog_sha256"] = ulog_sha256
     if ulog_status != "captured":
         document["overall_status"] = "failed"
         document["failure_reason"] = ulog_failure_reason or "PX4 ULog was not archived before evidence was written."
@@ -353,16 +358,17 @@ def _write_acceptance_evidence(
     return {"directory": str(directory), "run": run_name}
 
 
-def _resolve_ulog_evidence(artifact_dir: Path | None, run_id: str) -> tuple[str | None, str]:
+def _resolve_ulog_evidence(artifact_dir: Path | None, run_id: str) -> tuple[str | None, str, str | None]:
     if artifact_dir is None:
-        return None, "missing"
+        return None, "missing", None
     manifest = artifact_dir / "px4-ulogs" / f"{run_id}.manifest.json"
     if not manifest.is_file():
-        return None, "missing"
+        return None, "missing", None
     manifest_document = json.loads(manifest.read_text(encoding="utf-8"))
     if manifest_document.get("status") == "captured":
-        return str(manifest_document.get("relative_path")), "captured"
-    return None, "missing"
+        sha = manifest_document.get("sha256")
+        return str(manifest_document.get("relative_path")), "captured", str(sha) if sha else None
+    return None, "missing", None
 
 
 def _write_failed_acceptance_record(
@@ -391,7 +397,7 @@ def _write_failed_acceptance_record(
             mission_items=items,
             output_path=trajectory_path,
         )
-    ulog_relative, ulog_status = _resolve_ulog_evidence(artifact_dir, run_id)
+    ulog_relative, ulog_status, ulog_sha256 = _resolve_ulog_evidence(artifact_dir, run_id)
     baseline = load_baseline()
     document = demo_waypoint_mission_evidence_document(
         execution=execution,
@@ -422,6 +428,8 @@ def _write_failed_acceptance_record(
     document["overall_status"] = "failed"
     document["failure_reason"] = failure_reason
     document["ulog_status"] = ulog_status
+    if ulog_sha256 is not None:
+        document["px4_ulog_sha256"] = ulog_sha256
     document["mission_artifact_path"] = str(artifact_path) if artifact_path is not None else None
     payload = json.dumps(document, indent=2)
     (directory / f"demo-waypoint-mission-{stamp}.json").write_text(payload, encoding="utf-8")

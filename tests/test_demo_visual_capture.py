@@ -87,13 +87,48 @@ class WindowCleanupSafetyTests(unittest.TestCase):
             output = Path(directory) / "x.mp4"
             output.write_bytes(b"video")
             capture = DemoFlightScreenCapture(output, mode="xvfb")
-            capture._session = _CaptureSession(launched_gz_gui=True, launched_gz_pid=999_999)
+            gui = MagicMock(pid=4242, poll=MagicMock(return_value=1))
+            capture._session = _CaptureSession(
+                launched_gz_gui=True,
+                launched_gz_pid=4242,
+                launched_gz_process=gui,
+                gui_liveness_samples=[{"elapsed_s": 1.0, "alive": True}],
+            )
             capture._ffmpeg = MagicMock(poll=MagicMock(return_value=0))
-            capture._started_at = 0.0
-            with patch("brain.mission.demo_visual_capture._process_is_alive", return_value=False):
-                result = capture.stop()
+            capture._started_at = __import__("time").monotonic()
+            result = capture.stop()
             self.assertEqual(result.status, "failed")
             self.assertFalse(result.gz_gui_alive_at_stop)
+
+    def test_xvfb_without_gz_gui_uses_captured_no_gui(self) -> None:
+        from brain.mission.demo_visual_capture import DemoFlightScreenCapture, _CaptureSession
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "x.mp4"
+            output.write_bytes(b"video")
+            capture = DemoFlightScreenCapture(output, mode="xvfb")
+            capture._session = _CaptureSession()
+            capture._ffmpeg = MagicMock(poll=MagicMock(return_value=0))
+            capture._started_at = __import__("time").monotonic()
+            with patch.dict(os.environ, {"BYTEWOLF_DEMO_LAUNCH_GZ_GUI": "0"}, clear=False):
+                result = capture.stop()
+            self.assertEqual(result.status, "captured_no_gui")
+            self.assertIsNotNone(result.relative_path)
+
+    def test_child_process_is_alive_ignores_zombies(self) -> None:
+        from brain.mission.demo_visual_capture import _child_process_is_alive
+
+        zombie = MagicMock(poll=MagicMock(return_value=0))
+        self.assertFalse(_child_process_is_alive(zombie))
+        running = MagicMock(poll=MagicMock(return_value=None))
+        self.assertTrue(_child_process_is_alive(running))
+
+    def test_gz_gui_refuses_non_loopback_gz_ip(self) -> None:
+        from brain.mission.demo_visual_capture import _launch_gz_gui_client
+
+        with patch.dict(os.environ, {"GZ_IP": "192.0.2.1"}, clear=False):
+            with patch("brain.mission.demo_visual_capture.shutil.which", return_value="/usr/bin/gz"):
+                self.assertIsNone(_launch_gz_gui_client(":199", attach_to_running_server=True))
 
     def test_launch_gz_gui_defaults_x11_off_xvfb_on(self) -> None:
         from brain.mission.demo_visual_capture import _should_launch_gz_gui

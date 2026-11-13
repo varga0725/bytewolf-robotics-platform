@@ -16,8 +16,8 @@ from brain.mission.execution import MissionExecution
 from brain.mission.artifacts import DEFAULT_MISSION_RUNS_DIRECTORY
 from brain.telemetry.ulog import (
     archive_px4_ulog,
+    describe_px4_run_directory,
     discover_newest_px4_ulog,
-    ensure_px4_ulog_archived,
     read_ulog_manifest,
     resolve_px4_run_directory,
     write_ulog_unavailable_manifest,
@@ -93,17 +93,23 @@ def write_run_artifact(
     artifact_path = writer.write(artifact)
     manifest = read_ulog_manifest(writer.directory, artifact.run_id)
     if manifest is not None and manifest.get("status") == "captured":
+        if world_recorder is not None:
+            world_recorder.record_mission_outcome(artifact, artifact_path=str(artifact_path))
         return artifact_path
     if px4_ulog is None:
         run_dir = resolve_px4_run_directory()
         if run_dir is not None:
             px4_ulog = discover_newest_px4_ulog(run_dir)
     if px4_ulog is None:
-        reason = (
-            "No PX4 ULog source was supplied."
-            if resolve_px4_run_directory() is None
-            else "No .ulg file was found under BYTEWOLF_PX4_RUN_DIR after the mission."
-        )
+        _run_dir, run_dir_reason = describe_px4_run_directory()
+        if run_dir_reason == "configured but missing":
+            reason = "No PX4 ULog source was supplied; BYTEWOLF_PX4_RUN_DIR is configured but missing."
+        elif run_dir_reason:
+            reason = f"No PX4 ULog source was supplied; {run_dir_reason}."
+        elif _run_dir is None:
+            reason = "No PX4 ULog source was supplied."
+        else:
+            reason = "No .ulg file was found under BYTEWOLF_PX4_RUN_DIR after the mission."
         if manifest is None or manifest.get("status") != "unavailable":
             write_ulog_unavailable_manifest(writer.directory, artifact.run_id, reason)
     else:

@@ -133,7 +133,7 @@ class FlyDemoWaypointEvidenceE2ETests(unittest.IsolatedAsyncioTestCase):
             ),
             patch(
                 "brain.cli.fly_demo_waypoint_mission._resolve_ulog_evidence",
-                return_value=("px4-ulogs/test.ulg", "captured"),
+                return_value=("px4-ulogs/test.ulg", "captured", "deadbeef"),
             ),
             patch("brain.cli.fly_demo_waypoint_mission.write_run_artifact", return_value=artifact_dir / "audit.json"),
             patch("brain.cli.fly_demo_waypoint_mission.render_demo_trajectory_png"),
@@ -191,7 +191,7 @@ class FlyDemoWaypointEvidenceE2ETests(unittest.IsolatedAsyncioTestCase):
             ),
             patch(
                 "brain.cli.fly_demo_waypoint_mission._resolve_ulog_evidence",
-                return_value=(None, "missing"),
+                return_value=(None, "missing", None),
             ),
             patch("brain.cli.fly_demo_waypoint_mission.write_run_artifact", return_value=artifact_dir / "audit.json"),
             patch("brain.cli.fly_demo_waypoint_mission.render_demo_trajectory_png"),

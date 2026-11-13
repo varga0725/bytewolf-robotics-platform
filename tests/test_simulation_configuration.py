@@ -60,6 +60,7 @@ class SimulationConfigurationTests(unittest.TestCase):
         self.assertIn('BYTEWOLF_PX4_RUN_DIR', launcher)
         self.assertIn('cd "$PX4_RUN_DIR" && pwd', launcher)
         self.assertIn('"$PX4_BINARY" -d -w "$PX4_RUN_DIR"', launcher)
+        self.assertIn('if [[ ! -d "$PX4_RUN_DIR" ]]; then', launcher)
 
     def test_headless_and_validation_default_to_baylands(self) -> None:
         for script in (

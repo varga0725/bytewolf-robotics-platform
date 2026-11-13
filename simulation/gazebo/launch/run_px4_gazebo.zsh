@@ -101,6 +101,10 @@ if [[ "$PROFILE" == "full-sensors" ]]; then
   fi
   export BYTEWOLF_PX4_RUN_DIR="$PX4_RUN_DIR"
   export PX4_RUN_DIR
+  if [[ ! -d "$PX4_RUN_DIR" ]]; then
+    print -u2 "Nem hozható létre a PX4 futási könyvtár: $PX4_RUN_DIR"
+    exit 1
+  fi
   PX4_PID=0
   cleanup_full_sensors() {
     if (( PX4_PID > 0 )) && kill -0 "$PX4_PID" 2>/dev/null; then

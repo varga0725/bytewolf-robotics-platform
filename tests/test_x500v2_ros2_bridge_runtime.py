@@ -145,6 +145,7 @@ class TelemetryBridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.005)
             stopped.set()
             await task
+            await asyncio.sleep(0.05)
 
             self.assertEqual(vehicle.connected_to, "udpin://0.0.0.0:14540")
             self.assertEqual(ros.initialized, 1)
@@ -353,7 +354,7 @@ class BridgeRunArtifactTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_run_that_cannot_record_itself_still_shuts_down_cleanly(self) -> None:
         """Telemetry-only evidence must never be able to take the bridge down."""
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             root = Path(directory)
             blocked = root / "blocked"
             blocked.write_text("not a directory", encoding="utf-8")
@@ -370,6 +371,9 @@ class BridgeRunArtifactTests(unittest.IsolatedAsyncioTestCase):
             stopped = asyncio.Event()
             stopped.set()
             await runtime.run(stopped)
+            await asyncio.sleep(0.05)
+            for pending in root.glob(".telemetry-*.tmp"):
+                pending.unlink(missing_ok=True)
 
         self.assertEqual(ros.shutdowns, 1)
         self.assertEqual(node.destroyed, 1)

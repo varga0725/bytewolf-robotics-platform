@@ -7,8 +7,8 @@ import re
 import shutil
 import signal
 import subprocess
+import threading
 import time
-import errno
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,6 +33,7 @@ class CaptureResult:
     reason: str | None = None
     gz_gui_pid: int | None = None
     gz_gui_alive_at_stop: bool | None = None
+    gz_gui_alive_samples: list[dict[str, object]] | None = None
 
     def as_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {"status": self.status}
@@ -44,6 +45,8 @@ class CaptureResult:
             payload["gz_gui_pid"] = self.gz_gui_pid
         if self.gz_gui_alive_at_stop is not None:
             payload["gz_gui_alive_at_stop"] = self.gz_gui_alive_at_stop
+        if self.gz_gui_alive_samples:
+            payload["gz_gui_alive_samples"] = self.gz_gui_alive_samples
         return payload
 
 
@@ -53,6 +56,10 @@ class _CaptureSession:
     xvfb_display: str | None = None
     launched_gz_gui: bool = False
     launched_gz_pid: int | None = None
+    launched_gz_process: subprocess.Popen[Any] | None = None
+    gui_liveness_samples: list[dict[str, object]] = field(default_factory=list)
+    gui_liveness_stop: threading.Event | None = None
+    gui_liveness_thread: threading.Thread | None = None
 
     def cleanup(self) -> None:
         for process in reversed(self.child_processes):
@@ -131,12 +138,14 @@ class DemoFlightScreenCapture:
             return CaptureResult("failed", reason=str(error))
         self._started_at = time.monotonic()
         self._result = CaptureResult("recording")
+        self._start_gui_liveness_sampling()
         return self._result
 
     def stop(self) -> CaptureResult:
         if self._result is not None and self._result.status in {"skipped", "failed"}:
             self._session.cleanup()
             return self._result
+        self._stop_gui_liveness_sampling()
         if self._ffmpeg is not None and self._ffmpeg.poll() is None:
             if self._ffmpeg.stdin is not None:
                 try:
@@ -148,42 +157,87 @@ class DemoFlightScreenCapture:
                 self._ffmpeg.wait(timeout=15.0)
             except subprocess.TimeoutExpired:
                 self._ffmpeg.kill()
+        gui_process = self._session.launched_gz_process
         gui_pid = self._session.launched_gz_pid
-        gui_alive = _process_is_alive(gui_pid) if gui_pid is not None else False
+        gui_alive = _child_process_is_alive(gui_process)
+        samples = list(self._session.gui_liveness_samples)
+        should_have_gui = _should_launch_gz_gui(self.mode)
+        launched_gui = self._session.launched_gz_gui and gui_process is not None
         self._session.cleanup()
         elapsed = 0.0 if self._started_at is None else time.monotonic() - self._started_at
+        common = {
+            "gz_gui_pid": gui_pid,
+            "gz_gui_alive_at_stop": gui_alive,
+            "gz_gui_alive_samples": samples or None,
+        }
         if elapsed > self.max_duration_s:
-            return CaptureResult(
-                "failed",
-                reason="capture exceeded max duration before stop",
-                gz_gui_pid=gui_pid,
-                gz_gui_alive_at_stop=gui_alive,
-            )
-        if _should_launch_gz_gui(self.mode) and not gui_alive:
-            return CaptureResult(
-                "failed",
-                reason="gz sim -g was not alive at capture stop",
-                gz_gui_pid=gui_pid,
-                gz_gui_alive_at_stop=gui_alive,
-            )
-        if self.output_path.is_file() and self.output_path.stat().st_size > 0:
-            relative = (
-                str(self.output_path.relative_to(self.evidence_directory))
-                if self.evidence_directory
-                else self.output_path.name
-            )
-            return CaptureResult(
-                "captured",
-                relative_path=relative,
-                gz_gui_pid=gui_pid,
-                gz_gui_alive_at_stop=gui_alive,
-            )
-        return CaptureResult(
-            "failed",
-            reason="ffmpeg did not produce a video file",
-            gz_gui_pid=gui_pid,
-            gz_gui_alive_at_stop=gui_alive,
+            return CaptureResult("failed", reason="capture exceeded max duration before stop", **common)
+        has_video = self.output_path.is_file() and self.output_path.stat().st_size > 0
+        relative = (
+            str(self.output_path.relative_to(self.evidence_directory))
+            if has_video and self.evidence_directory
+            else (self.output_path.name if has_video else None)
         )
+        if should_have_gui and not launched_gui:
+            if has_video:
+                return CaptureResult(
+                    "captured_no_gui",
+                    relative_path=relative,
+                    reason="screen recording ran without a gz sim -g client",
+                    **common,
+                )
+            return CaptureResult("failed", reason="gz sim -g was not launched", **common)
+        if should_have_gui and not gui_alive:
+            return CaptureResult("failed", reason="gz sim -g was not alive at capture stop", **common)
+        if should_have_gui and samples and not any(sample.get("alive") for sample in samples):
+            return CaptureResult("failed", reason="gz sim -g was never alive during capture", **common)
+        if has_video and not should_have_gui:
+            return CaptureResult(
+                "captured_no_gui",
+                relative_path=relative,
+                reason="gz sim -g launch disabled for this capture mode",
+                **common,
+            )
+        if has_video:
+            return CaptureResult("captured", relative_path=relative, **common)
+        return CaptureResult("failed", reason="ffmpeg did not produce a video file", **common)
+
+    def _start_gui_liveness_sampling(self) -> None:
+        if not _should_launch_gz_gui(self.mode):
+            return
+        stop = threading.Event()
+        self._session.gui_liveness_stop = stop
+
+        process = self._session.launched_gz_process
+        if process is not None:
+            self._session.gui_liveness_samples.append(
+                {"elapsed_s": 0.0, "alive": _child_process_is_alive(process)}
+            )
+
+        def sample_loop() -> None:
+            started = self._started_at or time.monotonic()
+            while not stop.wait(2.0):
+                process = self._session.launched_gz_process
+                self._session.gui_liveness_samples.append(
+                    {
+                        "elapsed_s": round(time.monotonic() - started, 3),
+                        "alive": _child_process_is_alive(process),
+                    }
+                )
+
+        thread = threading.Thread(target=sample_loop, name="gz-gui-liveness", daemon=True)
+        self._session.gui_liveness_thread = thread
+        thread.start()
+
+    def _stop_gui_liveness_sampling(self) -> None:
+        stop = self._session.gui_liveness_stop
+        thread = self._session.gui_liveness_thread
+        if stop is not None:
+            stop.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+        self._session.gui_liveness_stop = None
+        self._session.gui_liveness_thread = None
 
     def _prepare_x11_surface(self) -> tuple[tuple[int, int, int, int], str] | None:
         display = os.environ.get("DISPLAY")
@@ -196,6 +250,7 @@ class DemoFlightScreenCapture:
             self._session.child_processes.append(process)
             self._session.launched_gz_gui = True
             self._session.launched_gz_pid = process.pid
+            self._session.launched_gz_process = process
             _wait_s(_gz_gui_attach_delay_s())
         region = _resolve_window_region(self._session, display=display)
         if region is None:
@@ -226,6 +281,7 @@ class DemoFlightScreenCapture:
             self._session.child_processes.append(process)
             self._session.launched_gz_gui = True
             self._session.launched_gz_pid = process.pid
+            self._session.launched_gz_process = process
             _wait_s(_gz_gui_attach_delay_s())
         region = _resolve_window_region(self._session, display=display)
         if region is None:
@@ -278,10 +334,13 @@ def _gz_gui_attach_delay_s() -> float:
         return 5.0
 
 
-def _gz_transport_env(display: str, *, attach_to_running_server: bool) -> dict[str, str]:
+def _gz_transport_env(display: str, *, attach_to_running_server: bool) -> dict[str, str] | None:
     env = dict(os.environ)
     env["DISPLAY"] = display
-    env.setdefault("GZ_IP", "127.0.0.1")
+    gz_ip = env.get("GZ_IP", "127.0.0.1").strip()
+    if gz_ip != "127.0.0.1":
+        return None
+    env["GZ_IP"] = "127.0.0.1"
     if attach_to_running_server:
         env.setdefault("PX4_GZ_STANDALONE", "1")
     return env
@@ -292,6 +351,8 @@ def _launch_gz_gui_client(display: str, *, attach_to_running_server: bool = Fals
     if gz is None:
         return None
     env = _gz_transport_env(display, attach_to_running_server=attach_to_running_server)
+    if env is None:
+        return None
     try:
         return subprocess.Popen(
             [gz, "sim", "-g"],
@@ -303,14 +364,8 @@ def _launch_gz_gui_client(display: str, *, attach_to_running_server: bool = Fals
         return None
 
 
-def _process_is_alive(pid: int | None) -> bool:
-    if pid is None or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except OSError as error:
-        return error.errno == errno.EPERM
-    return True
+def _child_process_is_alive(process: subprocess.Popen[Any] | None) -> bool:
+    return process is not None and process.poll() is None
 
 
 def _resolve_window_region(session: _CaptureSession, *, display: str) -> tuple[int, int, int, int] | None:

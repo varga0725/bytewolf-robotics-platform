@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 import tests.warning_policy  # noqa: F401
+from tests import unawaited_coroutine_guard
 
 
 class RuntimeWarningPolicyTests(unittest.TestCase):
@@ -13,6 +14,7 @@ class RuntimeWarningPolicyTests(unittest.TestCase):
 
         matching = [item for item in warnings.filters if item[0] == "error" and item[2] is RuntimeWarning]
         self.assertTrue(matching, "expected RuntimeWarning to be configured as error")
+        self.assertIsNotNone(unawaited_coroutine_guard.violations)
 
 
 if __name__ == "__main__":

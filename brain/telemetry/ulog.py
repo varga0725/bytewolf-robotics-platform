@@ -19,22 +19,46 @@ class ULogCaptureError(ValueError):
     """Raised when a raw PX4 log cannot be archived with verifiable provenance."""
 
 
-def resolve_px4_run_directory() -> Path | None:
-    """Return an absolute PX4 working directory from the environment, if present."""
+ULOG_RUN_START_SLACK_S = 5.0
+
+
+def describe_px4_run_directory() -> tuple[Path | None, str | None]:
+    """Resolve the PX4 run directory and explain when it is configured but missing."""
     raw = os.environ.get("BYTEWOLF_PX4_RUN_DIR") or os.environ.get("PX4_RUN_DIR")
     if not raw:
-        return None
+        return None, None
     path = Path(raw).expanduser()
     if not path.is_absolute():
-        path = path.resolve()
-    return path if path.is_dir() else None
+        try:
+            path = path.resolve()
+        except OSError:
+            return None, "configured but missing"
+    if path.is_dir():
+        return path, None
+    if path.exists():
+        return None, "configured path is not a directory"
+    return None, "configured but missing"
 
 
-def discover_newest_px4_ulog(px4_run_directory: Path) -> Path | None:
+def resolve_px4_run_directory() -> Path | None:
+    """Return an absolute PX4 working directory from the environment, if present."""
+    path, _reason = describe_px4_run_directory()
+    return path
+
+
+def discover_newest_px4_ulog(
+    px4_run_directory: Path,
+    *,
+    min_mtime_epoch: float | None = None,
+    slack_s: float = ULOG_RUN_START_SLACK_S,
+) -> Path | None:
     """Return the newest ``.ulg`` under a PX4 SITL working directory, if any."""
     if not px4_run_directory.is_dir():
         return None
     candidates = [path for path in px4_run_directory.rglob("*.ulg") if path.is_file()]
+    if min_mtime_epoch is not None:
+        floor = min_mtime_epoch - slack_s
+        candidates = [path for path in candidates if path.stat().st_mtime >= floor]
     if not candidates:
         return None
     return max(candidates, key=lambda path: path.stat().st_mtime)
@@ -98,7 +122,7 @@ def ensure_px4_ulog_archived(
     run_id: str,
     *,
     px4_ulog: Path | None = None,
-    run_started_monotonic: float | None = None,
+    run_started_epoch: float | None = None,
     timeout_s: float = 15.0,
     poll_interval_s: float = 0.25,
 ) -> tuple[str | None, str, str | None]:
@@ -118,11 +142,12 @@ def ensure_px4_ulog_archived(
             source = px4_ulog
         else:
             run_dir = resolve_px4_run_directory()
-            source = None if run_dir is None else discover_newest_px4_ulog(run_dir)
+            source = (
+                None
+                if run_dir is None
+                else discover_newest_px4_ulog(run_dir, min_mtime_epoch=run_started_epoch)
+            )
         if source is not None and source.is_file():
-            if run_started_monotonic is not None:
-                if source.stat().st_mtime < run_started_monotonic - 5.0:
-                    source = None
             if source is not None:
                 size = source.stat().st_size
                 if source == last_source and size == last_size and size > 0:
@@ -142,8 +167,14 @@ def ensure_px4_ulog_archived(
             return str(existing.get("relative_path")), "captured", None
         time.sleep(poll_interval_s)
 
-    if resolve_px4_run_directory() is None and px4_ulog is None:
-        reason = "PX4 run directory was not configured before ULog discovery."
+    run_dir, run_dir_reason = describe_px4_run_directory()
+    if px4_ulog is None and run_dir is None:
+        if run_dir_reason == "configured but missing":
+            reason = "PX4 run directory was configured but does not exist."
+        elif run_dir_reason:
+            reason = f"PX4 run directory is unusable: {run_dir_reason}"
+        else:
+            reason = "PX4 run directory was not configured before ULog discovery."
     else:
         reason = "PX4 ULog did not become available before the discovery timeout."
     write_ulog_unavailable_manifest(artifact_directory, run_id, reason)
@@ -155,7 +186,7 @@ async def wait_for_px4_ulog_archive(
     run_id: str,
     *,
     px4_ulog: Path | None = None,
-    run_started_monotonic: float | None = None,
+    run_started_epoch: float | None = None,
     timeout_s: float | None = None,
 ) -> tuple[str | None, str, str | None]:
     import asyncio
@@ -174,7 +205,7 @@ async def wait_for_px4_ulog_archive(
         artifact_directory,
         run_id,
         px4_ulog=px4_ulog,
-        run_started_monotonic=run_started_monotonic,
+        run_started_epoch=run_started_epoch,
         timeout_s=effective_timeout,
     )
     return await loop.run_in_executor(None, worker)
