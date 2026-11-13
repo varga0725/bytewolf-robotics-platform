@@ -16,7 +16,7 @@ from brain.cli.artifacts import prepare_flight_run_recording, recorded_execution
 from brain.cli.mavsdk_lifecycle import acquire_px4_link, stop_owned_mavsdk_server
 from brain.mission.demo_position_sampler import sample_positions_while
 from brain.mission.demo_trajectory_plot import render_demo_trajectory_png
-from brain.mission.demo_visual_capture import optional_screen_capture
+from brain.mission.demo_visual_capture import optional_screen_capture, resolve_screen_capture_mode
 from brain.mission.demo_waypoint_mission import (
     MISSION_TYPE,
     authorize_demo_waypoint_mission,
@@ -69,7 +69,13 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--skip-optional-screen-capture",
         action="store_true",
-        help="Do not attempt xvfb-run/ffmpeg screen capture even when installed.",
+        help="Do not attempt optional gz GUI screen capture.",
+    )
+    parser.add_argument(
+        "--screen-capture-mode",
+        choices=("x11", "xvfb"),
+        default=None,
+        help="Optional capture backend (overrides BYTEWOLF_DEMO_SCREEN_CAPTURE_MODE).",
     )
     add_deployment_arguments(parser, actuation_capable=True)
     return parser.parse_args(arguments)
@@ -166,6 +172,7 @@ async def run(arguments: argparse.Namespace) -> None:
             sitl_verification=getattr(adapter, "_demo_sitl_proof", {}),
             adapter=adapter,
             skip_screen_capture=arguments.skip_optional_screen_capture,
+            screen_capture_mode=arguments.screen_capture_mode,
             artifact_dir=arguments.artifact_dir,
             run_id=recording.run_id,
         )
@@ -224,6 +231,7 @@ def _write_acceptance_evidence(
     sitl_verification: dict[str, object],
     adapter: MavsdkMissionAdapter,
     skip_screen_capture: bool,
+    screen_capture_mode: str | None,
     artifact_dir: Path | None,
     run_id: str,
 ) -> dict[str, str] | None:
@@ -244,7 +252,12 @@ def _write_acceptance_evidence(
     )
     screen_path = None
     if not skip_screen_capture:
-        capture = optional_screen_capture(directory / f"screen-{stamp}.mp4")
+        mode = resolve_screen_capture_mode(screen_capture_mode)
+        capture = (
+            optional_screen_capture(directory / f"screen-{stamp}.mp4", mode=mode)
+            if mode is not None
+            else None
+        )
         if capture is not None:
             screen_path = str(capture.relative_to(directory))
 

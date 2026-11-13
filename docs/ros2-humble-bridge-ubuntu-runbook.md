@@ -283,8 +283,15 @@ export BYTEWOLF_SITL_ACCEPTANCE=1
 ```
 
 Evidence lands under `simulation/artifacts/demo-waypoint-mission/` (`latest.json`,
-per-run JSON, `trajectory-*.png`, optional `screen-*.mp4` when `xvfb-run` and
-`ffmpeg` exist). Summary: `acceptance-latest.json`.
+per-run JSON, `trajectory-*.png` on every run, optional `screen-*.mp4` when
+`ffmpeg` is available). Pick the capture backend with
+`BYTEWOLF_DEMO_SCREEN_CAPTURE_MODE=x11|xvfb` or
+`--screen-capture-mode x11|xvfb` on `fly_demo_waypoint_mission` (CLI wins).
+`x11` uses the current `DISPLAY`, grabs only the gz GUI window (via
+`xdotool`/`xwininfo` when present) or
+`BYTEWOLF_DEMO_SCREEN_CAPTURE_GEOMETRY=WxH+X+Y` — never the full desktop by
+default. `xvfb` uses `xvfb-run` as before. Missing tools skip capture without
+failing the flight. Summary: `acceptance-latest.json`.
 
 ### Control Room review / approve
 
