@@ -40,8 +40,8 @@ profiles:
     # here would be wrong, not merely unnecessary: its Homebrew library paths do
     # not exist on this host.
     required_patch: null
-    # The OSR Foundation stable archive ships only 8.14.0 for jammy; 8.12.0 is
-    # not archived, so this host cannot reproduce the macOS Gazebo exactly.
+    # Ubuntu 24.04 noble installs Gazebo Sim 8.15.0 from the OSRF archive.
+    # Jammy cannot reproduce that exact version; macOS remains on 8.12.0.
     #
     # Measured on 2026-08-03 rather than assumed: five P0.v2 rounds on 8.14.0
     # gave median airborne hover tilts of 2.4158 +/- 0.0291 deg (3 m/s),
@@ -53,7 +53,7 @@ profiles:
     # difference or by macOS-side sampling noise. Wind evidence recorded here
     # may therefore sit alongside the macOS wind evidence but is not numerically
     # identical to it. Settling this needs repeated macOS runs.
-    gazebo_sim_version: 8.14.0
+    gazebo_sim_version: 8.15.0
     # The same four files, unpatched, straight from v1.17.0.
     files:
       CMakeLists.txt: 6dc044ac42624d9899e064bd4693923fc2ee277291e7eecc280a91edca0e2975
