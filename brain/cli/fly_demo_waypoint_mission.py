@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import os
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ from brain.safety.deployment import actuation_request_sha256, add_deployment_arg
 from brain.safety.gate import SafetyGate
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
+from brain.telemetry.ulog import wait_for_px4_ulog_archive
 from brain.telemetry.persistence import TelemetryHistoryStore
 from shared.safety.execution_gate import require_mission_execution_enabled
 
@@ -106,6 +108,8 @@ async def run(arguments: argparse.Namespace) -> None:
     flight_capture: DemoFlightScreenCapture | None = None
     screen_capture_result: dict[str, object] | None = None
     position_samples: list[dict[str, object]] = []
+    mission_started_monotonic: float | None = None
+    ulog_failure_reason: str | None = None
     try:
         gate = SafetyGate(profile.flight_limits())
         authorize_demo_waypoint_mission(gate, config, profile=profile)
@@ -178,6 +182,7 @@ async def run(arguments: argparse.Namespace) -> None:
                 )
                 screen_capture_result = (await asyncio.to_thread(flight_capture.start)).as_dict()
         try:
+            mission_started_monotonic = time.monotonic()
             execution = await execute_demo_waypoint_mission(adapter, config)
         finally:
             sampler_stop.set()
@@ -190,6 +195,15 @@ async def run(arguments: argparse.Namespace) -> None:
         )
         outcome = "completed"
         print("Mission completed: " + " -> ".join(event.phase.value for event in execution.events))
+        ulog_relative: str | None = None
+        ulog_status = "missing"
+        if sitl_acceptance and arguments.artifact_dir is not None:
+            ulog_relative, ulog_status, ulog_failure_reason = await wait_for_px4_ulog_archive(
+                arguments.artifact_dir,
+                recording.run_id,
+                px4_ulog=arguments.px4_ulog,
+                run_started_monotonic=mission_started_monotonic,
+            )
         evidence_paths = _write_acceptance_evidence(
             execution=execution,
             config=config,
@@ -202,6 +216,9 @@ async def run(arguments: argparse.Namespace) -> None:
             artifact_dir=arguments.artifact_dir,
             run_id=recording.run_id,
             evidence_stamp=evidence_stamp,
+            ulog_relative=ulog_relative,
+            ulog_status=ulog_status,
+            ulog_failure_reason=ulog_failure_reason,
         )
         if evidence_paths:
             print(f"Evidence written under {evidence_paths['directory']}")
@@ -237,6 +254,17 @@ async def run(arguments: argparse.Namespace) -> None:
             peak,
         )
         if sitl_acceptance and safety_decision == "approved" and outcome != "completed":
+            if arguments.artifact_dir is not None and mission_started_monotonic is not None:
+                (
+                    _ulog_rel,
+                    _ulog_status,
+                    ulog_failure_reason,
+                ) = await wait_for_px4_ulog_archive(
+                    arguments.artifact_dir,
+                    recording.run_id,
+                    px4_ulog=arguments.px4_ulog,
+                    run_started_monotonic=mission_started_monotonic,
+                )
             _write_failed_acceptance_record(
                 execution=recorded_execution(adapter, execution),
                 config=config,
@@ -266,6 +294,9 @@ def _write_acceptance_evidence(
     artifact_dir: Path | None,
     run_id: str,
     evidence_stamp: str,
+    ulog_relative: str | None = None,
+    ulog_status: str = "missing",
+    ulog_failure_reason: str | None = None,
 ) -> dict[str, str] | None:
     if os.environ.get("BYTEWOLF_SITL_ACCEPTANCE") != "1":
         return None
@@ -286,7 +317,8 @@ def _write_acceptance_evidence(
     if screen_capture_status and screen_capture_status.get("status") == "captured":
         screen_path = str(screen_capture_status.get("relative_path"))
 
-    ulog_relative, ulog_status = _resolve_ulog_evidence(artifact_dir, run_id)
+    if artifact_dir is not None and ulog_relative is None:
+        ulog_relative, ulog_status = _resolve_ulog_evidence(artifact_dir, run_id)
 
     document = demo_waypoint_mission_evidence_document(
         execution=execution,
@@ -313,6 +345,7 @@ def _write_acceptance_evidence(
     document["ulog_status"] = ulog_status
     if ulog_status != "captured":
         document["overall_status"] = "failed"
+        document["failure_reason"] = ulog_failure_reason or "PX4 ULog was not archived before evidence was written."
     payload = json.dumps(document, indent=2)
     run_name = f"demo-waypoint-mission-{stamp}.json"
     (directory / run_name).write_text(payload, encoding="utf-8")

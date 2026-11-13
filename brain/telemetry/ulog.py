@@ -19,6 +19,17 @@ class ULogCaptureError(ValueError):
     """Raised when a raw PX4 log cannot be archived with verifiable provenance."""
 
 
+def resolve_px4_run_directory() -> Path | None:
+    """Return an absolute PX4 working directory from the environment, if present."""
+    raw = os.environ.get("BYTEWOLF_PX4_RUN_DIR") or os.environ.get("PX4_RUN_DIR")
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = path.resolve()
+    return path if path.is_dir() else None
+
+
 def discover_newest_px4_ulog(px4_run_directory: Path) -> Path | None:
     """Return the newest ``.ulg`` under a PX4 SITL working directory, if any."""
     if not px4_run_directory.is_dir():
@@ -70,6 +81,103 @@ def write_ulog_unavailable_manifest(artifact_directory: Path, run_id: str, reaso
         },
     )
     return destination
+
+
+def read_ulog_manifest(artifact_directory: Path, run_id: str) -> dict[str, object] | None:
+    manifest = artifact_directory / "px4-ulogs" / f"{run_id}.manifest.json"
+    if not manifest.is_file():
+        return None
+    try:
+        return json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def ensure_px4_ulog_archived(
+    artifact_directory: Path,
+    run_id: str,
+    *,
+    px4_ulog: Path | None = None,
+    run_started_monotonic: float | None = None,
+    timeout_s: float = 15.0,
+    poll_interval_s: float = 0.25,
+) -> tuple[str | None, str, str | None]:
+    """Poll for a settled ``.ulg`` and archive it, or return status and reason."""
+    existing = read_ulog_manifest(artifact_directory, run_id)
+    if existing is not None and existing.get("status") == "captured":
+        return str(existing.get("relative_path")), "captured", None
+
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    last_source: Path | None = None
+    last_size: int | None = None
+    stable_polls = 0
+    while time.monotonic() < deadline:
+        if px4_ulog is not None and px4_ulog.is_file():
+            source = px4_ulog
+        else:
+            run_dir = resolve_px4_run_directory()
+            source = None if run_dir is None else discover_newest_px4_ulog(run_dir)
+        if source is not None and source.is_file():
+            if run_started_monotonic is not None:
+                if source.stat().st_mtime < run_started_monotonic - 5.0:
+                    source = None
+            if source is not None:
+                size = source.stat().st_size
+                if source == last_source and size == last_size and size > 0:
+                    stable_polls += 1
+                else:
+                    stable_polls = 0
+                    last_source = source
+                    last_size = size
+                if stable_polls >= 2:
+                    try:
+                        capture = archive_px4_ulog(source, artifact_directory, run_id)
+                        return capture.relative_path, "captured", None
+                    except ULogCaptureError:
+                        pass
+        existing = read_ulog_manifest(artifact_directory, run_id)
+        if existing is not None and existing.get("status") == "captured":
+            return str(existing.get("relative_path")), "captured", None
+        time.sleep(poll_interval_s)
+
+    if resolve_px4_run_directory() is None and px4_ulog is None:
+        reason = "PX4 run directory was not configured before ULog discovery."
+    else:
+        reason = "PX4 ULog did not become available before the discovery timeout."
+    write_ulog_unavailable_manifest(artifact_directory, run_id, reason)
+    return None, "missing", reason
+
+
+async def wait_for_px4_ulog_archive(
+    artifact_directory: Path,
+    run_id: str,
+    *,
+    px4_ulog: Path | None = None,
+    run_started_monotonic: float | None = None,
+    timeout_s: float | None = None,
+) -> tuple[str | None, str, str | None]:
+    import asyncio
+    import functools
+
+    effective_timeout = timeout_s
+    if effective_timeout is None:
+        raw = os.environ.get("BYTEWOLF_ULOG_DISCOVERY_TIMEOUT_S", "15")
+        try:
+            effective_timeout = float(raw)
+        except ValueError:
+            effective_timeout = 15.0
+    loop = asyncio.get_running_loop()
+    worker = functools.partial(
+        ensure_px4_ulog_archived,
+        artifact_directory,
+        run_id,
+        px4_ulog=px4_ulog,
+        run_started_monotonic=run_started_monotonic,
+        timeout_s=effective_timeout,
+    )
+    return await loop.run_in_executor(None, worker)
 
 
 def archive_px4_ulog(source: Path, artifact_directory: Path, run_id: str) -> ULogCapture:

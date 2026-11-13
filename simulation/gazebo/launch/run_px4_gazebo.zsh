@@ -94,6 +94,13 @@ if [[ "$PROFILE" == "full-sensors" ]]; then
   if [[ -z "${PX4_RUN_DIR_KEEP:-}" ]]; then
     PX4_OWNS_RUN_DIR=1
   fi
+  if [[ -d "$PX4_RUN_DIR" ]]; then
+    PX4_RUN_DIR="$(cd "$PX4_RUN_DIR" && pwd)"
+  elif command -v realpath >/dev/null 2>&1; then
+    PX4_RUN_DIR="$(realpath "$PX4_RUN_DIR" 2>/dev/null || print -r -- "$PX4_RUN_DIR")"
+  fi
+  export BYTEWOLF_PX4_RUN_DIR="$PX4_RUN_DIR"
+  export PX4_RUN_DIR
   PX4_PID=0
   cleanup_full_sensors() {
     if (( PX4_PID > 0 )) && kill -0 "$PX4_PID" 2>/dev/null; then

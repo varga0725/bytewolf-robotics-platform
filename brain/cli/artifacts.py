@@ -17,7 +17,11 @@ from brain.mission.artifacts import DEFAULT_MISSION_RUNS_DIRECTORY
 from brain.telemetry.ulog import (
     archive_px4_ulog,
     discover_newest_px4_ulog,
+    ensure_px4_ulog_archived,
+    read_ulog_manifest,
+    resolve_px4_run_directory,
     write_ulog_unavailable_manifest,
+    ULogCaptureError,
 )
 
 
@@ -87,19 +91,28 @@ def write_run_artifact(
     )
     writer = MissionArtifactWriter() if directory is None else MissionArtifactWriter(directory)
     artifact_path = writer.write(artifact)
+    manifest = read_ulog_manifest(writer.directory, artifact.run_id)
+    if manifest is not None and manifest.get("status") == "captured":
+        return artifact_path
     if px4_ulog is None:
-        run_dir = os.environ.get("BYTEWOLF_PX4_RUN_DIR")
-        if run_dir:
-            px4_ulog = discover_newest_px4_ulog(Path(run_dir))
+        run_dir = resolve_px4_run_directory()
+        if run_dir is not None:
+            px4_ulog = discover_newest_px4_ulog(run_dir)
     if px4_ulog is None:
         reason = (
             "No PX4 ULog source was supplied."
-            if not os.environ.get("BYTEWOLF_PX4_RUN_DIR")
+            if resolve_px4_run_directory() is None
             else "No .ulg file was found under BYTEWOLF_PX4_RUN_DIR after the mission."
         )
-        write_ulog_unavailable_manifest(writer.directory, artifact.run_id, reason)
+        if manifest is None or manifest.get("status") != "unavailable":
+            write_ulog_unavailable_manifest(writer.directory, artifact.run_id, reason)
     else:
-        archive_px4_ulog(px4_ulog, writer.directory, artifact.run_id)
+        try:
+            archive_px4_ulog(px4_ulog, writer.directory, artifact.run_id)
+        except ULogCaptureError:
+            manifest = read_ulog_manifest(writer.directory, artifact.run_id)
+            if manifest is None or manifest.get("status") != "captured":
+                raise
     if world_recorder is not None:
         world_recorder.record_mission_outcome(artifact, artifact_path=str(artifact_path))
     return artifact_path

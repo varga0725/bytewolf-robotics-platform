@@ -302,8 +302,10 @@ title, operator-supplied PID, or `BYTEWOLF_DEMO_SCREEN_CAPTURE_GEOMETRY=WxH+X+Y`
 (`gz sim -g`, `Xvfb`, `ffmpeg`); it never runs `xdotool windowclose` on a window
 found on the operator display. On `x11`, `BYTEWOLF_DEMO_LAUNCH_GZ_GUI` defaults
 to `0`; set it to `1` only to attach a new `gz sim -g` on that display. On
-`xvfb`, launch defaults to `1`. `xvfb` starts `Xvfb` on
-`BYTEWOLF_DEMO_XVFB_DISPLAY_NUM` and records the same display. Capture runs
+`xvfb`, launch defaults to `1`. `xvfb` starts `Xvfb` on `BYTEWOLF_DEMO_XVFB_DISPLAY_NUM`, launches `gz sim -g`
+with `GZ_IP`/`PX4_GZ_STANDALONE`, and records `1280x720+0+0` when `xdotool` is
+absent. Evidence records `gz_gui_pid` and `gz_gui_alive_at_stop`; status cannot
+be `captured` if the GUI process was not alive at stop. Capture runs
 from before arm until disarm (cap:
 `BYTEWOLF_DEMO_SCREEN_CAPTURE_MAX_S`). Missing tools set `screen_capture.status`
 to `skipped` without failing the flight; trajectory PNG and PX4 ULog are mandatory

@@ -35,7 +35,7 @@ async def execute_demo_waypoint_mission(
     landing_timeout_s = min(config.landing_timeout_s, adapter._runtime_policy.landing_confirmation_timeout_s)
     rtl_wait_cap_s = max(config.rtl_timeout_s, landing_timeout_s + action_timeout_s + 5.0)
     adapter._demo_mission_items_reached = []
-    adapter._start_peak_altitude_tracking()
+    await adapter._start_peak_altitude_tracking()
     try:
         plan = _build_mission_plan(
             home,

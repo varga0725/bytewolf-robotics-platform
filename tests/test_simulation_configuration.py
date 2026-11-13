@@ -57,6 +57,8 @@ class SimulationConfigurationTests(unittest.TestCase):
         launcher = (ROOT / "simulation/gazebo/launch/run_px4_gazebo.zsh").read_text()
 
         self.assertIn('PX4_RUN_DIR=${PX4_RUN_DIR:-$(mktemp -d', launcher)
+        self.assertIn('BYTEWOLF_PX4_RUN_DIR', launcher)
+        self.assertIn('cd "$PX4_RUN_DIR" && pwd', launcher)
         self.assertIn('"$PX4_BINARY" -d -w "$PX4_RUN_DIR"', launcher)
 
     def test_headless_and_validation_default_to_baylands(self) -> None:
@@ -90,6 +92,8 @@ class SimulationConfigurationTests(unittest.TestCase):
         self.assertIn("GZ_SIM_RESOURCE_PATH", launcher)
         self.assertIn("GZ_IP=127.0.0.1", launcher)
         self.assertIn("trap cleanup EXIT INT TERM", launcher)
+        self.assertIn("BYTEWOLF_PX4_RUN_DIR", launcher)
+        self.assertIn('cd "$PX4_RUN_DIR" && pwd', launcher)
 
     def test_headless_launcher_runs_px4_without_an_interactive_shell(self) -> None:
         """A piped headless process must not emit an unbounded PX4 prompt stream."""

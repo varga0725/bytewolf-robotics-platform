@@ -66,6 +66,35 @@ class WindowCleanupSafetyTests(unittest.TestCase):
                 for call in run_mock.call_args_list:
                     self.assertNotIn("windowclose", call.args[0])
 
+    def test_xvfb_uses_default_geometry_without_xdotool(self) -> None:
+        from brain.mission.demo_visual_capture import DemoFlightScreenCapture
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "clip.mp4"
+            with patch("brain.mission.demo_visual_capture.shutil.which") as which:
+                which.side_effect = lambda name: f"/usr/bin/{name}" if name in {"ffmpeg", "Xvfb", "gz"} else None
+                with patch("brain.mission.demo_visual_capture.subprocess.Popen") as popen:
+                    popen.side_effect = lambda *args, **kwargs: MagicMock(pid=4242, poll=MagicMock(return_value=None))
+                    with patch("brain.mission.demo_visual_capture._wait_s"):
+                        capture = DemoFlightScreenCapture(output, mode="xvfb")
+                        result = capture.start()
+            self.assertEqual(result.status, "recording")
+
+    def test_stop_marks_failed_when_gz_gui_not_alive(self) -> None:
+        from brain.mission.demo_visual_capture import DemoFlightScreenCapture, _CaptureSession
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "x.mp4"
+            output.write_bytes(b"video")
+            capture = DemoFlightScreenCapture(output, mode="xvfb")
+            capture._session = _CaptureSession(launched_gz_gui=True, launched_gz_pid=999_999)
+            capture._ffmpeg = MagicMock(poll=MagicMock(return_value=0))
+            capture._started_at = 0.0
+            with patch("brain.mission.demo_visual_capture._process_is_alive", return_value=False):
+                result = capture.stop()
+            self.assertEqual(result.status, "failed")
+            self.assertFalse(result.gz_gui_alive_at_stop)
+
     def test_launch_gz_gui_defaults_x11_off_xvfb_on(self) -> None:
         from brain.mission.demo_visual_capture import _should_launch_gz_gui
 
