@@ -25,6 +25,13 @@ from simulation.scenarios.scenarios import (
 )
 
 
+def _alive_sitl_process(*, pid: int = 4242) -> Mock:
+    process = Mock(pid=pid)
+    process.poll.return_value = None
+    process.stderr = Mock()
+    return process
+
+
 def _write_px4_wind_sources(root: Path) -> Path:
     """Write the smallest PX4 tree a wind fixture can be rendered from."""
     worlds = root / "Tools/simulation/gz/worlds"
@@ -151,7 +158,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
         defaults: dict[str, object] = {
             "command_runner": Mock(return_value=Mock(returncode=0, stdout="", stderr="")),
             "now": lambda: datetime(2026, 7, 17, 8, 0, tzinfo=UTC),
-            "process_starter": Mock(return_value=Mock(pid=4242)),
+            "process_starter": Mock(return_value=_alive_sitl_process()),
             "terminate_process": Mock(),
             "sitl_command": ("launcher",),
             "sleep": Mock(),
@@ -180,7 +187,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
     def test_hands_the_fixture_to_the_launcher(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            starter = Mock(return_value=Mock(pid=4242))
+            starter = Mock(return_value=_alive_sitl_process())
             runner = self._runner(root, process_starter=starter)
 
             runner.run((self._WIND_SCENARIO,), output_directory=root / "out")
@@ -194,7 +201,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
     def test_a_still_air_scenario_neither_builds_a_fixture_nor_claims_wind(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            starter = Mock(return_value=Mock(pid=4242))
+            starter = Mock(return_value=_alive_sitl_process())
             runner = self._runner(root, process_starter=starter)
 
             report_path = runner.run((P0_V2_SCENARIOS[1],), output_directory=root / "out")
@@ -485,6 +492,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
 
     def test_runner_starts_a_plain_launcher_process_and_cleans_it_up(self) -> None:
         sitl_process = Mock(pid=90210)
+        sitl_process.poll.return_value = None
         process_starter = Mock(return_value=sitl_process)
         command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
         readiness_check = Mock(return_value=True)
@@ -507,15 +515,15 @@ class WindScenarioEvidenceTests(unittest.TestCase):
         self.assertNotIn("start_new_session", process_starter.call_args.kwargs)
         self.assertIs(process_starter.call_args.kwargs["stdin"], subprocess.DEVNULL)
         self.assertIs(process_starter.call_args.kwargs["stdout"], subprocess.DEVNULL)
-        self.assertIs(process_starter.call_args.kwargs["stderr"], subprocess.DEVNULL)
+        self.assertIs(process_starter.call_args.kwargs["stderr"], subprocess.PIPE)
         readiness_check.assert_called_once_with(sitl_process)
-        sleep.assert_called_once_with(45.0)
+        self.assertTrue(sleep.called)
         terminate_process.assert_called_once_with(90210)
 
     def test_p0_v2_runs_each_mavsdk_scenario_with_a_fresh_sitl_lifecycle(self) -> None:
         """Disruptive P0.v2 missions must not inherit a previous vehicle state."""
-        first_process = Mock(pid=90210)
-        second_process = Mock(pid=90211)
+        first_process = _alive_sitl_process(pid=90210)
+        second_process = _alive_sitl_process(pid=90211)
         process_starter = Mock(side_effect=(first_process, second_process))
         command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
         terminate_process = Mock()
@@ -544,7 +552,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
 
     def test_p0_v2_fresh_sitl_start_failure_blocks_only_its_scenario(self) -> None:
         """One failed disposable SITL must not hide independent scenario evidence."""
-        working_process = Mock(pid=90211)
+        working_process = _alive_sitl_process(pid=90211)
         process_starter = Mock(side_effect=(OSError("launcher unavailable"), OSError("launcher unavailable"), working_process))
         command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
         scenarios = (
@@ -568,7 +576,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
         self.assertEqual(command_runner.call_count, 1)
 
     def test_runner_reports_readiness_failure_and_still_cleans_up_sitl(self) -> None:
-        sitl_process = Mock(pid=90210)
+        sitl_process = _alive_sitl_process(pid=90210)
         command_runner = Mock()
         terminate_process = Mock()
         runner = ScenarioRunner(
@@ -590,7 +598,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
         terminate_process.assert_called_once_with(90210)
 
     def test_runner_retries_a_transient_sitl_start_failure(self) -> None:
-        sitl_process = Mock(pid=90210)
+        sitl_process = _alive_sitl_process(pid=90210)
         process_starter = Mock(side_effect=(OSError(1, "Operation not permitted"), sitl_process))
         command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
         sleep = Mock()
@@ -627,6 +635,69 @@ class WindScenarioEvidenceTests(unittest.TestCase):
 
         self.assertNotIn("process_group", starter.call_args.kwargs)
         self.assertNotIn("start_new_session", starter.call_args.kwargs)
+
+    def test_runner_blocks_when_sitl_launcher_exits_during_startup(self) -> None:
+        sitl_process = Mock(pid=90210)
+        sitl_process.poll.side_effect = [2]
+        sitl_process.stderr = Mock()
+        sitl_process.stderr.read.return_value = "qt@5 missing\n"
+        command_runner = Mock()
+        runner = ScenarioRunner(
+            command_runner=command_runner,
+            sitl_command=("launch",),
+            process_starter=Mock(return_value=sitl_process),
+            readiness_check=Mock(return_value=True),
+            terminate_process=Mock(),
+            sleep=Mock(),
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            report = json.loads(runner.run(P0_SCENARIOS[:1], Path(temporary_directory)).read_text())
+
+        self.assertEqual(command_runner.call_count, 0)
+        self.assertEqual(report["results"][0]["status"], "blocked")
+        self.assertIn("sitl_launch_failed", report["results"][0]["stderr"])
+        self.assertIn("exit_code=2", report["results"][0]["stderr"])
+
+    def test_waypoint_timeout_scenario_fails_on_connect_timeout_despite_matching_returncode(self) -> None:
+        scenario = next(item for item in P0_SCENARIOS if item.identifier == "waypoint-timeout-fallback")
+        completed = Mock(return_value=Mock(returncode=1, stdout="", stderr="TimeoutError"))
+
+        with TemporaryDirectory() as temporary_directory:
+            artifact_directory = (
+                Path(temporary_directory) / "mission-artifacts" / scenario.identifier
+            )
+            artifact_directory.mkdir(parents=True)
+            artifact_directory.joinpath("dead.json").write_text(
+                json.dumps({"events": [], "outcome": "failed", "failure_reason": "TimeoutError: "}),
+                encoding="utf-8",
+            )
+            report = json.loads(
+                ScenarioRunner(command_runner=completed).run(
+                    (scenario,), Path(temporary_directory)
+                ).read_text()
+            )
+
+        self.assertEqual(report["results"][0]["status"], "failed")
+
+    def test_report_exit_code_is_nonzero_when_overall_status_failed(self) -> None:
+        from simulation.scenarios.report_status import report_exit_code
+
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "p0.json"
+            path.write_text(json.dumps({"overall_status": "failed"}), encoding="utf-8")
+            self.assertEqual(report_exit_code(path), 1)
+
+    def test_main_exits_nonzero_when_matrix_fails(self) -> None:
+        from simulation.scenarios import scenarios as module
+
+        with TemporaryDirectory() as temporary_directory:
+            report_path = Path(temporary_directory) / "p0.json"
+            report_path.write_text(json.dumps({"overall_status": "failed"}), encoding="utf-8")
+            with patch.object(module.ScenarioRunner, "run", return_value=report_path):
+                with self.assertRaises(SystemExit) as error:
+                    module.main([])
+            self.assertEqual(error.exception.code, 1)
 
     def test_runner_marks_a_nonzero_process_as_failed_without_stopping_matrix(self) -> None:
         command_runner = Mock(

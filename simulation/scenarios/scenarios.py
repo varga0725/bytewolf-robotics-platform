@@ -18,6 +18,9 @@ from typing import Protocol
 from uuid import uuid4
 
 from simulation.gazebo.fault_injection import FaultInjectionError, apply_px4_parameters
+from simulation.scenarios.report_status import report_exit_code
+from simulation.scenarios.scenario_contract import scenario_contract_violation
+from simulation.scenarios.sitl_startup import wait_for_sitl_launch
 from simulation.gazebo.wind_probe import GazeboPoseObserver, expected_hover_tilt_deg
 from simulation.gazebo.wind_profiles import (
     SUPPORTED_WIND_SPEEDS_M_S,
@@ -352,8 +355,12 @@ class ScenarioRunner:
         sitl_process: ManagedProcess | None = None
         try:
             sitl_process = self._start_sitl()
-            if sitl_process is not None:
-                self._sleep(self._startup_wait_s)
+            launch_failure = self._sitl_launch_failure(sitl_process)
+            if launch_failure is not None:
+                return tuple(
+                    self._blocked_result(scenario, launch_failure, output_directory)
+                    for scenario in scenarios
+                )
             if sitl_process is not None and not self._readiness_check(sitl_process):
                 return tuple(
                     self._blocked_result(scenario, "SITL readiness check failed.", output_directory)
@@ -381,8 +388,9 @@ class ScenarioRunner:
         sitl_process: ManagedProcess | None = None
         try:
             sitl_process = self._start_sitl(environment)
-            if sitl_process is not None:
-                self._sleep(self._startup_wait_s)
+            launch_failure = self._sitl_launch_failure(sitl_process)
+            if launch_failure is not None:
+                return self._blocked_result(scenario, launch_failure, output_directory, wind)
             if sitl_process is not None and not self._readiness_check(sitl_process):
                 return self._blocked_result(scenario, "SITL readiness check failed.", output_directory, wind)
             try:
@@ -656,13 +664,22 @@ class ScenarioRunner:
                     # fills, preventing MAVLink from ever becoming available.
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                 )
             except OSError:
                 if attempt + 1 == self._sitl_start_attempts:
                     raise
                 self._sleep(self._sitl_retry_delay_s)
         raise AssertionError("The SITL startup retry loop must return or raise.")
+
+    def _sitl_launch_failure(self, process: ManagedProcess | None) -> str | None:
+        if process is None:
+            return None
+        return wait_for_sitl_launch(
+            process,
+            startup_wait_s=self._startup_wait_s,
+            sleep=self._sleep,
+        )
 
     def _stop_sitl(self, process: ManagedProcess) -> None:
         """Terminate the launcher; its trap reaps both PX4 and Gazebo children."""
@@ -697,7 +714,7 @@ class ScenarioRunner:
         artifact_directory: Path,
         status: str | None = None,
     ) -> ScenarioResult:
-        return ScenarioResult(
+        result = ScenarioResult(
             identifier=scenario.identifier,
             module=scenario.module,
             command=command,
@@ -712,6 +729,15 @@ class ScenarioRunner:
             expected_returncode=scenario.expected_returncode,
             artifact_directory=str(artifact_directory),
         )
+        violation = scenario_contract_violation(
+            fallback_expectation=scenario.fallback_expectation,
+            stdout=stdout,
+            stderr=stderr,
+            artifact_directory=artifact_directory,
+        )
+        if violation and result.status == "passed":
+            return replace(result, status="failed", stderr=f"{stderr}\n{violation}".strip())
+        return result
 
 
 def _with_wind(result: ScenarioResult, wind: WindEvidence | None) -> ScenarioResult:
@@ -821,6 +847,7 @@ def main(arguments: Iterable[str] | None = None) -> None:
             minimum_success_rate=parsed.minimum_success_rate,
         )
     print(f"Headless P0 report: {report_path}")
+    sys.exit(report_exit_code(report_path))
 
 
 if __name__ == "__main__":
