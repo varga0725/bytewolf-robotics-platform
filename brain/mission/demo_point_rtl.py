@@ -108,7 +108,7 @@ def demo_point_rtl_evidence_document(
     baseline_px4_commit: str,
     baseline_gazebo_version: str,
     simulator_name: str,
-    sitl_verification: dict[str, str],
+    sitl_verification: dict[str, object],
     positions: list[dict[str, float]],
     started_at: datetime | None = None,
 ) -> dict[str, object]:

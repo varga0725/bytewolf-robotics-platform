@@ -194,7 +194,7 @@ def _maybe_write_acceptance_evidence(
     outcome: str,
     endpoint: str,
     positions: list[dict[str, object]],
-    sitl_verification: dict[str, str],
+    sitl_verification: dict[str, object],
 ) -> None:
     if os.environ.get("BYTEWOLF_SITL_ACCEPTANCE") != "1":
         return
