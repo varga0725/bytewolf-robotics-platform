@@ -1,6 +1,7 @@
 """MAVSDK adapter for executing an approved, bounded mission on PX4."""
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from math import cos, isfinite, radians
@@ -531,8 +532,6 @@ class MavsdkMissionAdapter:
     def _relative_position_sample(
         target: GlobalPosition, home: GlobalPosition, *, label: str
     ) -> dict[str, float]:
-        from brain.navigation.waypoints import horizontal_distance_m
-
         north = (target.latitude_deg - home.latitude_deg) * 111_000.0
         east = (target.longitude_deg - home.longitude_deg) * 111_000.0 * max(
             0.1, abs(cos(radians(home.latitude_deg)))
@@ -591,11 +590,50 @@ class MavsdkMissionAdapter:
                 pass
         return self._safe_record(execution, MissionPhase.FAILED)
 
+    async def _latest_telemetry_sample(
+        self, stream_factory: Callable[[], AsyncIterator[object]], *, timeout_s: float
+    ) -> object | None:
+        async def _read_one() -> object | None:
+            stream = stream_factory() if callable(stream_factory) else stream_factory
+            async for value in stream:
+                return value
+            return None
+
+        try:
+            return await asyncio.wait_for(_read_one(), timeout=timeout_s)
+        except (TimeoutError, asyncio.TimeoutError):
+            return None
+
+    async def _confirmed_on_ground(self, *, timeout_s: float = 2.0) -> bool | None:
+        """Return whether the vehicle is on the ground, or None when telemetry is inconclusive."""
+        in_air = await self._latest_telemetry_sample(self._drone.telemetry.in_air, timeout_s=timeout_s)
+        if in_air is not None:
+            return not bool(in_air)
+        landed = await self._latest_telemetry_sample(self._drone.telemetry.landed_state, timeout_s=timeout_s)
+        if landed is None:
+            return None
+        state_name = getattr(landed, "name", str(landed))
+        if state_name == "ON_GROUND":
+            return True
+        if state_name in {"IN_AIR", "FLYING", "TAKING_OFF"}:
+            return False
+        return None
+
     async def _demo_disarm_when_landed(self, landing_timeout_s: float, action_timeout_s: float) -> None:
-        await asyncio.wait_for(
-            self.wait_until_landed(landing_timeout_s, require_airborne_observation=True),
-            timeout=landing_timeout_s + 1.0,
-        )
+        reason: str | None = None
+        sample_timeout_s = min(2.0, landing_timeout_s)
+        try:
+            await asyncio.wait_for(
+                self.wait_until_landed(landing_timeout_s, require_airborne_observation=True),
+                timeout=landing_timeout_s + 1.0,
+            )
+        except (TimeoutError, asyncio.TimeoutError):
+            ground = await self._confirmed_on_ground(timeout_s=sample_timeout_s)
+            if ground is not True:
+                if ground is False:
+                    raise RuntimeError("Demo disarm refused: vehicle still reports in flight after landing wait.")
+                raise RuntimeError("Demo disarm refused: landing could not be confirmed.")
+            reason = "disarm without prior in-air observation after landing wait timed out"
 
         async def _wait_not_in_air() -> None:
             async for in_air in self._drone.telemetry.in_air():
@@ -603,7 +641,28 @@ class MavsdkMissionAdapter:
                     return
             raise RuntimeError("in_air telemetry ended before confirming landing.")
 
-        await asyncio.wait_for(_wait_not_in_air(), timeout=landing_timeout_s)
+        try:
+            await asyncio.wait_for(_wait_not_in_air(), timeout=landing_timeout_s)
+        except (TimeoutError, asyncio.TimeoutError):
+            ground = await self._confirmed_on_ground(timeout_s=sample_timeout_s)
+            if ground is not True:
+                if ground is False:
+                    raise RuntimeError("Demo disarm refused: in_air stream stalled while still airborne.")
+                raise RuntimeError("Demo disarm refused: in_air stream stalled without ground confirmation.")
+            reason = reason or "disarm after in_air stream stalled with on-ground telemetry"
+
+        ground = await self._confirmed_on_ground(timeout_s=sample_timeout_s)
+        if ground is False:
+            raise RuntimeError("Demo disarm refused: vehicle still in_air.")
+        if ground is None:
+            in_air = await self._latest_telemetry_sample(self._drone.telemetry.in_air, timeout_s=1.0)
+            if in_air is True:
+                raise RuntimeError("Demo disarm refused: vehicle still in_air.")
+
+        if reason:
+            logging.getLogger(__name__).info("demo disarm: %s", reason)
+            self._demo_disarm_reason = reason
+
         await asyncio.wait_for(self._drone.action.disarm(), timeout=action_timeout_s)
 
     async def _require_preflight(self) -> None:

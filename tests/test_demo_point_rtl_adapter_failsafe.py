@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import unittest
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -130,6 +132,56 @@ class DemoAdapterFailsafeTests(unittest.IsolatedAsyncioTestCase):
                 await adapter.execute_demo_point_rtl_mission(MagicMock(waypoints=()))
 
         adapter._drone.action.arm.assert_not_awaited()
+
+
+class DemoDisarmWhenLandedTests(unittest.IsolatedAsyncioTestCase):
+    def _adapter(self) -> MavsdkMissionAdapter:
+        adapter = MavsdkMissionAdapter(MagicMock(), safety_profile=load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH))
+        adapter._drone = MagicMock()
+        adapter._drone.action.disarm = AsyncMock()
+        return adapter
+
+    @staticmethod
+    def _in_air_stream(*values: bool) -> MagicMock:
+        def _factory() -> AsyncIterator[bool]:
+            async def _stream() -> AsyncIterator[bool]:
+                for value in values:
+                    yield value
+                await asyncio.Future()
+
+            return _stream()
+
+        return MagicMock(side_effect=_factory)
+
+    async def test_disarms_when_in_air_replays_false_then_hangs(self) -> None:
+        adapter = self._adapter()
+        adapter.wait_until_landed = AsyncMock(side_effect=TimeoutError())
+        adapter._drone.telemetry.in_air = self._in_air_stream(False)
+        adapter._drone.telemetry.landed_state = MagicMock(side_effect=lambda: self._hang_async())
+
+        await adapter._demo_disarm_when_landed(0.05, 1.0)
+
+        adapter._drone.action.disarm.assert_awaited_once()
+        self.assertIsNotNone(getattr(adapter, "_demo_disarm_reason", None))
+
+    @staticmethod
+    def _hang_async() -> AsyncIterator[object]:
+        async def _stream() -> AsyncIterator[object]:
+            if False:
+                yield None
+            await asyncio.Future()
+
+        return _stream()
+
+    async def test_refuses_disarm_when_in_air_stays_true(self) -> None:
+        adapter = self._adapter()
+        adapter.wait_until_landed = AsyncMock(side_effect=TimeoutError())
+        adapter._drone.telemetry.in_air = self._in_air_stream(True)
+
+        with self.assertRaises(RuntimeError):
+            await adapter._demo_disarm_when_landed(0.05, 1.0)
+
+        adapter._drone.action.disarm.assert_not_awaited()
 
 
 if __name__ == "__main__":
