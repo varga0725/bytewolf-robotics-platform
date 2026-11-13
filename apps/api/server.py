@@ -20,6 +20,7 @@ from apps.api.command_gateway import AgentReply, DashboardCommandGateway, Dashbo
 from apps.api.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.api.demo_point_mission import DemoPointRtlError, review_demo_point_rtl
+from apps.api.demo_waypoint_mission import DemoWaypointMissionError, review_demo_waypoint_mission
 from apps.api.point_mission import PointMissionError, review_point_mission, review_survey_mission
 from apps.agent.pi_conversation import PiConversation
 from apps.agent.pi_memory_extractor import extract_memory_delta
@@ -319,6 +320,21 @@ def create_app(
         try:
             mission = review_demo_point_rtl()
         except DemoPointRtlError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        reply = _handle_gateway(
+            lambda: command_gateway.propose(
+                session, mission.plan_id, f"{mission.summary} Indítsam?"
+            )
+        )
+        return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
+
+    @app.post("/api/v1/missions/demo-waypoint-mission")
+    def demo_waypoint_mission(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
+        """Review the multi-waypoint Monday demo and offer it for explicit approval (no flight)."""
+        session = _session(x_bytewolf_session)
+        try:
+            mission = review_demo_waypoint_mission()
+        except DemoWaypointMissionError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         reply = _handle_gateway(
             lambda: command_gateway.propose(

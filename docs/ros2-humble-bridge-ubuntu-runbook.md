@@ -266,6 +266,42 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/plans/approve \
 Optional waypoint overrides use `BYTEWOLF_DEMO_POINT_NORTH_M`,
 `BYTEWOLF_DEMO_POINT_EAST_M`, and `BYTEWOLF_DEMO_POINT_ALTITUDE_M`.
 
+## Monday demo SITL acceptance (`demo-waypoint-mission`)
+
+Multi-waypoint loop for Monday: takeoff, MAVSDK Mission upload (`start_mission`,
+AUTO mission items, `set_return_to_launch_after_mission(true)`), RTL, land, disarm.
+SafetyGate validates every item before upload; multi-signal SITL verification runs
+before arming (same rules as demo-point-rtl).
+
+### Run the acceptance gate (3 consecutive clean runs)
+
+```bash
+cd ~/bytewolf-robotics/platform
+export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
+export BYTEWOLF_SITL_ACCEPTANCE=1
+.venv/bin/python -m brain.cli.acceptance_demo_waypoint_mission --runs 3
+```
+
+Evidence lands under `simulation/artifacts/demo-waypoint-mission/` (`latest.json`,
+per-run JSON, `trajectory-*.png`, optional `screen-*.mp4` when `xvfb-run` and
+`ffmpeg` exist). Summary: `acceptance-latest.json`.
+
+### Control Room review / approve
+
+```bash
+export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
+.venv/bin/python -m apps.api.server
+SESSION=<dashboard-session-uuid>
+curl -s -X POST http://127.0.0.1:8080/api/v1/missions/demo-waypoint-mission \
+  -H "X-ByteWolf-Session: ${SESSION}"
+curl -s -X POST http://127.0.0.1:8080/api/v1/plans/approve \
+  -H "Content-Type: application/json" -H "X-ByteWolf-Session: ${SESSION}" \
+  -d '{"plan_id":"<plan-id-from-review>"}'
+```
+
+Tune the default square loop with `BYTEWOLF_DEMO_WAYPOINT_ALTITUDE_M`,
+`BYTEWOLF_DEMO_WAYPOINT_LEG_M`, and `BYTEWOLF_DEMO_WAYPOINT_COUNT` (1–11).
+
 ## What this host cannot do
 
 No physical vehicle is attached, and none is authorised from here. USB devices

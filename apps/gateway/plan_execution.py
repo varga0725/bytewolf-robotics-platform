@@ -66,6 +66,11 @@ def _validate_plan_before_spawn(plan_path: Path) -> None:
     if plan_path.name.endswith(".demo-point-rtl.json"):
         require_matching_demo_approval(plan_path)
         return
+    if plan_path.name.endswith(".demo-waypoint-mission.json"):
+        from brain.mission.demo_waypoint_reviewed_plan import require_matching_demo_waypoint_approval
+
+        require_matching_demo_waypoint_approval(plan_path)
+        return
     from brain.cli.fly_nim_mission import _load_approved_plan
     from brain.mission_spec.validation import load_mission_safety_profile
     from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH
@@ -80,6 +85,18 @@ def _execution_command(plan_path: Path) -> list[str]:
             sys.executable,
             "-m",
             "brain.cli.fly_demo_point_rtl",
+            "--deployment-mode",
+            "simulation",
+            "--plan-file",
+            str(plan_path),
+            "--endpoint",
+            endpoint,
+        ]
+    if plan_path.name.endswith(".demo-waypoint-mission.json"):
+        return [
+            sys.executable,
+            "-m",
+            "brain.cli.fly_demo_waypoint_mission",
             "--deployment-mode",
             "simulation",
             "--plan-file",

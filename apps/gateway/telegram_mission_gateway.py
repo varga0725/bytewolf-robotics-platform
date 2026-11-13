@@ -34,7 +34,9 @@ from brain.telemetry.link_lease import (
 
 _TELEGRAM_API = "https://api.telegram.org"
 _MAX_MESSAGE_CHARS = 2_000
-_PLAN_NAME = re.compile(r"^[0-9a-f-]{36}\.(?:mission-spec|demo-point-rtl)\.json$")
+_PLAN_NAME = re.compile(
+    r"^[0-9a-f-]{36}\.(?:mission-spec|demo-point-rtl|demo-waypoint-mission)\.json$"
+)
 _DIRECT_VERTICAL_FLIGHT = re.compile(r"\b(emelkedj|szállj\s+fel|szallj\s+fel|lebegj|szállj\s+le|szallj\s+le)\b", re.IGNORECASE)
 _DEFAULT_PLAN_DIRECTORY = Path("simulation/artifacts/agent-missions")
 # The flying subprocess's own account of itself. It used to go to DEVNULL, so a
