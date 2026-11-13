@@ -18,6 +18,13 @@ _DEFAULT_WM_CLASS = "gz-sim-gui"
 _DEFAULT_MAX_CAPTURE_S = 600.0
 
 
+def _wait_s(seconds: float) -> None:
+    """Block the current thread without touching the asyncio event loop."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+
+
 @dataclass
 class CaptureResult:
     status: str
@@ -35,10 +42,10 @@ class CaptureResult:
 
 @dataclass
 class _CaptureSession:
-    opened_window_ids: list[str] = field(default_factory=list)
     child_processes: list[subprocess.Popen[Any]] = field(default_factory=list)
     xvfb_display: str | None = None
     launched_gz_gui: bool = False
+    launched_gz_pid: int | None = None
 
     def cleanup(self) -> None:
         for process in reversed(self.child_processes):
@@ -49,16 +56,6 @@ class _CaptureSession:
                 except subprocess.TimeoutExpired:
                     process.kill()
         self.child_processes.clear()
-        xdotool = shutil.which("xdotool")
-        for window_id in self.opened_window_ids:
-            if xdotool is None:
-                continue
-            subprocess.run(
-                [xdotool, "windowclose", window_id],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
 
 
 def resolve_screen_capture_mode(cli_value: str | None) -> str | None:
@@ -161,12 +158,13 @@ class DemoFlightScreenCapture:
         display = os.environ.get("DISPLAY")
         if not display:
             return None
-        if _should_launch_gz_gui():
+        if _should_launch_gz_gui("x11"):
             process = _launch_gz_gui_client(display)
             if process is not None:
                 self._session.child_processes.append(process)
                 self._session.launched_gz_gui = True
-                time.sleep(2.0)
+                self._session.launched_gz_pid = process.pid
+                _wait_s(2.0)
         region = _resolve_window_region(self._session, display=display)
         if region is None:
             return None
@@ -188,13 +186,14 @@ class DemoFlightScreenCapture:
             return None
         self._session.child_processes.append(xvfb_process)
         self._session.xvfb_display = display
-        time.sleep(0.5)
-        if _should_launch_gz_gui():
+        _wait_s(0.5)
+        if _should_launch_gz_gui("xvfb"):
             process = _launch_gz_gui_client(display)
             if process is not None:
                 self._session.child_processes.append(process)
                 self._session.launched_gz_gui = True
-                time.sleep(2.0)
+                self._session.launched_gz_pid = process.pid
+                _wait_s(2.0)
         region = _resolve_window_region(self._session, display=display)
         if region is None:
             geometry = os.environ.get("BYTEWOLF_DEMO_SCREEN_CAPTURE_GEOMETRY")
@@ -213,6 +212,7 @@ def optional_screen_capture(
     geometry: str | None = None,
 ) -> Path | None:
     """Legacy short clip helper (post-run); prefer :class:`DemoFlightScreenCapture` in-flight."""
+    _ = (window_name, geometry)
     resolved = mode if mode in _VALID_MODES else resolve_screen_capture_mode(mode)
     if resolved is None:
         return None
@@ -220,16 +220,18 @@ def optional_screen_capture(
     start = capture.start()
     if start.status != "recording":
         return None
-    time.sleep(duration_s)
+    _wait_s(duration_s)
     finished = capture.stop()
     if finished.status == "captured":
         return output_path
     return None
 
 
-def _should_launch_gz_gui() -> bool:
-    raw = os.environ.get("BYTEWOLF_DEMO_LAUNCH_GZ_GUI", "1").strip().lower()
-    return raw not in {"0", "false", "no"}
+def _should_launch_gz_gui(mode: str) -> bool:
+    override = os.environ.get("BYTEWOLF_DEMO_LAUNCH_GZ_GUI")
+    if override is not None:
+        return override.strip().lower() not in {"0", "false", "no"}
+    return mode == "xvfb"
 
 
 def _launch_gz_gui_client(display: str) -> subprocess.Popen[Any] | None:
@@ -254,18 +256,22 @@ def _resolve_window_region(session: _CaptureSession, *, display: str) -> tuple[i
     parsed = _parse_geometry(geometry) if geometry else None
     if parsed is not None:
         return parsed
+    if session.launched_gz_pid is not None:
+        region = _locate_window_by_pid(session.launched_gz_pid, display=display)
+        if region is not None:
+            return region
     pid_raw = os.environ.get("BYTEWOLF_DEMO_SCREEN_CAPTURE_GZ_PID")
     if pid_raw:
-        region = _locate_window_by_pid(int(pid_raw))
+        region = _locate_window_by_pid(int(pid_raw), display=display)
         if region is not None:
             return region
     title = os.environ.get("BYTEWOLF_DEMO_SCREEN_CAPTURE_WINDOW_TITLE")
     if title:
-        region = _locate_window_by_exact_title(title)
+        region = _locate_window_by_exact_title(title, display=display)
         if region is not None:
             return region
     wm_class = os.environ.get("BYTEWOLF_DEMO_SCREEN_CAPTURE_WM_CLASS", _DEFAULT_WM_CLASS)
-    return _locate_window_by_class(wm_class, session=session, display=display)
+    return _locate_window_by_class(wm_class, display=display)
 
 
 def _parse_geometry(value: str) -> tuple[int, int, int, int] | None:
@@ -278,7 +284,7 @@ def _parse_geometry(value: str) -> tuple[int, int, int, int] | None:
     return width, height, x_offset, y_offset
 
 
-def _locate_window_by_pid(pid: int) -> tuple[int, int, int, int] | None:
+def _locate_window_by_pid(pid: int, *, display: str) -> tuple[int, int, int, int] | None:
     xdotool = shutil.which("xdotool")
     if xdotool is None:
         return None
@@ -289,16 +295,16 @@ def _locate_window_by_pid(pid: int) -> tuple[int, int, int, int] | None:
             capture_output=True,
             text=True,
             timeout=5.0,
-            env=_display_env(),
+            env=_display_env(display),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
     if search.returncode != 0 or not search.stdout.strip():
         return None
-    return _window_geometry_from_id(search.stdout.strip().splitlines()[0])
+    return _window_geometry_from_id(search.stdout.strip().splitlines()[0], display=display)
 
 
-def _locate_window_by_exact_title(title: str) -> tuple[int, int, int, int] | None:
+def _locate_window_by_exact_title(title: str, *, display: str) -> tuple[int, int, int, int] | None:
     xdotool = shutil.which("xdotool")
     if xdotool is None:
         return None
@@ -309,19 +315,18 @@ def _locate_window_by_exact_title(title: str) -> tuple[int, int, int, int] | Non
             capture_output=True,
             text=True,
             timeout=5.0,
-            env=_display_env(),
+            env=_display_env(display),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
     if search.returncode != 0 or not search.stdout.strip():
         return None
-    return _window_geometry_from_id(search.stdout.strip().splitlines()[0])
+    return _window_geometry_from_id(search.stdout.strip().splitlines()[0], display=display)
 
 
 def _locate_window_by_class(
     wm_class: str,
     *,
-    session: _CaptureSession,
     display: str,
 ) -> tuple[int, int, int, int] | None:
     xdotool = shutil.which("xdotool")
@@ -342,14 +347,13 @@ def _locate_window_by_class(
     if search.returncode != 0 or not search.stdout.strip():
         return None
     window_id = search.stdout.strip().splitlines()[0]
-    session.opened_window_ids.append(window_id)
-    return _window_geometry_from_id(window_id, env=env)
+    return _window_geometry_from_id(window_id, display=display)
 
 
 def _window_geometry_from_id(
     window_id: str,
     *,
-    env: dict[str, str] | None = None,
+    display: str,
 ) -> tuple[int, int, int, int] | None:
     xdotool = shutil.which("xdotool")
     if xdotool is None:
@@ -361,7 +365,7 @@ def _window_geometry_from_id(
             capture_output=True,
             text=True,
             timeout=5.0,
-            env=env or _display_env(),
+            env=_display_env(display),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

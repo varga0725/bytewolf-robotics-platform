@@ -176,14 +176,14 @@ async def run(arguments: argparse.Namespace) -> None:
                     max_duration_s=max_capture_s,
                     evidence_directory=evidence_directory,
                 )
-                screen_capture_result = flight_capture.start().as_dict()
+                screen_capture_result = (await asyncio.to_thread(flight_capture.start)).as_dict()
         try:
             execution = await execute_demo_waypoint_mission(adapter, config)
         finally:
             sampler_stop.set()
             await sampler_task
             if flight_capture is not None:
-                screen_capture_result = flight_capture.stop().as_dict()
+                screen_capture_result = (await asyncio.to_thread(flight_capture.stop)).as_dict()
         validate_demo_waypoint_mission_progress(
             execution,
             items_reached=tuple(getattr(adapter, "_demo_mission_items_reached", ())),
@@ -236,7 +236,7 @@ async def run(arguments: argparse.Namespace) -> None:
             arguments.px4_ulog,
             peak,
         )
-        if sitl_acceptance and safety_decision == "approved":
+        if sitl_acceptance and safety_decision == "approved" and outcome != "completed":
             _write_failed_acceptance_record(
                 execution=recorded_execution(adapter, execution),
                 config=config,

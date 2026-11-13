@@ -287,15 +287,22 @@ PLAN=simulation/artifacts/agent-missions/<mission-id>.demo-waypoint-mission.json
   --record-operator-approval --confirm-plan-execution
 ```
 
+The `.approval.json` sidecar is an integrity check (plan SHA-256 match), not a
+standalone authorisation. Physical actuation stays locked; simulation-only
+deployment checks and `SafetyGate` remain the real safety layer.
+
 Evidence lands under `simulation/artifacts/demo-waypoint-mission/` (`latest.json`,
 per-run JSON, `trajectory-*.png` on every run, optional `screen-*.mp4` when
 `ffmpeg` is available). Pick the capture backend with
 `BYTEWOLF_DEMO_SCREEN_CAPTURE_MODE=x11|xvfb` or
 `--screen-capture-mode x11|xvfb` on `fly_demo_waypoint_mission` (CLI wins).
 `x11` uses the current `DISPLAY`, grabs only the gz GUI window (WM_CLASS, exact
-title, PID, or `BYTEWOLF_DEMO_SCREEN_CAPTURE_GEOMETRY=WxH+X+Y`) — never full
-desktop. Optional `BYTEWOLF_DEMO_LAUNCH_GZ_GUI=1` runs `gz sim -g` on that
-display and closes only that process. `xvfb` starts `Xvfb` on
+title, operator-supplied PID, or `BYTEWOLF_DEMO_SCREEN_CAPTURE_GEOMETRY=WxH+X+Y`)
+— never full desktop. Cleanup terminates only child processes this tool started
+(`gz sim -g`, `Xvfb`, `ffmpeg`); it never runs `xdotool windowclose` on a window
+found on the operator display. On `x11`, `BYTEWOLF_DEMO_LAUNCH_GZ_GUI` defaults
+to `0`; set it to `1` only to attach a new `gz sim -g` on that display. On
+`xvfb`, launch defaults to `1`. `xvfb` starts `Xvfb` on
 `BYTEWOLF_DEMO_XVFB_DISPLAY_NUM` and records the same display. Capture runs
 from before arm until disarm (cap:
 `BYTEWOLF_DEMO_SCREEN_CAPTURE_MAX_S`). Missing tools set `screen_capture.status`

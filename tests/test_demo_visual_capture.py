@@ -51,5 +51,30 @@ class OptionalScreenCaptureTests(unittest.TestCase):
                 self.assertEqual(optional_screen_capture(output, mode="x11", duration_s=0.1), output)
 
 
+class WindowCleanupSafetyTests(unittest.TestCase):
+    def test_cleanup_never_uses_xdotool_windowclose(self) -> None:
+        from brain.mission.demo_visual_capture import _CaptureSession
+
+        session = _CaptureSession()
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        session.child_processes.append(proc)
+        with patch("brain.mission.demo_visual_capture.shutil.which", return_value="/usr/bin/xdotool"):
+            with patch("brain.mission.demo_visual_capture.subprocess.run") as run_mock:
+                session.cleanup()
+                for call in run_mock.call_args_list:
+                    self.assertNotIn("windowclose", call.args[0])
+
+    def test_launch_gz_gui_defaults_x11_off_xvfb_on(self) -> None:
+        from brain.mission.demo_visual_capture import _should_launch_gz_gui
+
+        env = dict(os.environ)
+        env.pop("BYTEWOLF_DEMO_LAUNCH_GZ_GUI", None)
+        with patch.dict(os.environ, env, clear=True):
+            self.assertFalse(_should_launch_gz_gui("x11"))
+            self.assertTrue(_should_launch_gz_gui("xvfb"))
+
+
 if __name__ == "__main__":
     unittest.main()
