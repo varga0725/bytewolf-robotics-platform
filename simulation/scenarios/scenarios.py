@@ -21,7 +21,7 @@ from uuid import uuid4
 from simulation.gazebo.fault_injection import FaultInjectionError, apply_px4_parameters
 from simulation.scenarios.report_status import report_exit_code
 from simulation.scenarios.scenario_contract import scenario_contract_violation
-from simulation.scenarios.sitl_startup import wait_for_sitl_launch
+from simulation.scenarios.sitl_startup import unlink_stderr_log, wait_for_sitl_launch
 from simulation.gazebo.wind_probe import GazeboPoseObserver, expected_hover_tilt_deg
 from simulation.gazebo.wind_profiles import (
     SUPPORTED_WIND_SPEEDS_M_S,
@@ -702,6 +702,7 @@ class ScenarioRunner:
         except subprocess.TimeoutExpired:
             os.kill(process.pid, signal.SIGKILL)
             process.wait(timeout=5.0)
+        unlink_stderr_log(process)
 
     def _blocked_result(
         self, scenario: Scenario, reason: str, output_directory: Path, wind: WindEvidence | None = None

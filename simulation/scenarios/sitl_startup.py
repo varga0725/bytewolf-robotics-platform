@@ -55,6 +55,13 @@ def format_sitl_launch_failed(exit_code: int, tail: str) -> str:
     return f"{SITL_LAUNCH_FAILED}: exit_code={exit_code}\n{tail}".strip()
 
 
+def unlink_stderr_log(process: object) -> None:
+    """Remove the launcher stderr log file after its tail has been consumed."""
+    log_path = getattr(process, "stderr_log_path", None)
+    if isinstance(log_path, (str, Path)):
+        Path(log_path).unlink(missing_ok=True)
+
+
 def wait_for_sitl_launch(
     process: LaunchedProcess,
     *,
