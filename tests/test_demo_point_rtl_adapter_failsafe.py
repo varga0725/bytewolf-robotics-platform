@@ -19,6 +19,18 @@ def _position(*, lat: float = 0.0, lon: float = 0.0, alt: float = 100.0) -> Magi
 
 
 class DemoAdapterFailsafeTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _in_air_stream(*values: bool) -> MagicMock:
+        def _factory() -> AsyncIterator[bool]:
+            async def _stream() -> AsyncIterator[bool]:
+                for value in values:
+                    yield value
+                await asyncio.Future()
+
+            return _stream()
+
+        return MagicMock(side_effect=_factory)
+
     def _adapter(self) -> MavsdkMissionAdapter:
         adapter = MavsdkMissionAdapter(MagicMock(), safety_profile=load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH))
         adapter._require_preflight = AsyncMock()
@@ -101,6 +113,7 @@ class DemoAdapterFailsafeTests(unittest.IsolatedAsyncioTestCase):
     async def test_takeoff_failure_after_arm_attempts_disarm(self) -> None:
         adapter = self._adapter()
         adapter._drone.action.takeoff = AsyncMock(side_effect=RuntimeError("takeoff rejected"))
+        adapter._drone.telemetry.in_air = self._in_air_stream(False)
 
         await self._run_expecting_failure(adapter, self._mission())
 

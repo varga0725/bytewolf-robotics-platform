@@ -33,6 +33,7 @@ async def execute_demo_waypoint_mission(
     armed = False
     airborne = False
     landing_timeout_s = min(config.landing_timeout_s, adapter._runtime_policy.landing_confirmation_timeout_s)
+    rtl_wait_cap_s = max(config.rtl_timeout_s, landing_timeout_s + action_timeout_s + 5.0)
     adapter._demo_mission_items_reached = []
     adapter._start_peak_altitude_tracking()
     try:
@@ -67,7 +68,7 @@ async def execute_demo_waypoint_mission(
         execution = adapter._record(execution, MissionPhase.RETURNING)
         await asyncio.wait_for(
             adapter.wait_until_landed(landing_timeout_s),
-            timeout=config.rtl_timeout_s,
+            timeout=rtl_wait_cap_s,
         )
         airborne = False
         landing_position = await adapter._global_position_sample("landing position")
@@ -81,7 +82,7 @@ async def execute_demo_waypoint_mission(
         execution = adapter._record(execution, MissionPhase.COMPLETED)
         await adapter._demo_disarm_when_landed(landing_timeout_s, action_timeout_s)
     except Exception:
-        if airborne or armed:
+        if armed:
             await _demo_recover_mission_airborne(
                 adapter,
                 execution,
@@ -90,6 +91,7 @@ async def execute_demo_waypoint_mission(
                 mission_uploaded=mission_uploaded,
                 landing_timeout_s=landing_timeout_s,
                 action_timeout_s=action_timeout_s,
+                rtl_timeout_s=config.rtl_timeout_s,
             )
         raise
     finally:
@@ -168,33 +170,45 @@ async def _wait_for_mission_items(
     progress_stall_timeout_s: float,
 ) -> None:
     last_current = -1
-    last_progress_at = asyncio.get_running_loop().time()
-    deadline = last_progress_at + mission_timeout_s
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    deadline = started_at + mission_timeout_s
+    last_progress_at = started_at
+    stream = adapter._drone.mission.mission_progress().__aiter__()
 
-    async def _consume_progress() -> None:
-        nonlocal last_current, last_progress_at
-        async for progress in adapter._drone.mission.mission_progress():
-            now = asyncio.get_running_loop().time()
-            if now > deadline:
-                raise TimeoutError("Mission progress exceeded the overall mission timeout.")
-            if progress.current != last_current:
-                adapter._demo_mission_items_reached.append(
-                    {
-                        "index": int(progress.current),
-                        "total": int(progress.total),
-                        "timestamp": datetime.now(UTC).isoformat(),
-                    }
-                )
-                last_current = int(progress.current)
-                last_progress_at = now
-            elif now - last_progress_at > progress_stall_timeout_s:
-                raise TimeoutError(
-                    f"Mission progress stalled at item {progress.current}/{progress.total}."
-                )
-            if progress.total > 0 and progress.current >= progress.total:
-                return
+    while True:
+        now = loop.time()
+        if now > deadline:
+            raise TimeoutError("Mission progress exceeded the overall mission timeout.")
+        stall_remaining = progress_stall_timeout_s - (now - last_progress_at)
+        overall_remaining = deadline - now
+        wait_s = min(stall_remaining, overall_remaining)
+        if wait_s <= 0:
+            raise TimeoutError(
+                f"Mission progress stalled at item {max(last_current, 0)}/{total_items}."
+            )
+        try:
+            progress = await asyncio.wait_for(stream.__anext__(), timeout=wait_s)
+        except StopAsyncIteration:
+            raise RuntimeError("Mission progress stream ended before completion.") from None
+        except asyncio.TimeoutError as error:
+            raise TimeoutError(
+                f"Mission progress stalled at item {max(last_current, 0)}/{total_items}."
+            ) from error
 
-    await asyncio.wait_for(_consume_progress(), timeout=mission_timeout_s + 1.0)
+        now = loop.time()
+        if progress.current != last_current:
+            adapter._demo_mission_items_reached.append(
+                {
+                    "index": int(progress.current),
+                    "total": int(progress.total),
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
+            last_current = int(progress.current)
+            last_progress_at = now
+        if progress.total > 0 and progress.current >= progress.total:
+            return
     if not adapter._demo_mission_items_reached:
         raise RuntimeError("Mission progress stream produced no item-reached events.")
 
@@ -208,6 +222,7 @@ async def _demo_recover_mission_airborne(
     mission_uploaded: bool,
     landing_timeout_s: float,
     action_timeout_s: float,
+    rtl_timeout_s: float,
 ) -> MissionExecution:
     if mission_uploaded:
         try:
@@ -220,4 +235,5 @@ async def _demo_recover_mission_airborne(
         armed=armed,
         landing_timeout_s=landing_timeout_s,
         action_timeout_s=action_timeout_s,
+        rtl_timeout_s=rtl_timeout_s,
     )

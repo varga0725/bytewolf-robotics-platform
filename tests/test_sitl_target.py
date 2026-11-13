@@ -81,6 +81,15 @@ class SitlTargetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(proof["status"], "verified")
         self.assertGreaterEqual(len(proof["matched_signals"]), 2)
 
+    async def test_legacy_autostart_without_gz_or_sih_signals_is_refused(self) -> None:
+        drone = _drone_with_identity(
+            release_name="RELEASE",
+            sys_autostart=2500,
+            sim_gz_en=None,
+        )
+        with self.assertRaises(DemoPointRtlError):
+            await require_px4_sitl_indication(drone, timeout_s=1.0)
+
     async def test_dev_alone_is_insufficient(self) -> None:
         drone = _drone_with_identity(
             release_name="DEV",

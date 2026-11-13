@@ -14,9 +14,14 @@ from brain.mission.demo_errors import DemoWaypointMissionError
 from brain.mission.execution import MissionExecution, MissionPhase
 from brain.mission.simulation_target import redact_loopback_endpoint
 from brain.safety.gate import SafetyGate, SafetyViolation
+from brain.safety.profile import SafetyProfile
 
 MISSION_TYPE = "demo-waypoint-mission"
 DEFAULT_MAX_MISSION_ITEMS = 12
+MIN_RELATIVE_ALTITUDE_M = 1.0
+MIN_ACCEPTANCE_RADIUS_M = 0.5
+MAX_ACCEPTANCE_RADIUS_M = 25.0
+MIN_CRUISE_SPEED_M_S = 0.5
 
 
 @dataclass(frozen=True)
@@ -40,16 +45,37 @@ def default_demo_waypoint_loop(
     *, altitude_m: float = 8.0, leg_m: float = 8.0
 ) -> tuple[WaypointCommand, ...]:
     """Conservative square loop inside typical twin geofence limits."""
-    return (
-        WaypointCommand(north_m=leg_m, east_m=0.0, target_altitude_m=altitude_m),
-        WaypointCommand(north_m=leg_m, east_m=leg_m, target_altitude_m=altitude_m),
-        WaypointCommand(north_m=0.0, east_m=leg_m, target_altitude_m=altitude_m),
-        WaypointCommand(north_m=0.0, east_m=0.0, target_altitude_m=altitude_m),
+    return demo_waypoint_loop_for_count(4, altitude_m=altitude_m, leg_m=leg_m)
+
+
+def demo_waypoint_loop_for_count(
+    waypoint_count: int, *, altitude_m: float = 8.0, leg_m: float = 8.0
+) -> tuple[WaypointCommand, ...]:
+    """Place ``waypoint_count`` corners cycling the default square."""
+    if waypoint_count < 1:
+        raise DemoWaypointMissionError("Waypoint count must be at least 1.")
+    square = (
+        (leg_m, 0.0),
+        (leg_m, leg_m),
+        (0.0, leg_m),
+        (0.0, 0.0),
     )
+    return tuple(
+        WaypointCommand(north_m=north, east_m=east, target_altitude_m=altitude_m)
+        for north, east in (square[index % len(square)] for index in range(waypoint_count))
+    )
+
+
+def max_demo_mission_items_for_profile(profile: SafetyProfile) -> int:
+    """Cap mission items from the twin radius so geofence distance cannot be exceeded trivially."""
+    leg_budget = max(1, int(profile.max_radius_m // 8))
+    return min(DEFAULT_MAX_MISSION_ITEMS, max(2, leg_budget + 1))
 
 
 def load_demo_waypoint_mission_config(
     environment: os._Environ[str] | None = None,
+    *,
+    profile: SafetyProfile | None = None,
 ) -> DemoWaypointMissionConfig:
     values = os.environ if environment is None else environment
 
@@ -69,20 +95,25 @@ def load_demo_waypoint_mission_config(
 
     altitude_m = _read("BYTEWOLF_DEMO_WAYPOINT_ALTITUDE_M", 8.0)
     leg_m = _read("BYTEWOLF_DEMO_WAYPOINT_LEG_M", 8.0)
+    max_items = DEFAULT_MAX_MISSION_ITEMS
+    if profile is not None:
+        max_items = max_demo_mission_items_for_profile(profile)
+    elif values.get("BYTEWOLF_DEMO_WAYPOINT_MAX_ITEMS"):
+        max_items = _read_int("BYTEWOLF_DEMO_WAYPOINT_MAX_ITEMS", DEFAULT_MAX_MISSION_ITEMS)
     waypoint_count = _read_int("BYTEWOLF_DEMO_WAYPOINT_COUNT", 4)
-    if waypoint_count < 1 or waypoint_count > DEFAULT_MAX_MISSION_ITEMS - 1:
+    max_waypoints = max_items - 1
+    if waypoint_count < 1 or waypoint_count > max_waypoints:
         raise DemoWaypointMissionError(
-            f"BYTEWOLF_DEMO_WAYPOINT_COUNT must be between 1 and {DEFAULT_MAX_MISSION_ITEMS - 1}."
+            f"BYTEWOLF_DEMO_WAYPOINT_COUNT must be between 1 and {max_waypoints} for this safety profile."
         )
-    default_loop = default_demo_waypoint_loop(altitude_m=altitude_m, leg_m=leg_m)
-    waypoints = default_loop[:waypoint_count]
+    waypoints = demo_waypoint_loop_for_count(waypoint_count, altitude_m=altitude_m, leg_m=leg_m)
 
     return DemoWaypointMissionConfig(
         takeoff_altitude_m=_read("BYTEWOLF_DEMO_WAYPOINT_TAKEOFF_ALTITUDE_M", altitude_m),
         waypoints=waypoints,
         cruise_speed_m_s=_read("BYTEWOLF_DEMO_WAYPOINT_SPEED_M_S", 3.0),
         acceptance_radius_m=_read("BYTEWOLF_DEMO_WAYPOINT_ACCEPTANCE_RADIUS_M", 2.0),
-        max_mission_items=_read_int("BYTEWOLF_DEMO_WAYPOINT_MAX_ITEMS", DEFAULT_MAX_MISSION_ITEMS),
+        max_mission_items=max_items,
         upload_timeout_s=_read("BYTEWOLF_DEMO_WAYPOINT_UPLOAD_TIMEOUT_S", 30.0),
         mission_timeout_s=_read("BYTEWOLF_DEMO_WAYPOINT_MISSION_TIMEOUT_S", 300.0),
         progress_stall_timeout_s=_read("BYTEWOLF_DEMO_WAYPOINT_PROGRESS_STALL_S", 60.0),
@@ -93,7 +124,10 @@ def load_demo_waypoint_mission_config(
 
 
 def authorize_demo_waypoint_mission(
-    gate: SafetyGate, config: DemoWaypointMissionConfig
+    gate: SafetyGate,
+    config: DemoWaypointMissionConfig,
+    *,
+    profile: SafetyProfile | None = None,
 ) -> DemoWaypointMissionConfig:
     """Validate takeoff and every mission item before any upload reaches MAVSDK."""
     planned_items = 1 + len(config.waypoints)
@@ -101,8 +135,29 @@ def authorize_demo_waypoint_mission(
         raise SafetyViolation(
             f"Mission item count {planned_items} exceeds the limit of {config.max_mission_items}."
         )
+    if config.cruise_speed_m_s < MIN_CRUISE_SPEED_M_S:
+        raise SafetyViolation(
+            f"Cruise speed {config.cruise_speed_m_s:g} m/s is below the minimum {MIN_CRUISE_SPEED_M_S:g} m/s."
+        )
+    if profile is not None and config.cruise_speed_m_s > profile.max_speed_m_s:
+        raise SafetyViolation(
+            f"Cruise speed {config.cruise_speed_m_s:g} m/s exceeds the twin limit of {profile.max_speed_m_s:g} m/s."
+        )
+    if not (MIN_ACCEPTANCE_RADIUS_M <= config.acceptance_radius_m <= MAX_ACCEPTANCE_RADIUS_M):
+        raise SafetyViolation(
+            "Acceptance radius must be between "
+            f"{MIN_ACCEPTANCE_RADIUS_M:g} m and {MAX_ACCEPTANCE_RADIUS_M:g} m."
+        )
+    if config.takeoff_altitude_m < MIN_RELATIVE_ALTITUDE_M:
+        raise SafetyViolation(
+            f"Takeoff altitude must be at least {MIN_RELATIVE_ALTITUDE_M:g} m."
+        )
     gate.evaluate(TakeoffCommand(config.takeoff_altitude_m))
     for index, waypoint in enumerate(config.waypoints):
+        if waypoint.target_altitude_m < MIN_RELATIVE_ALTITUDE_M:
+            raise SafetyViolation(
+                f"Mission item {index + 1}: altitude must be at least {MIN_RELATIVE_ALTITUDE_M:g} m."
+            )
         try:
             gate.evaluate(waypoint)
         except SafetyViolation as error:
@@ -191,6 +246,7 @@ def demo_waypoint_mission_evidence_document(
     px4_ulog_relative_path: str | None,
     trajectory_png_relative_path: str | None,
     optional_screen_capture_relative_path: str | None,
+    screen_capture_status: dict[str, object] | None = None,
     started_at: datetime | None = None,
 ) -> dict[str, object]:
     document: dict[str, Any] = {
@@ -222,7 +278,21 @@ def demo_waypoint_mission_evidence_document(
     }
     if optional_screen_capture_relative_path is not None:
         document["optional_screen_capture_relative_path"] = optional_screen_capture_relative_path
+    if screen_capture_status is not None:
+        document["screen_capture"] = screen_capture_status
     return document
+
+
+def acceptance_run_is_clean(document: dict[str, object]) -> bool:
+    """A consecutive acceptance run needs completed outcome, ULog proof, and no timeout marker."""
+    if document.get("overall_status") != "passed":
+        return False
+    ulog_path = document.get("px4_ulog_relative_path")
+    if not ulog_path or document.get("ulog_status") == "missing":
+        return False
+    if not document.get("trajectory_png_relative_path"):
+        return False
+    return True
 
 
 def load_demo_waypoint_plan_config(plan_path: Path) -> DemoWaypointMissionConfig:
@@ -253,7 +323,9 @@ def load_demo_waypoint_plan_config(plan_path: Path) -> DemoWaypointMissionConfig
 def consecutive_acceptance_summary(
     run_documents: list[dict[str, object]], *, required_runs: int
 ) -> dict[str, object]:
-    statuses = [str(document.get("overall_status")) for document in run_documents]
+    statuses = [
+        "passed" if acceptance_run_is_clean(document) else "failed" for document in run_documents
+    ]
     passed = len(statuses) == required_runs and all(status == "passed" for status in statuses)
     return {
         "schema_version": "demo-waypoint-mission-acceptance.v0.1",

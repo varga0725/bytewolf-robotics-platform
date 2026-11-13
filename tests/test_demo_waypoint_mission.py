@@ -39,7 +39,7 @@ class DemoWaypointMissionValidationTests(unittest.TestCase):
         profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
         config = load_demo_waypoint_mission_config()
         gate = SafetyGate(profile.flight_limits())
-        authorized = authorize_demo_waypoint_mission(gate, config)
+        authorized = authorize_demo_waypoint_mission(gate, config, profile=profile)
         self.assertEqual(len(authorized.waypoints), 4)
 
     def test_any_single_item_geofence_violation_is_refused(self) -> None:
@@ -52,7 +52,7 @@ class DemoWaypointMissionValidationTests(unittest.TestCase):
 
         config = DemoWaypointMissionConfig(takeoff_altitude_m=8.0, waypoints=bad, max_mission_items=20)
         with self.assertRaises(SafetyViolation):
-            authorize_demo_waypoint_mission(gate, config)
+            authorize_demo_waypoint_mission(gate, config, profile=profile)
 
     def test_altitude_violation_on_one_item_is_refused(self) -> None:
         profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
@@ -66,7 +66,7 @@ class DemoWaypointMissionValidationTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(SafetyViolation):
-            authorize_demo_waypoint_mission(gate, config)
+            authorize_demo_waypoint_mission(gate, config, profile=profile)
 
 
 class DemoWaypointMissionApiTests(unittest.TestCase):
@@ -81,6 +81,10 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.directory.cleanup()
+
+    def test_missing_session_header_is_rejected(self) -> None:
+        response = self.client.post("/api/v1/missions/demo-waypoint-mission")
+        self.assertEqual(response.status_code, 422)
 
     def test_review_registers_plan_without_execution(self) -> None:
         response = self.client.post(
@@ -304,7 +308,12 @@ class AcceptanceLogicTests(unittest.TestCase):
         self.assertEqual(summary["overall_status"], "failed")
 
     def test_three_consecutive_passes_succeed(self) -> None:
-        runs = [{"overall_status": "passed"}] * 3
+        clean = {
+            "overall_status": "passed",
+            "trajectory_png_relative_path": "trajectory.png",
+            "px4_ulog_relative_path": "runs/a.ulg",
+        }
+        runs = [clean] * 3
         summary = consecutive_acceptance_summary(runs, required_runs=3)
         self.assertEqual(summary["overall_status"], "passed")
 

@@ -611,6 +611,25 @@ class MavsdkMissionAdapter:
             "relative_altitude_m": target.absolute_altitude_m - home.absolute_altitude_m,
         }
 
+    async def _vehicle_in_air_state(self, *, timeout_s: float = 2.0) -> bool | None:
+        sample = await self._latest_telemetry_sample(self._drone.telemetry.in_air, timeout_s=timeout_s)
+        if sample is None:
+            return None
+        return bool(sample)
+
+    async def _demo_resolve_effective_airborne(self, *, airborne: bool, armed: bool) -> bool:
+        """After arm, treat the vehicle as possibly airborne until telemetry proves otherwise."""
+        if airborne:
+            return True
+        if not armed:
+            return False
+        in_air = await self._vehicle_in_air_state()
+        if in_air is True:
+            return True
+        if in_air is False:
+            return False
+        return True
+
     async def _demo_recover_airborne(
         self,
         execution: MissionExecution,
@@ -619,19 +638,26 @@ class MavsdkMissionAdapter:
         armed: bool,
         landing_timeout_s: float,
         action_timeout_s: float,
+        rtl_timeout_s: float | None = None,
     ) -> MissionExecution:
-        """RTL or land, then disarm; phase bookkeeping must never skip those commands."""
-        if not airborne and not armed:
+        """RTL or land, then disarm only with on-ground confirmation."""
+        effective_airborne = await self._demo_resolve_effective_airborne(airborne=airborne, armed=armed)
+        if not effective_airborne and not armed:
             return self._safe_record(execution, MissionPhase.FAILED)
 
-        if airborne:
+        rtl_bound_s = rtl_timeout_s
+        if rtl_bound_s is None:
+            rtl_bound_s = max(landing_timeout_s + action_timeout_s + 5.0, landing_timeout_s + 1.0)
+        land_wait_cap_s = max(landing_timeout_s + 1.0, rtl_bound_s)
+
+        if effective_airborne:
             if execution.phase is not MissionPhase.RETURNING:
                 execution = self._safe_record(execution, MissionPhase.RETURNING)
             try:
                 await asyncio.wait_for(self._drone.action.return_to_launch(), timeout=action_timeout_s)
                 await asyncio.wait_for(
                     self.wait_until_landed(landing_timeout_s),
-                    timeout=landing_timeout_s + 1.0,
+                    timeout=land_wait_cap_s,
                 )
             except Exception:
                 execution = self._safe_record(execution, MissionPhase.LANDING)
@@ -639,7 +665,7 @@ class MavsdkMissionAdapter:
                     await asyncio.wait_for(self._drone.action.land(), timeout=action_timeout_s)
                     await asyncio.wait_for(
                         self.wait_until_landed(landing_timeout_s),
-                        timeout=landing_timeout_s + 1.0,
+                        timeout=land_wait_cap_s,
                     )
                 except Exception:
                     pass
@@ -649,11 +675,9 @@ class MavsdkMissionAdapter:
                 pass
             return self._safe_record(execution, MissionPhase.FAILED)
 
-        try:
-            await self._demo_disarm_when_landed(landing_timeout_s, action_timeout_s)
-        except Exception:
+        if armed:
             try:
-                await asyncio.wait_for(self._drone.action.disarm(), timeout=action_timeout_s)
+                await self._demo_disarm_when_landed(landing_timeout_s, action_timeout_s)
             except Exception:
                 pass
         return self._safe_record(execution, MissionPhase.FAILED)

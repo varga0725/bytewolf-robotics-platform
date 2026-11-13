@@ -69,6 +69,30 @@ def write_reviewed_demo_waypoint_plan(
     return mission_id
 
 
+def write_operator_approval_for_plan(plan_path: Path) -> None:
+    """Write the sha256-bound approval sidecar after explicit operator confirmation."""
+    if not plan_path.is_file():
+        raise RuntimeError(f"Reviewed demo plan file '{plan_path}' does not exist.")
+    document = json.loads(plan_path.read_text(encoding="utf-8"))
+    if document.get("mission_type") != MISSION_TYPE:
+        raise RuntimeError("Plan is not a demo-waypoint-mission.")
+    mission_id = str(document.get("mission_id", ""))
+    approval = {
+        "schema_version": DEMO_WAYPOINT_APPROVAL_SCHEMA_VERSION,
+        "approved_at": datetime.now(UTC).isoformat(),
+        "mission_type": MISSION_TYPE,
+        "mission_id": mission_id,
+        "plan_filename": plan_path.name,
+        "plan_sha256": sha256(plan_path.read_bytes()).hexdigest(),
+        "safety_decision": "approved",
+        "approval_channel": "operator-cli",
+    }
+    plan_path.with_name(f"{plan_path.name}.approval.json").write_text(
+        json.dumps(approval, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def require_matching_demo_waypoint_approval(plan_path: Path) -> dict[str, object]:
     try:
         approval = json.loads(plan_path.with_name(f"{plan_path.name}.approval.json").read_text(encoding="utf-8"))

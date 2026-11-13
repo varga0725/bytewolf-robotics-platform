@@ -39,10 +39,10 @@ class DemoWaypointMissionReview:
 
 def review_demo_waypoint_mission() -> DemoWaypointMissionReview:
     profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
-    config = load_demo_waypoint_mission_config()
+    config = load_demo_waypoint_mission_config(profile=profile)
     gate = SafetyGate(profile.flight_limits())
     try:
-        authorize_demo_waypoint_mission(gate, config)
+        authorize_demo_waypoint_mission(gate, config, profile=profile)
     except SafetyViolation as error:
         raise DemoWaypointMissionError(str(error)) from error
     mission_id = str(uuid4())

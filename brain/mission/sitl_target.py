@@ -7,12 +7,7 @@ from typing import Any
 
 from brain.mission.demo_errors import DemoPointRtlError
 
-# PX4 v1.17.0 POSIX airframe IDs (ROMFS/px4fmu_common/init.d-posix/airframes).
-_PX4_POSIX_SITL_AUTOSTART_RANGES: tuple[tuple[int, int], ...] = (
-    (1000, 3999),  # gazebo-classic, jMAVSim, JSBSIM, FlightGear, …
-    (4001, 4999),  # Gazebo Harmonic gz_* (e.g. 4001_gz_x500)
-    (10040, 10099),  # SIH sihsim_* (e.g. 10040_sihsim_quadx)
-)
+# PX4 v1.17.0 gz / SIH SITL autostart IDs only (ROMFS init.d-posix airframes).
 _GZ_AUTOSTART_RANGE = (4001, 4999)
 _SIH_AUTOSTART_RANGE = (10040, 10099)
 _MIN_POSITIVE_SIGNALS = 2
@@ -31,7 +26,11 @@ def _release_type_name(version: object) -> str:
 
 
 def _autostart_is_posix_sitl(autostart: int) -> bool:
-    return any(low <= autostart <= high for low, high in _PX4_POSIX_SITL_AUTOSTART_RANGES)
+    low, high = _GZ_AUTOSTART_RANGE
+    if low <= autostart <= high:
+        return True
+    low, high = _SIH_AUTOSTART_RANGE
+    return low <= autostart <= high
 
 
 async def _read_param_int(drone: object, name: str, *, timeout_s: float) -> int:

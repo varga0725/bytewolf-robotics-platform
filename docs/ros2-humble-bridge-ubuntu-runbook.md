@@ -277,9 +277,14 @@ before arming (same rules as demo-point-rtl).
 
 ```bash
 cd ~/bytewolf-robotics/platform
+# Operator must enable the gate; the acceptance CLI does not set this.
 export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
 export BYTEWOLF_SITL_ACCEPTANCE=1
-.venv/bin/python -m brain.cli.acceptance_demo_waypoint_mission --runs 3
+export BYTEWOLF_PX4_RUN_DIR=/path/to/px4/run/dir
+PLAN=simulation/artifacts/agent-missions/<mission-id>.demo-waypoint-mission.json
+.venv/bin/python -m brain.cli.acceptance_demo_waypoint_mission \
+  --plan-file "${PLAN}" --runs 3 \
+  --record-operator-approval --confirm-plan-execution
 ```
 
 Evidence lands under `simulation/artifacts/demo-waypoint-mission/` (`latest.json`,
@@ -287,11 +292,15 @@ per-run JSON, `trajectory-*.png` on every run, optional `screen-*.mp4` when
 `ffmpeg` is available). Pick the capture backend with
 `BYTEWOLF_DEMO_SCREEN_CAPTURE_MODE=x11|xvfb` or
 `--screen-capture-mode x11|xvfb` on `fly_demo_waypoint_mission` (CLI wins).
-`x11` uses the current `DISPLAY`, grabs only the gz GUI window (via
-`xdotool`/`xwininfo` when present) or
-`BYTEWOLF_DEMO_SCREEN_CAPTURE_GEOMETRY=WxH+X+Y` — never the full desktop by
-default. `xvfb` uses `xvfb-run` as before. Missing tools skip capture without
-failing the flight. Summary: `acceptance-latest.json`.
+`x11` uses the current `DISPLAY`, grabs only the gz GUI window (WM_CLASS, exact
+title, PID, or `BYTEWOLF_DEMO_SCREEN_CAPTURE_GEOMETRY=WxH+X+Y`) — never full
+desktop. Optional `BYTEWOLF_DEMO_LAUNCH_GZ_GUI=1` runs `gz sim -g` on that
+display and closes only that process. `xvfb` starts `Xvfb` on
+`BYTEWOLF_DEMO_XVFB_DISPLAY_NUM` and records the same display. Capture runs
+from before arm until disarm (cap:
+`BYTEWOLF_DEMO_SCREEN_CAPTURE_MAX_S`). Missing tools set `screen_capture.status`
+to `skipped` without failing the flight; trajectory PNG and PX4 ULog are mandatory
+for a clean acceptance run. Summary: `acceptance-latest.json`.
 
 ### Control Room review / approve
 
