@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway, DashboardReply
 from apps.api.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
-from apps.api.demo_mission import DemoMissionStartError, start_demo_point_rtl
+from apps.api.demo_point_mission import DemoPointRtlError, review_demo_point_rtl
 from apps.api.point_mission import PointMissionError, review_point_mission, review_survey_mission
 from apps.agent.pi_conversation import PiConversation
 from apps.agent.pi_memory_extractor import extract_memory_delta
@@ -38,7 +38,8 @@ from brain.telemetry.domain import (
     SupplementalTelemetryEvent,
 )
 from brain.telemetry.persistence import ObservationHistoryEvent, TelemetryHistoryEvent
-from apps.gateway.telegram_mission_gateway import _execute_with_cli, _review_with_cli
+from apps.gateway.plan_execution import execute_reviewed_plan
+from apps.gateway.telegram_mission_gateway import _review_with_cli
 
 
 class ChatRequest(BaseModel):
@@ -139,7 +140,7 @@ def create_app(
             down_detections_path,
         ),
         review=_review_with_cli,
-        execute=_execute_with_cli,
+        execute=execute_reviewed_plan,
     )
 
     @app.get("/api/v1/telemetry")
@@ -312,16 +313,19 @@ def create_app(
         return _handle_gateway(lambda: command_gateway.cancel(_session(x_bytewolf_session), request.plan_id))
 
     @app.post("/api/v1/missions/demo-point-rtl")
-    def demo_point_rtl(request: Request) -> dict[str, object]:
-        """Start the bounded Monday demo on SITL only when execution is enabled."""
-        from shared.safety.execution_gate import MissionExecutionQuarantinedError
-
+    def demo_point_rtl(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
+        """Review the Monday demo and offer it for explicit approval (no flight)."""
+        session = _session(x_bytewolf_session)
         try:
-            return start_demo_point_rtl()
-        except MissionExecutionQuarantinedError as error:
-            raise HTTPException(status_code=403, detail=error.refusal.as_detail()) from error
-        except DemoMissionStartError as error:
+            mission = review_demo_point_rtl()
+        except DemoPointRtlError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+        reply = _handle_gateway(
+            lambda: command_gateway.propose(
+                session, mission.plan_id, f"{mission.summary} Indítsam?"
+            )
+        )
+        return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
 
     @app.post("/api/v1/missions/point")
     def point_mission(
