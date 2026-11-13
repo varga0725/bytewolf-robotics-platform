@@ -19,6 +19,9 @@ _VALID_MODES = frozenset({"x11", "xvfb"})
 _GEOMETRY_PATTERN = re.compile(r"^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$")
 _DEFAULT_WM_CLASS = "gz-sim-gui"
 _DEFAULT_MAX_CAPTURE_S = 600.0
+_DEFAULT_XVFB_SCREEN = "1920x1080x24"
+_XVFB_SCREEN_PATTERN = re.compile(r"^(\d+)x(\d+)x\d+$")
+_GZ_GUI_STARTUP_GRACE_S = 10.0
 
 
 def _wait_s(seconds: float) -> None:
@@ -43,6 +46,8 @@ class CaptureResult:
     screenshot_non_uniform: bool | None = None
     gz_gui_extra_env_rejected: list[str] | None = None
     gz_gui_args_rejected: list[str] | None = None
+    gui_env_libgl_software: bool | None = None
+    gui_retry_render_engine: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {"status": self.status}
@@ -70,6 +75,10 @@ class CaptureResult:
             payload["gz_gui_extra_env_rejected"] = self.gz_gui_extra_env_rejected
         if self.gz_gui_args_rejected:
             payload["gz_gui_args_rejected"] = self.gz_gui_args_rejected
+        if self.gui_env_libgl_software is not None:
+            payload["gui_env_libgl_software"] = self.gui_env_libgl_software
+        if self.gui_retry_render_engine is not None:
+            payload["gui_retry_render_engine"] = self.gui_retry_render_engine
         return payload
 
 
@@ -95,6 +104,8 @@ class _CaptureSession:
     screenshot_stop: threading.Event | None = None
     gz_gui_extra_env_rejected: list[str] = field(default_factory=list)
     gz_gui_args_rejected: list[str] = field(default_factory=list)
+    gui_env_libgl_software: bool | None = None
+    gui_retry_render_engine: str | None = None
 
     def cleanup(self) -> None:
         for process in reversed(self.child_processes):
@@ -233,6 +244,8 @@ class DemoFlightScreenCapture:
             "screenshot_non_uniform": self._session.screenshot_non_uniform,
             "gz_gui_extra_env_rejected": self._session.gz_gui_extra_env_rejected or None,
             "gz_gui_args_rejected": self._session.gz_gui_args_rejected or None,
+            "gui_env_libgl_software": self._session.gui_env_libgl_software,
+            "gui_retry_render_engine": self._session.gui_retry_render_engine,
         }
         if elapsed > self.max_duration_s:
             return CaptureResult("failed", reason="capture exceeded max duration before stop", **common)
@@ -399,7 +412,7 @@ class DemoFlightScreenCapture:
         if not display:
             return None
         if _should_launch_gz_gui("x11"):
-            process = _launch_gz_gui_client(
+            process = _launch_gz_gui_with_startup_retry(
                 display,
                 attach_to_running_server=True,
                 artifact_directory=self.artifact_directory,
@@ -407,10 +420,7 @@ class DemoFlightScreenCapture:
             )
             if process is None:
                 return None
-            self._session.child_processes.append(process)
             self._session.launched_gz_gui = True
-            self._session.launched_gz_pid = process.pid
-            self._session.launched_gz_process = process
             _wait_s(_gz_gui_attach_delay_s())
         region = _resolve_window_region(self._session, display=display)
         if region is None:
@@ -423,9 +433,21 @@ class DemoFlightScreenCapture:
             return None
         display_number = int(os.environ.get("BYTEWOLF_DEMO_XVFB_DISPLAY_NUM", "198"))
         display = f":{display_number}"
+        screen_spec = os.environ.get("BYTEWOLF_DEMO_XVFB_SCREEN_SIZE", _DEFAULT_XVFB_SCREEN).strip()
         try:
             xvfb_process = subprocess.Popen(
-                [xvfb, display, "-screen", "0", "1280x720x24", "-ac"],
+                [
+                    xvfb,
+                    display,
+                    "-screen",
+                    "0",
+                    screen_spec,
+                    "+extension",
+                    "GLX",
+                    "+render",
+                    "-noreset",
+                    "-ac",
+                ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -435,7 +457,7 @@ class DemoFlightScreenCapture:
         self._session.xvfb_display = display
         _wait_s(0.5)
         if _should_launch_gz_gui("xvfb"):
-            process = _launch_gz_gui_client(
+            process = _launch_gz_gui_with_startup_retry(
                 display,
                 attach_to_running_server=True,
                 artifact_directory=self.artifact_directory,
@@ -443,18 +465,9 @@ class DemoFlightScreenCapture:
             )
             if process is None:
                 return None
-            self._session.child_processes.append(process)
             self._session.launched_gz_gui = True
-            self._session.launched_gz_pid = process.pid
-            self._session.launched_gz_process = process
             _wait_s(_gz_gui_attach_delay_s())
-        region = _resolve_window_region(self._session, display=display)
-        if region is None:
-            geometry = os.environ.get(
-                "BYTEWOLF_DEMO_SCREEN_CAPTURE_GEOMETRY",
-                "1280x720+0+0",
-            )
-            region = _parse_geometry(geometry) if geometry else None
+        region = _resolve_xvfb_grab_region(display=display)
         if region is None:
             return None
         return region, display
@@ -497,6 +510,119 @@ def _gz_gui_attach_delay_s() -> float:
         return max(0.0, float(raw))
     except ValueError:
         return 5.0
+
+
+def _gz_gui_startup_grace_s() -> float:
+    raw = os.environ.get("BYTEWOLF_DEMO_GZ_GUI_STARTUP_GRACE_S")
+    if raw is None:
+        return _GZ_GUI_STARTUP_GRACE_S
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _GZ_GUI_STARTUP_GRACE_S
+
+
+def _xvfb_screen_dimensions() -> tuple[int, int]:
+    raw = os.environ.get("BYTEWOLF_DEMO_XVFB_SCREEN_SIZE", _DEFAULT_XVFB_SCREEN).strip()
+    match = _XVFB_SCREEN_PATTERN.match(raw)
+    if match is None:
+        return 1920, 1080
+    width, height = (int(match.group(1)), int(match.group(2)))
+    if width <= 0 or height <= 0:
+        return 1920, 1080
+    return width, height
+
+
+def _resolve_xvfb_grab_region(*, display: str) -> tuple[int, int, int, int] | None:
+    """Default Xvfb capture covers the full private screen (not a partial WM geometry)."""
+    _ = display
+    geometry = os.environ.get("BYTEWOLF_DEMO_SCREEN_CAPTURE_GEOMETRY")
+    if geometry:
+        return _parse_geometry(geometry)
+    width, height = _xvfb_screen_dimensions()
+    return width, height, 0, 0
+
+
+def _libgl_software_enabled(extra: dict[str, str]) -> bool:
+    value = extra.get("LIBGL_ALWAYS_SOFTWARE")
+    if value is None:
+        return False
+    return value.strip().lower() not in {"0", "false", "no", ""}
+
+
+def _replace_render_engine_args(args: list[str], engine: str) -> list[str]:
+    filtered: list[str] = []
+    index = 0
+    while index < len(args):
+        if args[index] == "--render-engine" and index + 1 < len(args):
+            index += 2
+            continue
+        filtered.append(args[index])
+        index += 1
+    return [*filtered, "--render-engine", engine]
+
+
+def _gui_survived_startup(process: subprocess.Popen[Any], grace_s: float) -> bool:
+    deadline = time.monotonic() + grace_s
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return False
+        time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
+    return process.poll() is None
+
+
+def _detach_gui_child(session: _CaptureSession, process: subprocess.Popen[Any]) -> None:
+    if process in session.child_processes:
+        session.child_processes.remove(process)
+    if process.poll() is None:
+        process.kill()
+        try:
+            process.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            pass
+    if session.launched_gz_process is process:
+        session.launched_gz_process = None
+        session.launched_gz_pid = None
+
+
+def _register_gui_child(session: _CaptureSession, process: subprocess.Popen[Any]) -> None:
+    session.child_processes.append(process)
+    session.launched_gz_pid = process.pid
+    session.launched_gz_process = process
+
+
+def _launch_gz_gui_with_startup_retry(
+    display: str,
+    *,
+    attach_to_running_server: bool,
+    artifact_directory: Path | None,
+    session: _CaptureSession,
+) -> subprocess.Popen[Any] | None:
+    grace_s = _gz_gui_startup_grace_s()
+    process = _launch_gz_gui_client(
+        display,
+        attach_to_running_server=attach_to_running_server,
+        artifact_directory=artifact_directory,
+        session=session,
+    )
+    if process is None:
+        return None
+    _register_gui_child(session, process)
+    if _gui_survived_startup(process, grace_s):
+        return process
+    _detach_gui_child(session, process)
+    session.gui_retry_render_engine = "ogre"
+    retry = _launch_gz_gui_client(
+        display,
+        attach_to_running_server=attach_to_running_server,
+        artifact_directory=artifact_directory,
+        session=session,
+        force_render_engine="ogre",
+    )
+    if retry is None:
+        return None
+    _register_gui_child(session, retry)
+    return retry
 
 
 def _artifact_relative_path(artifact_directory: Path | None, path: Path | None) -> str | None:
@@ -630,15 +756,19 @@ def _gz_transport_env(
     attach_to_running_server: bool,
     session: _CaptureSession | None = None,
 ) -> dict[str, str] | None:
+    extra, rejected_env = _parse_gz_gui_extra_env()
+    libgl_software = _libgl_software_enabled(extra)
+    if session is not None:
+        session.gz_gui_extra_env_rejected = rejected_env
+        session.gui_env_libgl_software = libgl_software
     env = dict(os.environ)
+    if "LIBGL_ALWAYS_SOFTWARE" not in extra:
+        env.pop("LIBGL_ALWAYS_SOFTWARE", None)
     gz_ip = env.get("GZ_IP", "127.0.0.1").strip()
     if gz_ip != "127.0.0.1":
         return None
     if attach_to_running_server:
         env.setdefault("PX4_GZ_STANDALONE", "1")
-    extra, rejected_env = _parse_gz_gui_extra_env()
-    if session is not None:
-        session.gz_gui_extra_env_rejected = rejected_env
     env.update(extra)
     env["DISPLAY"] = display
     env["GZ_IP"] = "127.0.0.1"
@@ -651,6 +781,7 @@ def _launch_gz_gui_client(
     attach_to_running_server: bool = False,
     artifact_directory: Path | None = None,
     session: _CaptureSession | None = None,
+    force_render_engine: str | None = None,
 ) -> subprocess.Popen[Any] | None:
     gz = shutil.which("gz")
     if gz is None:
@@ -659,6 +790,8 @@ def _launch_gz_gui_client(
     if env is None:
         return None
     extra_args, rejected_args = _validated_gz_gui_args()
+    if force_render_engine in {"ogre", "ogre2"}:
+        extra_args = _replace_render_engine_args(extra_args, force_render_engine)
     if session is not None:
         session.gz_gui_args_rejected = rejected_args
     command = [gz, "sim", "-g", *extra_args]

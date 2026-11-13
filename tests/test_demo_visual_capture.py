@@ -167,7 +167,95 @@ class WindowCleanupSafetyTests(unittest.TestCase):
             self.assertEqual(env["GZ_IP"], "127.0.0.1")
             self.assertEqual(env["DISPLAY"], ":199")
             self.assertEqual(env.get("LD_PRELOAD"), os.environ.get("LD_PRELOAD"))
+            self.assertEqual(env.get("LIBGL_ALWAYS_SOFTWARE"), "1")
+            self.assertTrue(session.gui_env_libgl_software)
             self.assertEqual(sorted(session.gz_gui_extra_env_rejected), ["GZ_IP", "LD_PRELOAD", "PATH"])
+
+    def test_gz_gui_child_env_strips_inherited_libgl_software(self) -> None:
+        from brain.mission.demo_visual_capture import _CaptureSession, _gz_transport_env
+
+        with patch.dict(os.environ, {"LIBGL_ALWAYS_SOFTWARE": "1"}, clear=False):
+            session = _CaptureSession()
+            env = _gz_transport_env(":199", attach_to_running_server=True, session=session)
+            assert env is not None
+            self.assertNotIn("LIBGL_ALWAYS_SOFTWARE", env)
+            self.assertFalse(session.gui_env_libgl_software)
+
+    def test_xvfb_starts_with_glx_extensions(self) -> None:
+        from brain.mission.demo_visual_capture import DemoFlightScreenCapture
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "clip.mp4"
+            with patch("brain.mission.demo_visual_capture.shutil.which") as which:
+                which.side_effect = lambda name: f"/usr/bin/{name}" if name in {"ffmpeg", "Xvfb", "gz"} else None
+                with patch("brain.mission.demo_visual_capture.subprocess.Popen") as popen:
+                    gui = MagicMock(pid=4242, poll=MagicMock(return_value=None))
+                    popen.side_effect = lambda *args, **kwargs: gui if "gz" in args[0] else MagicMock()
+                    with patch(
+                        "brain.mission.demo_visual_capture._launch_gz_gui_with_startup_retry",
+                        return_value=gui,
+                    ):
+                        with patch("brain.mission.demo_visual_capture._wait_s"):
+                            capture = DemoFlightScreenCapture(output, mode="xvfb")
+                            capture.start()
+                    xvfb_call = popen.call_args_list[0]
+                    self.assertIn("+extension", xvfb_call.args[0])
+                    self.assertIn("GLX", xvfb_call.args[0])
+                    self.assertIn("1920x1080x24", xvfb_call.args[0])
+
+    def test_xvfb_default_grab_is_full_screen(self) -> None:
+        from brain.mission.demo_visual_capture import _resolve_xvfb_grab_region
+
+        env = dict(os.environ)
+        env.pop("BYTEWOLF_DEMO_SCREEN_CAPTURE_GEOMETRY", None)
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(_resolve_xvfb_grab_region(display=":198"), (1920, 1080, 0, 0))
+
+    def test_gz_gui_retries_with_ogre_after_early_exit(self) -> None:
+        from brain.mission.demo_visual_capture import _CaptureSession, _launch_gz_gui_with_startup_retry
+
+        session = _CaptureSession()
+
+        class _Proc:
+            def __init__(self, *, exit_code: int | None) -> None:
+                self.pid = id(self) % 50000
+                self._exit_code = exit_code
+                self._polled = False
+
+            def poll(self) -> int | None:
+                if self._exit_code is not None and not self._polled:
+                    self._polled = True
+                    return self._exit_code
+                return None
+
+            def kill(self) -> None:
+                pass
+
+            def wait(self, timeout: float | None = None) -> int:
+                return self._exit_code or 0
+
+        calls: list[dict[str, object]] = []
+
+        def fake_launch(*_args, force_render_engine=None, **_kwargs):  # type: ignore[no-untyped-def]
+            calls.append({"force": force_render_engine})
+            if force_render_engine == "ogre":
+                return _Proc(exit_code=None)
+            return _Proc(exit_code=139)
+
+        with patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_GUI_STARTUP_GRACE_S": "0.05"}, clear=False):
+            with patch("brain.mission.demo_visual_capture._launch_gz_gui_client", side_effect=fake_launch):
+                with patch("brain.mission.demo_visual_capture.shutil.which", return_value="/usr/bin/gz"):
+                    process = _launch_gz_gui_with_startup_retry(
+                        ":198",
+                        attach_to_running_server=True,
+                        artifact_directory=None,
+                        session=session,
+                    )
+        self.assertIsNotNone(process)
+        self.assertEqual(session.gui_retry_render_engine, "ogre")
+        self.assertEqual(len(calls), 2)
+        self.assertIsNone(calls[0]["force"])
+        self.assertEqual(calls[1]["force"], "ogre")
 
     def test_png_uniform_black_frame_is_rejected(self) -> None:
         from brain.mission.demo_visual_capture import _png_has_non_uniform_content
