@@ -19,6 +19,16 @@ class ULogCaptureError(ValueError):
     """Raised when a raw PX4 log cannot be archived with verifiable provenance."""
 
 
+def discover_newest_px4_ulog(px4_run_directory: Path) -> Path | None:
+    """Return the newest ``.ulg`` under a PX4 SITL working directory, if any."""
+    if not px4_run_directory.is_dir():
+        return None
+    candidates = [path for path in px4_run_directory.rglob("*.ulg") if path.is_file()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
 @dataclass(frozen=True)
 class ULogCapture:
     """Immutable manifest entry for one archived raw PX4 log."""

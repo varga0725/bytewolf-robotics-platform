@@ -6,7 +6,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from brain.telemetry.ulog import ULogCaptureError, archive_px4_ulog, write_ulog_unavailable_manifest
+from brain.telemetry.ulog import (
+    ULogCaptureError,
+    archive_px4_ulog,
+    discover_newest_px4_ulog,
+    write_ulog_unavailable_manifest,
+)
 
 
 class ULogArchiveTests(unittest.TestCase):
@@ -32,6 +37,28 @@ class ULogArchiveTests(unittest.TestCase):
 
         self.assertEqual(manifest["status"], "unavailable")
         self.assertEqual(manifest["reason"], "SITL logger disabled")
+
+    def test_discovers_the_newest_ulg_under_a_px4_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = Path(directory)
+            older = run_root / "log" / "2026-01-01" / "older.ulg"
+            newer = run_root / "log" / "2026-01-02" / "newer.ulg"
+            older.parent.mkdir(parents=True)
+            newer.parent.mkdir(parents=True)
+            older.write_bytes(b"old")
+            newer.write_bytes(b"new")
+            newer.touch()
+            older.touch()
+            import os
+            import time
+
+            now = time.time()
+            os.utime(older, (now - 10, now - 10))
+            os.utime(newer, (now, now))
+
+            discovered = discover_newest_px4_ulog(run_root)
+
+        self.assertEqual(discovered, newer)
 
     def test_refuses_missing_or_non_px4_log_sources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

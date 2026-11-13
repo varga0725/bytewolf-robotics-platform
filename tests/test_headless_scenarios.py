@@ -32,6 +32,28 @@ def _alive_sitl_process(*, pid: int = 4242) -> Mock:
     return process
 
 
+def _nominal_command_runner(command: tuple[str, ...], **_kwargs: object) -> Mock:
+    """Fake a bounded CLI that leaves the artifact the post-run contracts expect."""
+    artifact_directory = Path(command[command.index("--artifact-dir") + 1])
+    artifact_directory.mkdir(parents=True, exist_ok=True)
+    (artifact_directory / "run.json").write_text(
+        json.dumps(
+            {
+                "outcome": "completed",
+                "peak_relative_altitude_m": 1.9,
+                "events": [
+                    {"phase": "arming"},
+                    {"phase": "taking_off"},
+                    {"phase": "hovering"},
+                    {"phase": "completed"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return Mock(returncode=0, stdout="mission complete\n", stderr="")
+
+
 def _write_px4_wind_sources(root: Path) -> Path:
     """Write the smallest PX4 tree a wind fixture can be rendered from."""
     worlds = root / "Tools/simulation/gz/worlds"
@@ -156,7 +178,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
 
     def _runner(self, root: Path, **overrides: object) -> ScenarioRunner:
         defaults: dict[str, object] = {
-            "command_runner": Mock(return_value=Mock(returncode=0, stdout="", stderr="")),
+            "command_runner": Mock(side_effect=_nominal_command_runner),
             "now": lambda: datetime(2026, 7, 17, 8, 0, tzinfo=UTC),
             "process_starter": Mock(return_value=_alive_sitl_process()),
             "terminate_process": Mock(),
@@ -208,7 +230,8 @@ class WindScenarioEvidenceTests(unittest.TestCase):
             result = json.loads(report_path.read_text(encoding="utf-8"))["results"][0]
 
             self.assertIsNone(result["wind"])
-            self.assertIsNone(starter.call_args.kwargs["env"])
+            environment = starter.call_args.kwargs.get("env") or {}
+            self.assertNotIn("PX4_GZ_WORLD_FILE", environment)
 
     def test_blocks_a_wind_run_whose_fixture_cannot_be_built(self) -> None:
         """A wind scenario must never silently fall back to a still-air run."""
@@ -395,7 +418,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
             self.assertEqual(scenario.arguments[argument_index + 1], "60")
 
     def test_runner_records_each_scenario_and_writes_a_json_report(self) -> None:
-        completed = Mock(return_value=Mock(returncode=0, stdout="mission complete\n", stderr=""))
+        completed = Mock(side_effect=_nominal_command_runner)
         timestamp = datetime(2026, 7, 16, 10, 30, tzinfo=UTC)
 
         with TemporaryDirectory() as temporary_directory:
@@ -602,7 +625,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
     def test_runner_retries_a_transient_sitl_start_failure(self) -> None:
         sitl_process = _alive_sitl_process(pid=90210)
         process_starter = Mock(side_effect=(OSError(1, "Operation not permitted"), sitl_process))
-        command_runner = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
+        command_runner = Mock(side_effect=_nominal_command_runner)
         sleep = Mock()
         runner = ScenarioRunner(
             command_runner=command_runner,
@@ -722,7 +745,7 @@ class WindScenarioEvidenceTests(unittest.TestCase):
 
     def test_repeatability_report_requires_the_configured_success_rate_per_nominal_scenario(self) -> None:
         scenario = Scenario("takeoff-hover-land", "brain.cli.fly_takeoff_hover_land")
-        completed = Mock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
+        completed = Mock(side_effect=_nominal_command_runner)
         timestamp = datetime(2026, 7, 16, 10, 30, tzinfo=UTC)
 
         with TemporaryDirectory() as temporary_directory:

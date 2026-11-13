@@ -110,7 +110,10 @@ ugyanebbe a futáshoz kötött historyba írhat. Az observation contract szerint
 át a hiányzó vagy érvénytelen megfigyelést méréssé.
 
 Ha PX4 egy lezárt nyers logot adott, minden flight CLI `--px4-ulog /path/to/log.ulg`
-paramétere a futás artifact könyvtárának `px4-ulogs/` részébe archiválja. A
+paramétere a futás artifact könyvtárának `px4-ulogs/` részébe archiválja. Headless
+P0 futásoknál a scenario runner `PX4_RUN_DIR` / `BYTEWOLF_PX4_RUN_DIR` alatt
+tartja meg a SITL working directory-t; a CLI ebből automatikusan a legfrissebb
+`.ulg`-et archiválja, ha `--px4-ulog` nincs megadva. A
 run-linked manifest SHA-256-ot, méretet és `captured` státuszt ír. Forrás nélkül
 is keletkezik `unavailable` manifest; ez szándékosan nem állítja, hogy az ULog
 rögzült. A nyers ULogot az audit/history retentionnél hosszabb ideig kell

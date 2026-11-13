@@ -316,6 +316,7 @@ class ScenarioRunner:
         self._sitl_start_attempts = sitl_start_attempts
         self._sitl_retry_delay_s = sitl_retry_delay_s
         self._sleep = sleep
+        self._scenario_subprocess_env: dict[str, str] = {}
 
     def run(self, scenarios: Iterable[Scenario], output_directory: Path) -> Path:
         """Run every scenario and write one JSON report, including failures."""
@@ -354,8 +355,12 @@ class ScenarioRunner:
     ) -> tuple[ScenarioResult, ...]:
         """Preserve the accepted P0.v1 shared-SITL execution contract."""
         sitl_process: ManagedProcess | None = None
+        px4_run_directory = output_directory / "px4-sitl-run"
+        px4_run_directory.mkdir(parents=True, exist_ok=True)
+        sitl_environment = _px4_run_directory_environment(px4_run_directory)
+        self._scenario_subprocess_env = sitl_environment
         try:
-            sitl_process = self._start_sitl()
+            sitl_process = self._start_sitl(sitl_environment)
             launch_failure = self._sitl_launch_failure(sitl_process)
             if launch_failure is not None:
                 return tuple(
@@ -376,6 +381,7 @@ class ScenarioRunner:
         finally:
             if sitl_process is not None:
                 self._stop_sitl(sitl_process)
+            self._scenario_subprocess_env = {}
 
     def _run_with_fresh_sitl(self, scenario: Scenario, output_directory: Path) -> ScenarioResult:
         """Run one disruptive scenario against a brand-new bounded SITL lifecycle."""
@@ -385,6 +391,16 @@ class ScenarioRunner:
             # A wind scenario must never fall back to a still-air run: that would
             # record a wind condition the simulation never applied.
             return self._blocked_result(scenario, f"Could not build the wind fixture: {error}", output_directory)
+
+        artifact_directory = self._artifact_directory(output_directory, scenario)
+        px4_run_directory = artifact_directory / "px4-run-root"
+        px4_run_directory.mkdir(parents=True, exist_ok=True)
+        px4_env = _px4_run_directory_environment(px4_run_directory)
+        self._scenario_subprocess_env = px4_env
+        if environment is None:
+            environment = px4_env
+        else:
+            environment = {**environment, **px4_env}
 
         sitl_process: ManagedProcess | None = None
         try:
@@ -410,6 +426,7 @@ class ScenarioRunner:
         finally:
             if sitl_process is not None:
                 self._stop_sitl(sitl_process)
+            self._scenario_subprocess_env = {}
 
     def _run_observed_wind_scenario(
         self, scenario: Scenario, output_directory: Path, wind: WindEvidence
@@ -582,6 +599,7 @@ class ScenarioRunner:
             )
         if self._uses_default_command_runner:
             return self._run_isolated_scenario(scenario, command, artifact_directory)
+        subprocess_env = {**os.environ, **self._scenario_subprocess_env} if self._scenario_subprocess_env else None
         try:
             completed = self._command_runner(
                 command,
@@ -590,6 +608,7 @@ class ScenarioRunner:
                 text=True,
                 cwd=self._project_root,
                 timeout=self._scenario_timeout_s,
+                env=subprocess_env,
             )
         except subprocess.TimeoutExpired as error:
             stdout = error.stdout.decode() if isinstance(error.stdout, bytes) else error.stdout or ""
@@ -605,12 +624,14 @@ class ScenarioRunner:
         self, scenario: Scenario, command: tuple[str, ...], artifact_directory: Path
     ) -> ScenarioResult:
         """Run a bounded mission; its CLI shuts down its MAVSDK child in ``finally``."""
+        subprocess_env = {**os.environ, **self._scenario_subprocess_env} if self._scenario_subprocess_env else None
         process = subprocess.Popen(
             command,
             cwd=self._project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=subprocess_env,
         )
         deadline = time.monotonic() + self._scenario_timeout_s
         while process.poll() is None and time.monotonic() < deadline:
@@ -744,6 +765,7 @@ class ScenarioRunner:
             artifact_directory=str(artifact_directory),
         )
         violation = scenario_contract_violation(
+            scenario_identifier=scenario.identifier,
             fallback_expectation=scenario.fallback_expectation,
             stdout=stdout,
             stderr=stderr,
@@ -767,6 +789,16 @@ def _process_started(process: ManagedProcess) -> bool:
 def _terminate_process(process_id: int) -> None:
     """Stop the lifecycle-owning launcher without requesting a macOS session."""
     os.kill(process_id, signal.SIGTERM)
+
+
+def _px4_run_directory_environment(px4_run_directory: Path) -> dict[str, str]:
+    """Environment for a retained PX4 SITL working directory (parameters and ULogs)."""
+    location = str(px4_run_directory)
+    return {
+        "BYTEWOLF_PX4_RUN_DIR": location,
+        "PX4_RUN_DIR": location,
+        "PX4_RUN_DIR_KEEP": "1",
+    }
 
 
 def _latest_artifact(directory: Path) -> Path | None:

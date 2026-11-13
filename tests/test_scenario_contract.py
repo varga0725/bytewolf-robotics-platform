@@ -26,6 +26,7 @@ class ScenarioContractTests(unittest.TestCase):
                 encoding="utf-8",
             )
             violation = scenario_contract_violation(
+                scenario_identifier="waypoint-timeout-fallback",
                 fallback_expectation="land-once-after-waypoint-timeout",
                 stdout="",
                 stderr="Connection timed out",
@@ -54,6 +55,7 @@ class ScenarioContractTests(unittest.TestCase):
                 encoding="utf-8",
             )
             violation = scenario_contract_violation(
+                scenario_identifier="waypoint-timeout-fallback",
                 fallback_expectation="land-once-after-waypoint-timeout",
                 stdout="",
                 stderr="",
@@ -62,9 +64,33 @@ class ScenarioContractTests(unittest.TestCase):
 
         self.assertIsNone(violation)
 
+    def test_takeoff_hover_rejects_low_peak_altitude(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            (directory / "run.json").write_text(
+                json.dumps(
+                    {
+                        "events": [{"phase": "arming"}, {"phase": "completed"}],
+                        "outcome": "completed",
+                        "peak_relative_altitude_m": 0.5,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            violation = scenario_contract_violation(
+                scenario_identifier="takeoff-hover-land",
+                fallback_expectation="land-once-after-airborne-failure",
+                stdout="",
+                stderr="",
+                artifact_directory=directory,
+            )
+
+        self.assertIn("peak relative altitude", violation or "")
+
     def test_waypoint_timeout_rejects_sitl_launch_failure(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             violation = scenario_contract_violation(
+                scenario_identifier="waypoint-timeout-fallback",
                 fallback_expectation="land-once-after-waypoint-timeout",
                 stdout="",
                 stderr=format_sitl_launch_failed(2, "qt missing"),
