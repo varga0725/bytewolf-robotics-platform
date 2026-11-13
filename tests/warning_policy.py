@@ -1,10 +1,7 @@
-"""Suite hooks for deferred RuntimeWarning and unawaited-coroutine detection."""
+"""Turn selected warnings into errors for the whole unittest process."""
 
 from __future__ import annotations
 
 import warnings
 
-from tests import unawaited_coroutine_guard
-
 warnings.filterwarnings("error", category=RuntimeWarning)
-unawaited_coroutine_guard.install()

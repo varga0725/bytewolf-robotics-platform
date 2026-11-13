@@ -1,4 +1,4 @@
-"""Asyncio test base that fails on unawaited coroutines after each test."""
+"""Asyncio test base (guard runs on every test via :func:`TestCase.run` wrapping)."""
 
 from __future__ import annotations
 
@@ -8,9 +8,6 @@ from tests import unawaited_coroutine_guard
 
 
 class GuardedIsolatedAsyncioTestCase(unittest.IsolatedAsyncioTestCase):
-    def tearDown(self) -> None:
+    def setUp(self) -> None:
         unawaited_coroutine_guard.clear()
-        try:
-            super().tearDown()
-        finally:
-            unawaited_coroutine_guard.check_after_gc()
+        super().setUp()

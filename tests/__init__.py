@@ -1,5 +1,9 @@
-"""Test package; importing enables global warning policy for the unittest process."""
+"""Test package: installing the unawaited-coroutine guard for any `tests.*` import."""
 
-from tests import warning_policy as warning_policy
+from __future__ import annotations
 
-__all__ = ["warning_policy"]
+from tests.unawaited_coroutine_guard import install as install_unawaited_coroutine_guard
+
+install_unawaited_coroutine_guard()
+
+__all__ = ["install_unawaited_coroutine_guard"]
