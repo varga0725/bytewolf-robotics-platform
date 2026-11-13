@@ -130,11 +130,73 @@ class WindowCleanupSafetyTests(unittest.TestCase):
             with patch("brain.mission.demo_visual_capture.shutil.which", return_value="/usr/bin/gz"):
                 self.assertIsNone(_launch_gz_gui_client(":199", attach_to_running_server=True))
 
-    def test_gz_gui_extra_args_are_parsed_with_shlex(self) -> None:
-        from brain.mission.demo_visual_capture import _gz_gui_extra_args
+    def test_gz_gui_extra_args_allowlist_accepts_render_engine(self) -> None:
+        from brain.mission.demo_visual_capture import _validated_gz_gui_args
 
-        with patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_GUI_ARGS": "--render-engine ogre"}, clear=False):
-            self.assertEqual(_gz_gui_extra_args(), ["--render-engine", "ogre"])
+        with patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_GUI_ARGS": "--render-engine ogre2"}, clear=False):
+            allowed, rejected = _validated_gz_gui_args()
+            self.assertEqual(allowed, ["--render-engine", "ogre2"])
+            self.assertEqual(rejected, [])
+
+    def test_gz_gui_extra_args_rejects_unknown_tokens(self) -> None:
+        from brain.mission.demo_visual_capture import _validated_gz_gui_args
+
+        with patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_GUI_ARGS": "--foo bar"}, clear=False):
+            allowed, rejected = _validated_gz_gui_args()
+            self.assertEqual(allowed, [])
+            self.assertEqual(rejected, ["--foo", "bar"])
+
+    def test_gz_gui_extra_env_rejects_ld_preload_gz_ip_and_path(self) -> None:
+        from brain.mission.demo_visual_capture import _CaptureSession, _gz_transport_env, _parse_gz_gui_extra_env
+
+        with patch.dict(
+            os.environ,
+            {
+                "BYTEWOLF_DEMO_GZ_GUI_EXTRA_ENV": (
+                    '{"LD_PRELOAD":"/evil.so","GZ_IP":"192.0.2.2","PATH":"/tmp","LIBGL_ALWAYS_SOFTWARE":"1"}'
+                )
+            },
+            clear=False,
+        ):
+            pairs, rejected = _parse_gz_gui_extra_env()
+            self.assertEqual(pairs, {"LIBGL_ALWAYS_SOFTWARE": "1"})
+            self.assertEqual(sorted(rejected), ["GZ_IP", "LD_PRELOAD", "PATH"])
+            session = _CaptureSession()
+            env = _gz_transport_env(":199", attach_to_running_server=True, session=session)
+            assert env is not None
+            self.assertEqual(env["GZ_IP"], "127.0.0.1")
+            self.assertEqual(env["DISPLAY"], ":199")
+            self.assertEqual(env.get("LD_PRELOAD"), os.environ.get("LD_PRELOAD"))
+            self.assertEqual(sorted(session.gz_gui_extra_env_rejected), ["GZ_IP", "LD_PRELOAD", "PATH"])
+
+    def test_png_uniform_black_frame_is_rejected(self) -> None:
+        from brain.mission.demo_visual_capture import _png_has_non_uniform_content
+
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow not installed")
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "black.png"
+            Image.new("RGB", (64, 64), color=(0, 0, 0)).save(path)
+            self.assertFalse(_png_has_non_uniform_content(path))
+
+    def test_screenshot_skipped_when_gz_gui_not_alive(self) -> None:
+        from brain.mission.demo_visual_capture import DemoFlightScreenCapture, _CaptureSession
+
+        with TemporaryDirectory() as directory:
+            shot = Path(directory) / "mid.png"
+            capture = DemoFlightScreenCapture(Path(directory) / "clip.mp4", mode="xvfb")
+            gui = MagicMock(poll=MagicMock(return_value=1))
+            capture._session = _CaptureSession(
+                screenshot_path=shot,
+                launched_gz_process=gui,
+                grab_region=(640, 480, 0, 0),
+                grab_display=":199",
+            )
+            capture._capture_screenshot_frame()
+            self.assertFalse(capture._session.screenshot_gui_alive)
+            self.assertIsNone(capture._session.screenshot_relative_path)
 
     def test_launch_gz_gui_defaults_x11_off_xvfb_on(self) -> None:
         from brain.mission.demo_visual_capture import _should_launch_gz_gui

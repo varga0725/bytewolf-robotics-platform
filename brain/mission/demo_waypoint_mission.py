@@ -283,18 +283,29 @@ def demo_waypoint_mission_evidence_document(
     return document
 
 
+def _screenshot_counts_as_visual_evidence(screen: dict[str, object]) -> bool:
+    path = screen.get("screenshot_relative_path") or screen.get("screen_capture_screenshot_relative_path")
+    if not isinstance(path, str) or not path.strip():
+        return False
+    if screen.get("screenshot_gui_alive") is not True:
+        return False
+    if screen.get("screenshot_non_uniform") is not True:
+        return False
+    return True
+
+
 def _document_has_visual_evidence(document: dict[str, object]) -> bool:
     screen = document.get("screen_capture")
     if isinstance(screen, dict) and screen.get("status") == "captured":
         return True
-    screenshot = document.get("screen_capture_screenshot_relative_path")
-    if isinstance(screenshot, str) and screenshot.strip():
+    if isinstance(screen, dict) and _screenshot_counts_as_visual_evidence(screen):
         return True
-    if isinstance(screen, dict):
-        nested = screen.get("screenshot_relative_path")
-        if isinstance(nested, str) and nested.strip():
-            return True
-    return False
+    top_level = {
+        "screenshot_relative_path": document.get("screen_capture_screenshot_relative_path"),
+        "screenshot_gui_alive": document.get("screen_capture_screenshot_gui_alive"),
+        "screenshot_non_uniform": document.get("screen_capture_screenshot_non_uniform"),
+    }
+    return _screenshot_counts_as_visual_evidence(top_level)
 
 
 def acceptance_run_is_clean(

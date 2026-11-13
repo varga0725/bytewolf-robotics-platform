@@ -26,6 +26,7 @@ from brain.mission.demo_waypoint_mission import (
     load_demo_waypoint_plan_config,
     mission_items_document,
     validate_demo_waypoint_mission_progress,
+    _screenshot_counts_as_visual_evidence,
 )
 from brain.mission.demo_waypoint_reviewed_plan import require_matching_demo_waypoint_approval
 from brain.mission.execution import MissionExecution
@@ -350,10 +351,16 @@ def _write_acceptance_evidence(
     document["ulog_status"] = ulog_status
     if ulog_sha256 is not None:
         document["px4_ulog_sha256"] = ulog_sha256
+    _flight_obs_factory = getattr(adapter, "demo_flight_observation_document", None)
+    if callable(_flight_obs_factory):
+        _flight_observation = _flight_obs_factory()
+        if isinstance(_flight_observation, dict):
+            document["flight_observation"] = _flight_observation
     if screen_capture_status:
-        screenshot = screen_capture_status.get("screenshot_relative_path")
-        if isinstance(screenshot, str) and screenshot.strip():
-            document["screen_capture_screenshot_relative_path"] = screenshot
+        if _screenshot_counts_as_visual_evidence(screen_capture_status):
+            document["screen_capture_screenshot_relative_path"] = screen_capture_status.get("screenshot_relative_path")
+            document["screen_capture_screenshot_gui_alive"] = screen_capture_status.get("screenshot_gui_alive")
+            document["screen_capture_screenshot_non_uniform"] = screen_capture_status.get("screenshot_non_uniform")
     if ulog_status != "captured":
         document["overall_status"] = "failed"
         document["failure_reason"] = ulog_failure_reason or "PX4 ULog was not archived before evidence was written."

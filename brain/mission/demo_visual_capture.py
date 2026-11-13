@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -38,6 +39,10 @@ class CaptureResult:
     gz_gui_log_relative_path: str | None = None
     gz_gui_exit_code: int | None = None
     screenshot_relative_path: str | None = None
+    screenshot_gui_alive: bool | None = None
+    screenshot_non_uniform: bool | None = None
+    gz_gui_extra_env_rejected: list[str] | None = None
+    gz_gui_args_rejected: list[str] | None = None
 
     def as_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {"status": self.status}
@@ -57,6 +62,14 @@ class CaptureResult:
             payload["gz_gui_exit_code"] = self.gz_gui_exit_code
         if self.screenshot_relative_path is not None:
             payload["screenshot_relative_path"] = self.screenshot_relative_path
+        if self.screenshot_gui_alive is not None:
+            payload["screenshot_gui_alive"] = self.screenshot_gui_alive
+        if self.screenshot_non_uniform is not None:
+            payload["screenshot_non_uniform"] = self.screenshot_non_uniform
+        if self.gz_gui_extra_env_rejected:
+            payload["gz_gui_extra_env_rejected"] = self.gz_gui_extra_env_rejected
+        if self.gz_gui_args_rejected:
+            payload["gz_gui_args_rejected"] = self.gz_gui_args_rejected
         return payload
 
 
@@ -76,6 +89,12 @@ class _CaptureSession:
     gz_gui_log_path: Path | None = None
     screenshot_path: Path | None = None
     screenshot_relative_path: str | None = None
+    screenshot_gui_alive: bool | None = None
+    screenshot_non_uniform: bool | None = None
+    screenshot_thread: threading.Thread | None = None
+    screenshot_stop: threading.Event | None = None
+    gz_gui_extra_env_rejected: list[str] = field(default_factory=list)
+    gz_gui_args_rejected: list[str] = field(default_factory=list)
 
     def cleanup(self) -> None:
         for process in reversed(self.child_processes):
@@ -175,6 +194,7 @@ class DemoFlightScreenCapture:
             self._session.cleanup()
             return self._result
         self._stop_gui_liveness_sampling()
+        self._stop_screenshot_thread()
         if self._ffmpeg is not None and self._ffmpeg.poll() is None:
             if self._ffmpeg.stdin is not None:
                 try:
@@ -193,6 +213,11 @@ class DemoFlightScreenCapture:
         samples = list(self._session.gui_liveness_samples)
         log_relative = _artifact_relative_path(self.artifact_directory, self._session.gz_gui_log_path)
         screenshot_relative = self._session.screenshot_relative_path
+        screenshot_valid = (
+            screenshot_relative is not None
+            and self._session.screenshot_gui_alive is True
+            and self._session.screenshot_non_uniform is True
+        )
         should_have_gui = _should_launch_gz_gui(self.mode)
         launched_gui = self._session.launched_gz_gui and gui_process is not None
         self._session.cleanup()
@@ -203,7 +228,11 @@ class DemoFlightScreenCapture:
             "gz_gui_alive_samples": samples or None,
             "gz_gui_log_relative_path": log_relative,
             "gz_gui_exit_code": gui_exit_code,
-            "screenshot_relative_path": screenshot_relative,
+            "screenshot_relative_path": screenshot_relative if screenshot_valid else None,
+            "screenshot_gui_alive": self._session.screenshot_gui_alive,
+            "screenshot_non_uniform": self._session.screenshot_non_uniform,
+            "gz_gui_extra_env_rejected": self._session.gz_gui_extra_env_rejected or None,
+            "gz_gui_args_rejected": self._session.gz_gui_args_rejected or None,
         }
         if elapsed > self.max_duration_s:
             return CaptureResult("failed", reason="capture exceeded max duration before stop", **common)
@@ -276,17 +305,40 @@ class DemoFlightScreenCapture:
 
         capture = self
 
+        stop = threading.Event()
+        self._session.screenshot_stop = stop
+
         def worker() -> None:
             try:
                 delay = float(os.environ.get("BYTEWOLF_DEMO_SCREENSHOT_DELAY_S", "30"))
             except ValueError:
                 delay = 30.0
-            _wait_s(max(0.0, delay))
+            if stop.wait(max(0.0, delay)):
+                return
             capture._capture_screenshot_frame()
 
-        threading.Thread(target=worker, name="demo-screenshot", daemon=True).start()
+        thread = threading.Thread(target=worker, name="demo-screenshot", daemon=True)
+        self._session.screenshot_thread = thread
+        thread.start()
+
+    def _stop_screenshot_thread(self) -> None:
+        stop = self._session.screenshot_stop
+        thread = self._session.screenshot_thread
+        if stop is not None:
+            stop.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+        self._session.screenshot_stop = None
+        self._session.screenshot_thread = None
 
     def _capture_screenshot_frame(self) -> None:
+        if self._session.screenshot_stop is not None and self._session.screenshot_stop.is_set():
+            return
+        gui_process = self._session.launched_gz_process
+        gui_alive = _child_process_is_alive(gui_process)
+        self._session.screenshot_gui_alive = gui_alive
+        if not gui_alive:
+            return
         ffmpeg = shutil.which("ffmpeg")
         region = self._session.grab_region
         display = self._session.grab_display
@@ -318,6 +370,11 @@ class DemoFlightScreenCapture:
         except (OSError, subprocess.TimeoutExpired):
             return
         if completed.returncode != 0 or not output.is_file() or output.stat().st_size <= 0:
+            self._session.screenshot_non_uniform = False
+            return
+        self._session.screenshot_non_uniform = _png_has_non_uniform_content(output)
+        if not self._session.screenshot_non_uniform:
+            output.unlink(missing_ok=True)
             return
         if self.evidence_directory is not None:
             try:
@@ -451,37 +508,140 @@ def _artifact_relative_path(artifact_directory: Path | None, path: Path | None) 
         return path.name
 
 
-def _parse_gz_gui_extra_env() -> dict[str, str]:
-    raw = os.environ.get("BYTEWOLF_DEMO_GZ_GUI_EXTRA_ENV", "")
-    extra: dict[str, str] = {}
-    for token in raw.split(","):
+_GZ_GUI_ENV_ALLOWLIST = frozenset(
+    {
+        "LIBGL_ALWAYS_SOFTWARE",
+        "GALLIUM_DRIVER",
+        "MESA_LOADER_DRIVER_OVERRIDE",
+        "MESA_GL_VERSION_OVERRIDE",
+        "MESA_GLSL_VERSION_OVERRIDE",
+        "QT_QPA_PLATFORM",
+        "QT_XCB_GL_INTEGRATION",
+        "QT_QUICK_BACKEND",
+        "QT_OPENGL",
+        "GZ_GUI_RESOURCE_PATH",
+        "OGRE_RTT_MODE",
+    }
+)
+
+
+def _repository_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _parse_gz_gui_extra_env() -> tuple[dict[str, str], list[str]]:
+    raw = os.environ.get("BYTEWOLF_DEMO_GZ_GUI_EXTRA_ENV", "").strip()
+    if not raw:
+        return {}, []
+    rejected: list[str] = []
+    pairs: dict[str, str] = {}
+    if raw.startswith("{"):
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}, ["BYTEWOLF_DEMO_GZ_GUI_EXTRA_ENV"]
+        if not isinstance(loaded, dict):
+            return {}, ["BYTEWOLF_DEMO_GZ_GUI_EXTRA_ENV"]
+        for key, value in loaded.items():
+            key_s = str(key)
+            if key_s in _GZ_GUI_ENV_ALLOWLIST:
+                pairs[key_s] = str(value)
+            else:
+                rejected.append(key_s)
+        return pairs, rejected
+    for token in raw.split(";"):
         piece = token.strip()
         if not piece or "=" not in piece:
             continue
         key, value = piece.split("=", 1)
         key = key.strip()
-        if key:
-            extra[key] = value.strip()
-    return extra
+        if not key:
+            continue
+        if key in _GZ_GUI_ENV_ALLOWLIST:
+            pairs[key] = value.strip()
+        else:
+            rejected.append(key)
+    return pairs, rejected
 
 
-def _gz_gui_extra_args() -> list[str]:
+def _validated_gz_gui_args() -> tuple[list[str], list[str]]:
     raw = os.environ.get("BYTEWOLF_DEMO_GZ_GUI_ARGS", "").strip()
     if not raw:
-        return []
-    return shlex.split(raw)
+        return [], []
+    tokens = shlex.split(raw)
+    allowed: list[str] = []
+    rejected: list[str] = []
+    repo_root = _repository_root().resolve()
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--render-engine" and index + 1 < len(tokens) and tokens[index + 1] in {"ogre", "ogre2"}:
+            allowed.extend([token, tokens[index + 1]])
+            index += 2
+            continue
+        if token in {"-v", "--verbose"} and index + 1 < len(tokens):
+            level = tokens[index + 1]
+            if level.isdigit() and 0 <= int(level) <= 4:
+                allowed.extend([token, level])
+                index += 2
+                continue
+        if token == "--gui-config" and index + 1 < len(tokens):
+            candidate = Path(tokens[index + 1])
+            if not candidate.is_absolute():
+                candidate = (repo_root / candidate).resolve()
+            else:
+                candidate = candidate.resolve()
+            try:
+                candidate.relative_to(repo_root)
+                allowed.extend(["--gui-config", str(candidate)])
+                index += 2
+                continue
+            except ValueError:
+                rejected.append(token)
+                index += 2
+                continue
+        rejected.append(token)
+        index += 1
+    return allowed, rejected
 
 
-def _gz_transport_env(display: str, *, attach_to_running_server: bool) -> dict[str, str] | None:
+def _png_has_non_uniform_content(path: Path) -> bool:
+    try:
+        from PIL import Image, ImageStat
+    except ImportError:
+        return path.stat().st_size > 512
+    try:
+        image = Image.open(path).convert("L")
+    except OSError:
+        return False
+    stats = ImageStat.Stat(image)
+    variance = stats.var[0]
+    mean_luma = stats.mean[0]
+    if variance < 8.0:
+        return False
+    if mean_luma < 2.0 or mean_luma > 253.0:
+        return False
+    return True
+
+
+def _gz_transport_env(
+    display: str,
+    *,
+    attach_to_running_server: bool,
+    session: _CaptureSession | None = None,
+) -> dict[str, str] | None:
     env = dict(os.environ)
-    env["DISPLAY"] = display
     gz_ip = env.get("GZ_IP", "127.0.0.1").strip()
     if gz_ip != "127.0.0.1":
         return None
-    env["GZ_IP"] = "127.0.0.1"
     if attach_to_running_server:
         env.setdefault("PX4_GZ_STANDALONE", "1")
-    env.update(_parse_gz_gui_extra_env())
+    extra, rejected_env = _parse_gz_gui_extra_env()
+    if session is not None:
+        session.gz_gui_extra_env_rejected = rejected_env
+    env.update(extra)
+    env["DISPLAY"] = display
+    env["GZ_IP"] = "127.0.0.1"
     return env
 
 
@@ -495,10 +655,13 @@ def _launch_gz_gui_client(
     gz = shutil.which("gz")
     if gz is None:
         return None
-    env = _gz_transport_env(display, attach_to_running_server=attach_to_running_server)
+    env = _gz_transport_env(display, attach_to_running_server=attach_to_running_server, session=session)
     if env is None:
         return None
-    command = [gz, "sim", "-g", *_gz_gui_extra_args()]
+    extra_args, rejected_args = _validated_gz_gui_args()
+    if session is not None:
+        session.gz_gui_args_rejected = rejected_args
+    command = [gz, "sim", "-g", *extra_args]
     log_handle: TextIO | None = None
     log_path: Path | None = None
     if artifact_directory is not None:

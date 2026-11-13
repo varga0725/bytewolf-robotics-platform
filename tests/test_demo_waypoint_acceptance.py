@@ -10,7 +10,11 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from brain.cli import acceptance_demo_waypoint_mission
-from brain.mission.demo_waypoint_mission import acceptance_run_is_clean, consecutive_acceptance_summary
+from brain.mission.demo_waypoint_mission import (
+    _document_has_visual_evidence,
+    acceptance_run_is_clean,
+    consecutive_acceptance_summary,
+)
 from brain.mission.demo_waypoint_reviewed_plan import write_reviewed_demo_waypoint_plan
 from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig, default_demo_waypoint_loop
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
@@ -94,14 +98,42 @@ class AcceptanceEvidenceTests(unittest.TestCase):
         }
         self.assertFalse(acceptance_run_is_clean(document))
 
-    def test_screenshot_counts_as_visual_evidence(self) -> None:
+    def test_screenshot_counts_as_visual_evidence_when_valid(self) -> None:
+        document = {
+            "overall_status": "passed",
+            "trajectory_png_relative_path": "trajectory.png",
+            "px4_ulog_relative_path": "runs/x.ulg",
+            "screen_capture_screenshot_relative_path": "screen.png",
+            "screen_capture_screenshot_gui_alive": True,
+            "screen_capture_screenshot_non_uniform": True,
+        }
+        self.assertTrue(acceptance_run_is_clean(document))
+
+    def test_failed_capture_with_dead_gui_screenshot_is_not_visual_evidence(self) -> None:
+        document = {
+            "overall_status": "passed",
+            "trajectory_png_relative_path": "trajectory.png",
+            "px4_ulog_relative_path": "runs/x.ulg",
+            "screen_capture": {
+                "status": "failed",
+                "gz_gui_alive_at_stop": False,
+                "gz_gui_exit_code": 1,
+                "screenshot_relative_path": "s.png",
+                "screenshot_gui_alive": False,
+            },
+        }
+        self.assertFalse(_document_has_visual_evidence(document))
+        self.assertFalse(acceptance_run_is_clean(document))
+
+    def test_bare_screenshot_path_without_gui_alive_flags_is_not_visual_evidence(self) -> None:
         document = {
             "overall_status": "passed",
             "trajectory_png_relative_path": "trajectory.png",
             "px4_ulog_relative_path": "runs/x.ulg",
             "screen_capture_screenshot_relative_path": "screen.png",
         }
-        self.assertTrue(acceptance_run_is_clean(document))
+        self.assertFalse(_document_has_visual_evidence(document))
+        self.assertFalse(acceptance_run_is_clean(document))
 
     def test_visual_evidence_requirement_can_be_disabled(self) -> None:
         document = {

@@ -55,6 +55,9 @@ async def execute_demo_waypoint_mission(
             timeout=config.upload_timeout_s,
         )
         mission_uploaded = True
+        adapter._in_air_tracker_ready_before_arm = await adapter._wait_for_in_air_tracker_subscription(
+            min(3.0, action_timeout_s)
+        )
         await asyncio.wait_for(adapter._drone.action.arm(), timeout=action_timeout_s)
         armed = True
         await asyncio.wait_for(adapter._drone.mission.start_mission(), timeout=action_timeout_s)

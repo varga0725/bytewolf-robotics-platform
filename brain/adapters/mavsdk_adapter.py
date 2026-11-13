@@ -103,6 +103,10 @@ class MavsdkMissionAdapter:
         self._peak_altitude_task: asyncio.Task[None] | None = None
         self._observed_in_air = False
         self._observed_landed_state_airborne = False
+        self._observed_in_air_at: datetime | None = None
+        self._observed_landed_state_airborne_at: datetime | None = None
+        self._in_air_tracker_first_sample_at: datetime | None = None
+        self._in_air_tracker_ready_before_arm: bool | None = None
         self._flight_observation_stop: asyncio.Event | None = None
         self._flight_observation_tasks: list[asyncio.Task[None]] = []
 
@@ -296,19 +300,49 @@ class MavsdkMissionAdapter:
     def _mission_observed_airborne(self) -> bool:
         return bool(self._observed_in_air or self._observed_landed_state_airborne)
 
+    def demo_flight_observation_document(self) -> dict[str, object]:
+        def _iso(moment: datetime | None) -> str | None:
+            if moment is None:
+                return None
+            return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+        return {
+            "observed_in_air": self._observed_in_air,
+            "observed_in_air_at": _iso(self._observed_in_air_at),
+            "observed_landed_state_airborne": self._observed_landed_state_airborne,
+            "observed_landed_state_airborne_at": _iso(self._observed_landed_state_airborne_at),
+            "in_air_tracker_first_sample_at": _iso(self._in_air_tracker_first_sample_at),
+            "in_air_tracker_ready_before_arm": self._in_air_tracker_ready_before_arm,
+        }
+
+    async def _wait_for_in_air_tracker_subscription(self, timeout_s: float = 3.0) -> bool:
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while asyncio.get_running_loop().time() < deadline:
+            if self._in_air_tracker_first_sample_at is not None:
+                return True
+            await asyncio.sleep(0.05)
+        return False
+
     async def _start_flight_observation_tracking(self) -> None:
         self._observed_in_air = False
         self._observed_landed_state_airborne = False
+        self._observed_in_air_at = None
+        self._observed_landed_state_airborne_at = None
+        self._in_air_tracker_first_sample_at = None
+        self._in_air_tracker_ready_before_arm = None
         stop = asyncio.Event()
         self._flight_observation_stop = stop
 
         async def watch_in_air() -> None:
             try:
                 async for is_in_air in self._drone.telemetry.in_air():
+                    if self._in_air_tracker_first_sample_at is None:
+                        self._in_air_tracker_first_sample_at = datetime.now(UTC)
                     if stop.is_set():
                         return
-                    if is_in_air:
+                    if is_in_air and not self._observed_in_air:
                         self._observed_in_air = True
+                        self._observed_in_air_at = datetime.now(UTC)
             except asyncio.CancelledError:
                 return
 
@@ -318,8 +352,9 @@ class MavsdkMissionAdapter:
                     if stop.is_set():
                         return
                     state_name = getattr(landed, "name", str(landed))
-                    if state_name in {"IN_AIR", "FLYING", "TAKING_OFF"}:
+                    if state_name in {"IN_AIR", "FLYING", "TAKING_OFF"} and not self._observed_landed_state_airborne:
                         self._observed_landed_state_airborne = True
+                        self._observed_landed_state_airborne_at = datetime.now(UTC)
             except asyncio.CancelledError:
                 return
 
@@ -473,23 +508,56 @@ class MavsdkMissionAdapter:
         self, timeout_s: float, require_airborne_observation: bool = True
     ) -> None:
         """Wait for telemetry to observe a landed state within the bounded timeout."""
+
         async def wait_for_landing() -> None:
             observed_in_air = self._mission_observed_airborne() if require_airborne_observation else True
-            async for is_in_air in self._drone.telemetry.in_air():
-                if is_in_air:
-                    self._observed_in_air = True
-                observed_in_air = observed_in_air or is_in_air or self._mission_observed_airborne()
-                if not is_in_air and (observed_in_air or not require_airborne_observation):
+
+            async def consume_in_air() -> bool:
+                nonlocal observed_in_air
+                async for is_in_air in self._drone.telemetry.in_air():
+                    if is_in_air and not self._observed_in_air:
+                        self._observed_in_air = True
+                        self._observed_in_air_at = datetime.now(UTC)
+                    observed_in_air = (
+                        observed_in_air or is_in_air or self._mission_observed_airborne()
+                    )
+                    if not is_in_air and (observed_in_air or not require_airborne_observation):
+                        return True
+                return False
+
+            async def consume_landed_state() -> bool:
+                async for landed in self._drone.telemetry.landed_state():
+                    state_name = getattr(landed, "name", str(landed))
+                    if state_name in {"IN_AIR", "FLYING", "TAKING_OFF"} and not self._observed_landed_state_airborne:
+                        self._observed_landed_state_airborne = True
+                        self._observed_landed_state_airborne_at = datetime.now(UTC)
+                    if state_name == "ON_GROUND" and (
+                        self._mission_observed_airborne() or not require_airborne_observation
+                    ):
+                        return True
+                return False
+
+            in_air_task = asyncio.create_task(consume_in_air())
+            landed_task = asyncio.create_task(consume_landed_state())
+            try:
+                while not (in_air_task.done() and landed_task.done()):
+                    _done, _pending = await asyncio.wait(
+                        [in_air_task, landed_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for task in _done:
+                        if task.exception() is None and task.result():
+                            return
+                if in_air_task.exception() is None and in_air_task.result():
                     return
-            async for landed in self._drone.telemetry.landed_state():
-                state_name = getattr(landed, "name", str(landed))
-                if state_name in {"IN_AIR", "FLYING", "TAKING_OFF"}:
-                    self._observed_landed_state_airborne = True
-                if state_name == "ON_GROUND" and (
-                    self._mission_observed_airborne() or not require_airborne_observation
-                ):
+                if landed_task.exception() is None and landed_task.result():
                     return
-            raise RuntimeError("PX4 landing telemetry ended before confirming landing.")
+                raise RuntimeError("PX4 landing telemetry ended before confirming landing.")
+            finally:
+                for task in (in_air_task, landed_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(in_air_task, landed_task, return_exceptions=True)
 
         await asyncio.wait_for(wait_for_landing(), timeout=timeout_s)
 

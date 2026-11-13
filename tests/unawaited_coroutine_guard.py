@@ -37,11 +37,13 @@ def _wrap_unittest_run() -> None:
     _ORIGINAL_TEST_RUN = unittest.TestCase.run
 
     def run(self, result=None):  # type: ignore[no-untyped-def]
+        if result is None:
+            result = self.defaultTestResult()
         _begin_test(self)
         try:
             return _ORIGINAL_TEST_RUN(self, result)
         finally:
-            _end_test(self)
+            _end_test(self, result)
 
     unittest.TestCase.run = run  # type: ignore[method-assign]
 
@@ -51,9 +53,11 @@ def _begin_test(test_case: object) -> None:
     _TLS.test_case = test_case
 
 
-def _end_test(test_case: object) -> None:
+def _end_test(test_case: object, result: Any) -> None:
     try:
         check_after_gc(test_case)
+    except AssertionError as error:
+        result.addFailure(test_case, (AssertionError, error, error.__traceback__))
     finally:
         _TLS.test_case = None
 
