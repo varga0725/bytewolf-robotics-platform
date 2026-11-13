@@ -13,6 +13,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Protocol
 from uuid import uuid4
@@ -654,19 +655,31 @@ class ScenarioRunner:
             return None
         launch_environment = {**os.environ, **environment} if environment else None
         for attempt in range(self._sitl_start_attempts):
+            stderr_log = tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                prefix="sitl-launch-",
+                suffix=".log",
+                delete=False,
+            )
             try:
-                return self._process_starter(
+                process = self._process_starter(
                     self.sitl_command,
                     cwd=self._project_root,
                     env=launch_environment,
-                    # The process is intentionally long-lived and its output is never
-                    # consumed here.  Keeping it in pipes can block PX4 once a pipe
-                    # fills, preventing MAVLink from ever becoming available.
+                    # The process is intentionally long-lived. A pipe would fill and
+                    # block PX4/gz during multi-scenario P0 runs; logs go to a file
+                    # instead and only the tail is read on early exit.
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
+                    stderr=stderr_log,
                 )
+                stderr_log.close()
+                setattr(process, "stderr_log_path", Path(stderr_log.name))
+                return process
             except OSError:
+                stderr_log.close()
+                Path(stderr_log.name).unlink(missing_ok=True)
                 if attempt + 1 == self._sitl_start_attempts:
                     raise
                 self._sleep(self._sitl_retry_delay_s)

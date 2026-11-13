@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Callable, Protocol
 
 SITL_LAUNCH_FAILED = "sitl_launch_failed"
@@ -20,6 +21,16 @@ class LaunchedProcess(Protocol):
 
 def stderr_tail(process: LaunchedProcess, *, max_lines: int = _STDERR_TAIL_LINES) -> str:
     """Read the launcher stderr tail without blocking a still-running process."""
+    log_path = getattr(process, "stderr_log_path", None)
+    if isinstance(log_path, (str, Path)):
+        path = Path(log_path)
+        if path.is_file():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            lines = text.strip().splitlines()
+            if len(lines) > max_lines:
+                lines = lines[-max_lines:]
+            return "\n".join(lines)
+
     stream = process.stderr
     if stream is None:
         return ""

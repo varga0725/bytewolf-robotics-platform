@@ -515,7 +515,9 @@ class WindScenarioEvidenceTests(unittest.TestCase):
         self.assertNotIn("start_new_session", process_starter.call_args.kwargs)
         self.assertIs(process_starter.call_args.kwargs["stdin"], subprocess.DEVNULL)
         self.assertIs(process_starter.call_args.kwargs["stdout"], subprocess.DEVNULL)
-        self.assertIs(process_starter.call_args.kwargs["stderr"], subprocess.PIPE)
+        stderr = process_starter.call_args.kwargs["stderr"]
+        self.assertIsNot(stderr, subprocess.PIPE)
+        self.assertIsNot(stderr, subprocess.DEVNULL)
         readiness_check.assert_called_once_with(sitl_process)
         self.assertTrue(sleep.called)
         terminate_process.assert_called_once_with(90210)
@@ -639,8 +641,6 @@ class WindScenarioEvidenceTests(unittest.TestCase):
     def test_runner_blocks_when_sitl_launcher_exits_during_startup(self) -> None:
         sitl_process = Mock(pid=90210)
         sitl_process.poll.side_effect = [2]
-        sitl_process.stderr = Mock()
-        sitl_process.stderr.read.return_value = "qt@5 missing\n"
         command_runner = Mock()
         runner = ScenarioRunner(
             command_runner=command_runner,
@@ -652,6 +652,9 @@ class WindScenarioEvidenceTests(unittest.TestCase):
         )
 
         with TemporaryDirectory() as temporary_directory:
+            log_path = Path(temporary_directory) / "launch.log"
+            log_path.write_text("qt@5 missing\n", encoding="utf-8")
+            sitl_process.stderr_log_path = log_path
             report = json.loads(runner.run(P0_SCENARIOS[:1], Path(temporary_directory)).read_text())
 
         self.assertEqual(command_runner.call_count, 0)
