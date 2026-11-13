@@ -130,6 +130,12 @@ class WindowCleanupSafetyTests(unittest.TestCase):
             with patch("brain.mission.demo_visual_capture.shutil.which", return_value="/usr/bin/gz"):
                 self.assertIsNone(_launch_gz_gui_client(":199", attach_to_running_server=True))
 
+    def test_gz_gui_extra_args_are_parsed_with_shlex(self) -> None:
+        from brain.mission.demo_visual_capture import _gz_gui_extra_args
+
+        with patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_GUI_ARGS": "--render-engine ogre"}, clear=False):
+            self.assertEqual(_gz_gui_extra_args(), ["--render-engine", "ogre"])
+
     def test_launch_gz_gui_defaults_x11_off_xvfb_on(self) -> None:
         from brain.mission.demo_visual_capture import _should_launch_gz_gui
 

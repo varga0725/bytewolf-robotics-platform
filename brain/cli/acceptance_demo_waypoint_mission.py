@@ -52,6 +52,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=[],
         help="Extra arguments forwarded to fly_demo_waypoint_mission (repeatable).",
     )
+    parser.add_argument(
+        "--require-visual-evidence",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require screen capture status 'captured' or a flight screenshot artifact.",
+    )
     return parser.parse_args(arguments)
 
 
@@ -85,6 +91,7 @@ async def _run_once(
     plan_file: Path,
     artifact_dir: Path,
     extra_args: list[str],
+    require_visual_evidence: bool,
 ) -> dict[str, object]:
     from brain.cli import fly_demo_waypoint_mission
     from brain.mission.demo_waypoint_mission import acceptance_run_is_clean
@@ -107,10 +114,20 @@ async def _run_once(
     if not latest.is_file():
         raise RuntimeError("Acceptance run did not write demo-waypoint-mission/latest.json.")
     document = json.loads(latest.read_text(encoding="utf-8"))
-    if not acceptance_run_is_clean(document):
+    if not acceptance_run_is_clean(document, require_visual_evidence=require_visual_evidence):
         document["overall_status"] = "failed"
         if not document.get("px4_ulog_relative_path"):
             document["ulog_status"] = "missing"
+        if document.get("disarm_reason"):
+            document.setdefault(
+                "failure_reason",
+                f"disarm used fallback path: {document.get('disarm_reason')}",
+            )
+        elif require_visual_evidence:
+            document.setdefault(
+                "failure_reason",
+                "visual evidence missing (need screen_capture.status=='captured' or screenshot)",
+            )
         latest.write_text(json.dumps(document, indent=2), encoding="utf-8")
     return document
 
@@ -151,6 +168,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                         plan_file=parsed.plan_file,
                         artifact_dir=run_dir,
                         extra_args=list(parsed.extra_cli_arg or []),
+                        require_visual_evidence=parsed.require_visual_evidence,
                     )
                 )
             )
@@ -160,14 +178,22 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(f"Run failed: {error}", file=sys.stderr)
         from brain.mission.demo_waypoint_mission import consecutive_acceptance_summary
 
-        summary = consecutive_acceptance_summary(run_documents, required_runs=parsed.runs)
+        summary = consecutive_acceptance_summary(
+            run_documents,
+            required_runs=parsed.runs,
+            require_visual_evidence=parsed.require_visual_evidence,
+        )
         summary["failure_reason"] = f"{type(error).__name__}: {error}"
         _write_summary(summary)
         return 1
 
     from brain.mission.demo_waypoint_mission import consecutive_acceptance_summary
 
-    summary = consecutive_acceptance_summary(run_documents, required_runs=parsed.runs)
+    summary = consecutive_acceptance_summary(
+        run_documents,
+        required_runs=parsed.runs,
+        require_visual_evidence=parsed.require_visual_evidence,
+    )
     _write_summary(summary)
     if summary["overall_status"] != "passed":
         print(

@@ -312,6 +312,7 @@ class AcceptanceLogicTests(unittest.TestCase):
             "overall_status": "passed",
             "trajectory_png_relative_path": "trajectory.png",
             "px4_ulog_relative_path": "runs/a.ulg",
+            "screen_capture": {"status": "captured", "relative_path": "screen.mp4"},
         }
         runs = [clean] * 3
         summary = consecutive_acceptance_summary(runs, required_runs=3)

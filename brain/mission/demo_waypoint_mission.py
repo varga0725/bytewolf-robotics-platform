@@ -283,14 +283,37 @@ def demo_waypoint_mission_evidence_document(
     return document
 
 
-def acceptance_run_is_clean(document: dict[str, object]) -> bool:
-    """A consecutive acceptance run needs completed outcome, ULog proof, and no timeout marker."""
+def _document_has_visual_evidence(document: dict[str, object]) -> bool:
+    screen = document.get("screen_capture")
+    if isinstance(screen, dict) and screen.get("status") == "captured":
+        return True
+    screenshot = document.get("screen_capture_screenshot_relative_path")
+    if isinstance(screenshot, str) and screenshot.strip():
+        return True
+    if isinstance(screen, dict):
+        nested = screen.get("screenshot_relative_path")
+        if isinstance(nested, str) and nested.strip():
+            return True
+    return False
+
+
+def acceptance_run_is_clean(
+    document: dict[str, object],
+    *,
+    require_visual_evidence: bool = True,
+) -> bool:
+    """A consecutive acceptance run needs completed outcome, ULog proof, and strict disarm/capture proof."""
     if document.get("overall_status") != "passed":
         return False
     ulog_path = document.get("px4_ulog_relative_path")
     if not ulog_path or document.get("ulog_status") == "missing":
         return False
     if not document.get("trajectory_png_relative_path"):
+        return False
+    disarm_reason = document.get("disarm_reason")
+    if disarm_reason:
+        return False
+    if require_visual_evidence and not _document_has_visual_evidence(document):
         return False
     return True
 
@@ -321,10 +344,14 @@ def load_demo_waypoint_plan_config(plan_path: Path) -> DemoWaypointMissionConfig
 
 
 def consecutive_acceptance_summary(
-    run_documents: list[dict[str, object]], *, required_runs: int
+    run_documents: list[dict[str, object]],
+    *,
+    required_runs: int,
+    require_visual_evidence: bool = True,
 ) -> dict[str, object]:
     statuses = [
-        "passed" if acceptance_run_is_clean(document) else "failed" for document in run_documents
+        "passed" if acceptance_run_is_clean(document, require_visual_evidence=require_visual_evidence) else "failed"
+        for document in run_documents
     ]
     passed = len(statuses) == required_runs and all(status == "passed" for status in statuses)
     return {

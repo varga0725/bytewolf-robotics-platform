@@ -36,6 +36,7 @@ async def execute_demo_waypoint_mission(
     rtl_wait_cap_s = max(config.rtl_timeout_s, landing_timeout_s + action_timeout_s + 5.0)
     adapter._demo_mission_items_reached = []
     await adapter._start_peak_altitude_tracking()
+    await adapter._start_flight_observation_tracking()
     try:
         plan = _build_mission_plan(
             home,
@@ -95,6 +96,7 @@ async def execute_demo_waypoint_mission(
             )
         raise
     finally:
+        await adapter._stop_flight_observation_tracking()
         await adapter._stop_peak_altitude_tracking()
         if mission_uploaded:
             try:

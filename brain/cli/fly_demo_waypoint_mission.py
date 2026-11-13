@@ -179,6 +179,8 @@ async def run(arguments: argparse.Namespace) -> None:
                     mode=capture_mode,
                     max_duration_s=max_capture_s,
                     evidence_directory=evidence_directory,
+                    artifact_directory=arguments.artifact_dir,
+                    screenshot_path=evidence_directory / f"screen-{evidence_stamp}.png",
                 )
                 screen_capture_result = (await asyncio.to_thread(flight_capture.start)).as_dict()
         try:
@@ -348,6 +350,10 @@ def _write_acceptance_evidence(
     document["ulog_status"] = ulog_status
     if ulog_sha256 is not None:
         document["px4_ulog_sha256"] = ulog_sha256
+    if screen_capture_status:
+        screenshot = screen_capture_status.get("screenshot_relative_path")
+        if isinstance(screenshot, str) and screenshot.strip():
+            document["screen_capture_screenshot_relative_path"] = screenshot
     if ulog_status != "captured":
         document["overall_status"] = "failed"
         document["failure_reason"] = ulog_failure_reason or "PX4 ULog was not archived before evidence was written."

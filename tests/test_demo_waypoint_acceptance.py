@@ -74,6 +74,44 @@ class AcceptanceEvidenceTests(unittest.TestCase):
         }
         self.assertFalse(acceptance_run_is_clean(document))
 
+    def test_fallback_disarm_reason_marks_run_unclean(self) -> None:
+        document = {
+            "overall_status": "passed",
+            "trajectory_png_relative_path": "trajectory.png",
+            "px4_ulog_relative_path": "runs/x.ulg",
+            "ulog_status": "captured",
+            "disarm_reason": "disarm on ground after landing wait timeout",
+            "screen_capture": {"status": "captured", "relative_path": "screen.mp4"},
+        }
+        self.assertFalse(acceptance_run_is_clean(document))
+
+    def test_missing_visual_evidence_marks_run_unclean_by_default(self) -> None:
+        document = {
+            "overall_status": "passed",
+            "trajectory_png_relative_path": "trajectory.png",
+            "px4_ulog_relative_path": "runs/x.ulg",
+            "screen_capture": {"status": "captured_no_gui"},
+        }
+        self.assertFalse(acceptance_run_is_clean(document))
+
+    def test_screenshot_counts_as_visual_evidence(self) -> None:
+        document = {
+            "overall_status": "passed",
+            "trajectory_png_relative_path": "trajectory.png",
+            "px4_ulog_relative_path": "runs/x.ulg",
+            "screen_capture_screenshot_relative_path": "screen.png",
+        }
+        self.assertTrue(acceptance_run_is_clean(document))
+
+    def test_visual_evidence_requirement_can_be_disabled(self) -> None:
+        document = {
+            "overall_status": "passed",
+            "trajectory_png_relative_path": "trajectory.png",
+            "px4_ulog_relative_path": "runs/x.ulg",
+        }
+        self.assertFalse(acceptance_run_is_clean(document))
+        self.assertTrue(acceptance_run_is_clean(document, require_visual_evidence=False))
+
     def test_summary_requires_ulog_for_pass(self) -> None:
         runs = [
             {

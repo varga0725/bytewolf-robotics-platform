@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -11,7 +12,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 _VALID_MODES = frozenset({"x11", "xvfb"})
 _GEOMETRY_PATTERN = re.compile(r"^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$")
@@ -34,6 +35,9 @@ class CaptureResult:
     gz_gui_pid: int | None = None
     gz_gui_alive_at_stop: bool | None = None
     gz_gui_alive_samples: list[dict[str, object]] | None = None
+    gz_gui_log_relative_path: str | None = None
+    gz_gui_exit_code: int | None = None
+    screenshot_relative_path: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {"status": self.status}
@@ -47,6 +51,12 @@ class CaptureResult:
             payload["gz_gui_alive_at_stop"] = self.gz_gui_alive_at_stop
         if self.gz_gui_alive_samples:
             payload["gz_gui_alive_samples"] = self.gz_gui_alive_samples
+        if self.gz_gui_log_relative_path is not None:
+            payload["gz_gui_log_relative_path"] = self.gz_gui_log_relative_path
+        if self.gz_gui_exit_code is not None:
+            payload["gz_gui_exit_code"] = self.gz_gui_exit_code
+        if self.screenshot_relative_path is not None:
+            payload["screenshot_relative_path"] = self.screenshot_relative_path
         return payload
 
 
@@ -60,6 +70,12 @@ class _CaptureSession:
     gui_liveness_samples: list[dict[str, object]] = field(default_factory=list)
     gui_liveness_stop: threading.Event | None = None
     gui_liveness_thread: threading.Thread | None = None
+    grab_region: tuple[int, int, int, int] | None = None
+    grab_display: str | None = None
+    gz_gui_log_file: TextIO | None = None
+    gz_gui_log_path: Path | None = None
+    screenshot_path: Path | None = None
+    screenshot_relative_path: str | None = None
 
     def cleanup(self) -> None:
         for process in reversed(self.child_processes):
@@ -70,6 +86,12 @@ class _CaptureSession:
                 except subprocess.TimeoutExpired:
                     process.kill()
         self.child_processes.clear()
+        if self.gz_gui_log_file is not None:
+            try:
+                self.gz_gui_log_file.close()
+            except OSError:
+                pass
+            self.gz_gui_log_file = None
 
 
 def resolve_screen_capture_mode(cli_value: str | None) -> str | None:
@@ -92,6 +114,8 @@ class DemoFlightScreenCapture:
     mode: str
     max_duration_s: float = _DEFAULT_MAX_CAPTURE_S
     evidence_directory: Path | None = None
+    artifact_directory: Path | None = None
+    screenshot_path: Path | None = None
 
     _session: _CaptureSession = field(default_factory=_CaptureSession, init=False)
     _ffmpeg: subprocess.Popen[Any] | None = field(default=None, init=False)
@@ -111,6 +135,10 @@ class DemoFlightScreenCapture:
             return CaptureResult("skipped", reason="capture surface unavailable")
         region, display = prepared
         width, height, x_offset, y_offset = region
+        self._session.grab_region = region
+        self._session.grab_display = display
+        if self.screenshot_path is not None:
+            self._session.screenshot_path = self.screenshot_path
         grab_input = f"{display}+{x_offset},{y_offset}"
         command = [
             ffmpeg,
@@ -139,6 +167,7 @@ class DemoFlightScreenCapture:
         self._started_at = time.monotonic()
         self._result = CaptureResult("recording")
         self._start_gui_liveness_sampling()
+        self._schedule_midflight_screenshot()
         return self._result
 
     def stop(self) -> CaptureResult:
@@ -159,8 +188,11 @@ class DemoFlightScreenCapture:
                 self._ffmpeg.kill()
         gui_process = self._session.launched_gz_process
         gui_pid = self._session.launched_gz_pid
+        gui_exit_code = gui_process.poll() if gui_process is not None else None
         gui_alive = _child_process_is_alive(gui_process)
         samples = list(self._session.gui_liveness_samples)
+        log_relative = _artifact_relative_path(self.artifact_directory, self._session.gz_gui_log_path)
+        screenshot_relative = self._session.screenshot_relative_path
         should_have_gui = _should_launch_gz_gui(self.mode)
         launched_gui = self._session.launched_gz_gui and gui_process is not None
         self._session.cleanup()
@@ -169,6 +201,9 @@ class DemoFlightScreenCapture:
             "gz_gui_pid": gui_pid,
             "gz_gui_alive_at_stop": gui_alive,
             "gz_gui_alive_samples": samples or None,
+            "gz_gui_log_relative_path": log_relative,
+            "gz_gui_exit_code": gui_exit_code,
+            "screenshot_relative_path": screenshot_relative,
         }
         if elapsed > self.max_duration_s:
             return CaptureResult("failed", reason="capture exceeded max duration before stop", **common)
@@ -229,6 +264,69 @@ class DemoFlightScreenCapture:
         self._session.gui_liveness_thread = thread
         thread.start()
 
+    def _schedule_midflight_screenshot(self) -> None:
+        if self._session.screenshot_path is None:
+            return
+        if os.environ.get("BYTEWOLF_DEMO_SCREEN_CAPTURE_SCREENSHOT", "1").strip().lower() in {
+            "0",
+            "false",
+            "no",
+        }:
+            return
+
+        capture = self
+
+        def worker() -> None:
+            try:
+                delay = float(os.environ.get("BYTEWOLF_DEMO_SCREENSHOT_DELAY_S", "30"))
+            except ValueError:
+                delay = 30.0
+            _wait_s(max(0.0, delay))
+            capture._capture_screenshot_frame()
+
+        threading.Thread(target=worker, name="demo-screenshot", daemon=True).start()
+
+    def _capture_screenshot_frame(self) -> None:
+        ffmpeg = shutil.which("ffmpeg")
+        region = self._session.grab_region
+        display = self._session.grab_display
+        output = self._session.screenshot_path
+        if ffmpeg is None or region is None or display is None or output is None:
+            return
+        width, height, x_offset, y_offset = region
+        command = [
+            ffmpeg,
+            "-y",
+            "-f",
+            "x11grab",
+            "-video_size",
+            f"{width}x{height}",
+            "-i",
+            f"{display}+{x_offset},{y_offset}",
+            "-frames:v",
+            "1",
+            str(output),
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30.0,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        if completed.returncode != 0 or not output.is_file() or output.stat().st_size <= 0:
+            return
+        if self.evidence_directory is not None:
+            try:
+                self._session.screenshot_relative_path = str(output.relative_to(self.evidence_directory))
+            except ValueError:
+                self._session.screenshot_relative_path = output.name
+        else:
+            self._session.screenshot_relative_path = output.name
+
     def _stop_gui_liveness_sampling(self) -> None:
         stop = self._session.gui_liveness_stop
         thread = self._session.gui_liveness_thread
@@ -244,7 +342,12 @@ class DemoFlightScreenCapture:
         if not display:
             return None
         if _should_launch_gz_gui("x11"):
-            process = _launch_gz_gui_client(display, attach_to_running_server=True)
+            process = _launch_gz_gui_client(
+                display,
+                attach_to_running_server=True,
+                artifact_directory=self.artifact_directory,
+                session=self._session,
+            )
             if process is None:
                 return None
             self._session.child_processes.append(process)
@@ -275,7 +378,12 @@ class DemoFlightScreenCapture:
         self._session.xvfb_display = display
         _wait_s(0.5)
         if _should_launch_gz_gui("xvfb"):
-            process = _launch_gz_gui_client(display, attach_to_running_server=True)
+            process = _launch_gz_gui_client(
+                display,
+                attach_to_running_server=True,
+                artifact_directory=self.artifact_directory,
+                session=self._session,
+            )
             if process is None:
                 return None
             self._session.child_processes.append(process)
@@ -334,6 +442,36 @@ def _gz_gui_attach_delay_s() -> float:
         return 5.0
 
 
+def _artifact_relative_path(artifact_directory: Path | None, path: Path | None) -> str | None:
+    if artifact_directory is None or path is None:
+        return None
+    try:
+        return str(path.relative_to(artifact_directory))
+    except ValueError:
+        return path.name
+
+
+def _parse_gz_gui_extra_env() -> dict[str, str]:
+    raw = os.environ.get("BYTEWOLF_DEMO_GZ_GUI_EXTRA_ENV", "")
+    extra: dict[str, str] = {}
+    for token in raw.split(","):
+        piece = token.strip()
+        if not piece or "=" not in piece:
+            continue
+        key, value = piece.split("=", 1)
+        key = key.strip()
+        if key:
+            extra[key] = value.strip()
+    return extra
+
+
+def _gz_gui_extra_args() -> list[str]:
+    raw = os.environ.get("BYTEWOLF_DEMO_GZ_GUI_ARGS", "").strip()
+    if not raw:
+        return []
+    return shlex.split(raw)
+
+
 def _gz_transport_env(display: str, *, attach_to_running_server: bool) -> dict[str, str] | None:
     env = dict(os.environ)
     env["DISPLAY"] = display
@@ -343,24 +481,47 @@ def _gz_transport_env(display: str, *, attach_to_running_server: bool) -> dict[s
     env["GZ_IP"] = "127.0.0.1"
     if attach_to_running_server:
         env.setdefault("PX4_GZ_STANDALONE", "1")
+    env.update(_parse_gz_gui_extra_env())
     return env
 
 
-def _launch_gz_gui_client(display: str, *, attach_to_running_server: bool = False) -> subprocess.Popen[Any] | None:
+def _launch_gz_gui_client(
+    display: str,
+    *,
+    attach_to_running_server: bool = False,
+    artifact_directory: Path | None = None,
+    session: _CaptureSession | None = None,
+) -> subprocess.Popen[Any] | None:
     gz = shutil.which("gz")
     if gz is None:
         return None
     env = _gz_transport_env(display, attach_to_running_server=attach_to_running_server)
     if env is None:
         return None
+    command = [gz, "sim", "-g", *_gz_gui_extra_args()]
+    log_handle: TextIO | None = None
+    log_path: Path | None = None
+    if artifact_directory is not None:
+        artifact_directory.mkdir(parents=True, exist_ok=True)
+        log_path = artifact_directory / "gz-gui.log"
+        try:
+            log_handle = log_path.open("wb")
+        except OSError:
+            log_handle = None
+            log_path = None
+    if session is not None:
+        session.gz_gui_log_path = log_path
+        session.gz_gui_log_file = log_handle
     try:
         return subprocess.Popen(
-            [gz, "sim", "-g"],
+            command,
             env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_handle or subprocess.DEVNULL,
+            stderr=subprocess.STDOUT if log_handle is not None else subprocess.DEVNULL,
         )
     except OSError:
+        if log_handle is not None:
+            log_handle.close()
         return None
 
 

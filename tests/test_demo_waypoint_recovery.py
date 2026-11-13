@@ -93,8 +93,8 @@ class DemoWaypointRecoveryTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(3600.0)
             yield True
 
-        adapter._drone.telemetry.in_air = MagicMock(return_value=_hang_forever())
-        adapter._drone.telemetry.landed_state = MagicMock(return_value=_hang_forever())
+        adapter._drone.telemetry.in_air = MagicMock(side_effect=lambda: _hang_forever())
+        adapter._drone.telemetry.landed_state = MagicMock(side_effect=lambda: _hang_forever())
 
         async def disarm_refuses(*_args, **_kwargs):
             raise RuntimeError("Demo disarm refused: in_air stream stalled without ground confirmation.")
