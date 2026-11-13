@@ -61,7 +61,13 @@ _ALLOWED_TRANSITIONS: dict[MissionPhase | None, frozenset[MissionPhase]] = {
         {MissionPhase.TAKING_OFF, MissionPhase.LANDING, MissionPhase.FAILED}
     ),
     MissionPhase.TAKING_OFF: frozenset(
-        {MissionPhase.NAVIGATING, MissionPhase.HOVERING, MissionPhase.LANDING, MissionPhase.FAILED}
+        {
+            MissionPhase.NAVIGATING,
+            MissionPhase.HOVERING,
+            MissionPhase.RETURNING,
+            MissionPhase.LANDING,
+            MissionPhase.FAILED,
+        }
     ),
     MissionPhase.NAVIGATING: frozenset(
         {MissionPhase.HOVERING, MissionPhase.RETURNING, MissionPhase.LANDING, MissionPhase.FAILED}
