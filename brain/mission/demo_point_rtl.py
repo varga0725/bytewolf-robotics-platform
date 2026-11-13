@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 from brain.mission.commands import WaypointCommand
 from brain.mission.execution import MissionExecution, MissionPhase
@@ -12,16 +13,12 @@ from brain.mission.flight import (
     TakeoffWaypointsReturnToHomeMission,
     authorize_takeoff_waypoints_return_to_home,
 )
-from brain.safety.deployment import DeploymentAuthorizationError, authorize_actuation_connection
 from brain.safety.gate import SafetyGate
-from brain.safety.profile import SafetyProfile
+from brain.mission.demo_errors import DemoPointRtlError
+from brain.mission.simulation_target import redact_loopback_endpoint
 
 
 MISSION_TYPE = "demo-point-rtl"
-
-
-class DemoPointRtlError(RuntimeError):
-    """Raised when the demo mission cannot be offered for the active target."""
 
 
 @dataclass(frozen=True)
@@ -79,40 +76,12 @@ def authorize_demo_point_rtl(
     )
 
 
-def require_simulation_target(
-    *,
-    deployment_mode: str,
-    endpoint: str,
-    profile: SafetyProfile,
-    operation: str,
-    request_sha256: str,
-    safety_profile_sha256: str,
-) -> None:
-    """Refuse the demo for any non-simulation MAVSDK target."""
-    try:
-        authorize_actuation_connection(
-            deployment_mode,
-            endpoint,
-            vehicle_id=profile.vehicle_id,
-            operation=operation,
-            request_sha256=request_sha256,
-            safety_profile_sha256=safety_profile_sha256,
-            physical_actuation_enabled=profile.physical_actuation_enabled,
-            permit_path=None,
-        )
-    except DeploymentAuthorizationError as error:
-        raise DemoPointRtlError(str(error)) from error
-
-
-def expected_demo_point_rtl_phases(*, hover_duration_s: float = 0.0) -> tuple[MissionPhase, ...]:
-    _ = hover_duration_s
-    return (
-        MissionPhase.TAKING_OFF,
-        MissionPhase.NAVIGATING,
-        MissionPhase.HOVERING,
-        MissionPhase.RETURNING,
-        MissionPhase.COMPLETED,
-    )
+def expected_demo_point_rtl_phases(*, hover_duration_s: float) -> tuple[MissionPhase, ...]:
+    phases = [MissionPhase.TAKING_OFF, MissionPhase.NAVIGATING]
+    if hover_duration_s > 0.0:
+        phases.append(MissionPhase.HOVERING)
+    phases.extend((MissionPhase.RETURNING, MissionPhase.COMPLETED))
+    return tuple(phases)
 
 
 def validate_demo_point_rtl_progress(
@@ -137,6 +106,9 @@ def demo_point_rtl_evidence_document(
     px4_version: str,
     baseline_profile: str,
     baseline_px4_commit: str,
+    baseline_gazebo_version: str,
+    simulator_name: str,
+    sitl_verification: dict[str, str],
     positions: list[dict[str, float]],
     started_at: datetime | None = None,
 ) -> dict[str, object]:
@@ -145,7 +117,7 @@ def demo_point_rtl_evidence_document(
         "mission_type": MISSION_TYPE,
         "started_at": (started_at or datetime.now(UTC)).isoformat(),
         "overall_status": "passed" if outcome == "completed" else "failed",
-        "endpoint": endpoint,
+        "mavlink_endpoint": redact_loopback_endpoint(endpoint),
         "configured_point_m": {
             "north_m": config.north_m,
             "east_m": config.east_m,
@@ -155,10 +127,31 @@ def demo_point_rtl_evidence_document(
             {"phase": event.phase.value, "timestamp": event.timestamp.isoformat()}
             for event in execution.events
         ],
+        "position_samples_hz": 1.0,
         "positions": positions,
         "px4_version": px4_version,
+        "simulator": {"name": simulator_name, "gazebo_version": baseline_gazebo_version},
+        "sitl_verification": sitl_verification,
         "baseline": {
             "profile": baseline_profile,
             "px4_commit": baseline_px4_commit,
+            "gazebo_sim_version": baseline_gazebo_version,
         },
     }
+
+
+def load_demo_plan_config(plan_path: Path) -> DemoPointRtlConfig:
+    import json
+
+    document = json.loads(plan_path.read_text(encoding="utf-8"))
+    return DemoPointRtlConfig(
+        takeoff_altitude_m=float(document["takeoff_altitude_m"]),
+        north_m=float(document["north_m"]),
+        east_m=float(document["east_m"]),
+        waypoint_altitude_m=float(document["waypoint_altitude_m"]),
+        hover_duration_s=float(document.get("hover_duration_s", 0.0)),
+        waypoint_tolerance_m=float(document.get("waypoint_tolerance_m", 2.0)),
+        waypoint_timeout_s=float(document.get("waypoint_timeout_s", 90.0)),
+        landing_timeout_s=float(document.get("landing_timeout_s", 120.0)),
+        home_tolerance_m=float(document.get("home_tolerance_m", 6.0)),
+    )

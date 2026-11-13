@@ -449,12 +449,133 @@ class MavsdkMissionAdapter:
         return self._record(execution, MissionPhase.COMPLETED)
 
     async def execute_demo_point_rtl_mission(
-        self, mission: TakeoffWaypointsReturnToHomeMission
+        self,
+        mission: TakeoffWaypointsReturnToHomeMission,
+        *,
+        on_position_sample: Callable[[dict[str, float]], None] | None = None,
+        action_timeout_s: float = 45.0,
     ) -> MissionExecution:
-        """Bounded one-point demo: Action goto, RTL, land, then explicit disarm."""
-        execution = await self.execute_waypoints_return_to_home_mission(mission)
-        await self._drone.action.disarm()
+        """Bounded one-point demo with bounded awaits and terminal recovery."""
+        from brain.mission.sitl_target import require_px4_sitl_indication
+
+        await self._require_preflight()
+        sitl_proof = await require_px4_sitl_indication(self._drone, timeout_s=action_timeout_s)
+        self._demo_sitl_proof = sitl_proof
+        home = await self._global_position_sample("home")
+        execution = self._begin_execution()
+        await asyncio.wait_for(
+            self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m),
+            timeout=action_timeout_s,
+        )
+        await asyncio.wait_for(
+            self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m),
+            timeout=action_timeout_s,
+        )
+        airborne = False
+        landing_timeout_s = min(mission.landing_timeout_s, self._runtime_policy.landing_confirmation_timeout_s)
+        try:
+            await asyncio.wait_for(self._drone.action.arm(), timeout=action_timeout_s)
+            execution = self._record(execution, MissionPhase.TAKING_OFF)
+            await asyncio.wait_for(self._drone.action.takeoff(), timeout=action_timeout_s)
+            airborne = True
+            await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
+            execution = self._record(execution, MissionPhase.NAVIGATING)
+            timeout_s = min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s)
+            for waypoint in mission.waypoints:
+                target = await self.goto_relative_waypoint(waypoint)
+                if on_position_sample is not None:
+                    on_position_sample(
+                        self._relative_position_sample(target, home, label="waypoint_target")
+                    )
+                await self.wait_until_waypoint_reached(target, mission.waypoint_tolerance_m, timeout_s)
+            if mission.hover_duration_s > 0.0:
+                execution = self._record(execution, MissionPhase.HOVERING)
+                await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
+            execution = self._record(execution, MissionPhase.RETURNING)
+            await asyncio.wait_for(self._drone.action.return_to_launch(), timeout=action_timeout_s)
+            await asyncio.wait_for(
+                self.wait_until_landed(landing_timeout_s),
+                timeout=landing_timeout_s + 1.0,
+            )
+            airborne = False
+            landing_position = await self._global_position_sample("landing position")
+            home_error_m = horizontal_distance_m(home, landing_position)
+            if home_error_m > mission.home_tolerance_m:
+                raise RuntimeError(
+                    f"RTL landed {home_error_m:.1f} m from home; limit is {mission.home_tolerance_m:.1f} m."
+                )
+        except Exception:
+            execution = await self._demo_recover_airborne(
+                execution, airborne, landing_timeout_s, action_timeout_s
+            )
+            raise
+        execution = self._record(execution, MissionPhase.COMPLETED)
+        await self._demo_disarm_when_landed(landing_timeout_s, action_timeout_s)
         return execution
+
+    @staticmethod
+    def _relative_position_sample(
+        target: GlobalPosition, home: GlobalPosition, *, label: str
+    ) -> dict[str, float]:
+        from brain.navigation.waypoints import horizontal_distance_m
+
+        north = (target.latitude_deg - home.latitude_deg) * 111_000.0
+        east = (target.longitude_deg - home.longitude_deg) * 111_000.0 * max(
+            0.1, abs(__import__("math").cos(__import__("math").radians(home.latitude_deg)))
+        )
+        return {
+            "label": label,
+            "north_m": north,
+            "east_m": east,
+            "relative_altitude_m": target.absolute_altitude_m - home.absolute_altitude_m,
+        }
+
+    async def _demo_recover_airborne(
+        self,
+        execution: MissionExecution,
+        airborne: bool,
+        landing_timeout_s: float,
+        action_timeout_s: float,
+    ) -> MissionExecution:
+        if not airborne:
+            return self._record(execution, MissionPhase.FAILED)
+        execution = self._record(execution, MissionPhase.RETURNING)
+        try:
+            await asyncio.wait_for(self._drone.action.return_to_launch(), timeout=action_timeout_s)
+            await asyncio.wait_for(
+                self.wait_until_landed(landing_timeout_s),
+                timeout=landing_timeout_s + 1.0,
+            )
+        except Exception:
+            execution = self._record(execution, MissionPhase.LANDING)
+            try:
+                await asyncio.wait_for(self._drone.action.land(), timeout=action_timeout_s)
+                await asyncio.wait_for(
+                    self.wait_until_landed(landing_timeout_s),
+                    timeout=landing_timeout_s + 1.0,
+                )
+            except Exception:
+                pass
+        try:
+            await self._demo_disarm_when_landed(landing_timeout_s, action_timeout_s)
+        except Exception:
+            pass
+        return self._record(execution, MissionPhase.FAILED)
+
+    async def _demo_disarm_when_landed(self, landing_timeout_s: float, action_timeout_s: float) -> None:
+        await asyncio.wait_for(
+            self.wait_until_landed(landing_timeout_s, require_airborne_observation=True),
+            timeout=landing_timeout_s + 1.0,
+        )
+
+        async def _wait_not_in_air() -> None:
+            async for in_air in self._drone.telemetry.in_air():
+                if not in_air:
+                    return
+            raise RuntimeError("in_air telemetry ended before confirming landing.")
+
+        await asyncio.wait_for(_wait_not_in_air(), timeout=landing_timeout_s)
+        await asyncio.wait_for(self._drone.action.disarm(), timeout=action_timeout_s)
 
     async def _require_preflight(self) -> None:
         """Verify PX4 telemetry before issuing any configuration or flight command."""

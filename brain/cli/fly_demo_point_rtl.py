@@ -15,16 +15,16 @@ from brain.mission.demo_point_rtl import (
     MISSION_TYPE,
     authorize_demo_point_rtl,
     demo_point_rtl_evidence_document,
+    load_demo_plan_config,
     load_demo_point_rtl_config,
     validate_demo_point_rtl_progress,
 )
+from brain.mission.demo_position_sampler import sample_positions_while
+from brain.mission.demo_reviewed_plan import require_matching_demo_approval
+from brain.mission.simulation_target import require_simulation_target
+from brain.navigation.waypoints import GlobalPosition
 from brain.mission.execution import MissionExecution
-from brain.safety.deployment import (
-    actuation_request_sha256,
-    add_deployment_arguments,
-    authorize_actuation_connection,
-    file_sha256,
-)
+from brain.safety.deployment import actuation_request_sha256, add_deployment_arguments, file_sha256
 from brain.safety.gate import SafetyGate
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
@@ -54,13 +54,23 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument("--telemetry-history", type=Path, default=None)
     parser.add_argument("--px4-ulog", type=Path, default=None)
+    parser.add_argument(
+        "--plan-file",
+        type=Path,
+        default=None,
+        help="Approved demo-point-rtl plan written by the Control Room review step.",
+    )
     add_deployment_arguments(parser, actuation_capable=True)
     return parser.parse_args(arguments)
 
 
 async def run(arguments: argparse.Namespace) -> None:
     require_mission_execution_enabled()
-    config = load_demo_point_rtl_config()
+    if arguments.plan_file is not None:
+        require_matching_demo_approval(arguments.plan_file)
+        config = load_demo_plan_config(arguments.plan_file)
+    else:
+        config = load_demo_point_rtl_config()
     recording = prepare_flight_run_recording(arguments.artifact_dir, arguments.telemetry_history)
     execution = MissionExecution.empty()
     system = None
@@ -84,14 +94,13 @@ async def run(arguments: argparse.Namespace) -> None:
                 "takeoff_altitude_m": config.takeoff_altitude_m,
             }
         )
-        authorize_actuation_connection(
-            arguments.deployment_mode,
-            arguments.endpoint,
-            vehicle_id=profile.vehicle_id,
+        require_simulation_target(
+            deployment_mode=arguments.deployment_mode,
+            endpoint=arguments.endpoint,
+            profile=profile,
             operation=MISSION_TYPE,
             request_sha256=request_sha256,
             safety_profile_sha256=file_sha256(arguments.safety_profile),
-            physical_actuation_enabled=profile.physical_actuation_enabled,
             permit_path=arguments.physical_actuation_permit,
         )
         try:
@@ -118,7 +127,22 @@ async def run(arguments: argparse.Namespace) -> None:
             f"Approved demo-point-rtl: take off to {config.takeoff_altitude_m:g} m, "
             f"goto ({config.north_m:g} m north, {config.east_m:g} m east), RTL, land, disarm."
         )
-        execution = await adapter.execute_demo_point_rtl_mission(mission)
+        home = await anext(system.telemetry.home())
+        home_position = GlobalPosition(
+            float(home.latitude_deg), float(home.longitude_deg), float(home.absolute_altitude_m)
+        )
+        position_samples: list[dict[str, object]] = []
+        sampler_stop = asyncio.Event()
+        sampler_task = asyncio.create_task(
+            sample_positions_while(
+                system, home_position, stop=sampler_stop, sink=position_samples
+            )
+        )
+        try:
+            execution = await adapter.execute_demo_point_rtl_mission(mission)
+        finally:
+            sampler_stop.set()
+            await sampler_task
         validate_demo_point_rtl_progress(execution, hover_duration_s=config.hover_duration_s)
         outcome = "completed"
         print("Mission completed: " + " -> ".join(event.phase.value for event in execution.events))
@@ -127,6 +151,8 @@ async def run(arguments: argparse.Namespace) -> None:
             config=config,
             outcome=outcome,
             endpoint=arguments.endpoint,
+            positions=position_samples,
+            sitl_verification=getattr(adapter, "_demo_sitl_proof", {}),
         )
     except Exception as error:
         if safety_decision == "not-evaluated":
@@ -167,6 +193,8 @@ def _maybe_write_acceptance_evidence(
     config,
     outcome: str,
     endpoint: str,
+    positions: list[dict[str, object]],
+    sitl_verification: dict[str, str],
 ) -> None:
     if os.environ.get("BYTEWOLF_SITL_ACCEPTANCE") != "1":
         return
@@ -181,7 +209,10 @@ def _maybe_write_acceptance_evidence(
         px4_version=baseline.px4_describe,
         baseline_profile=baseline.profile,
         baseline_px4_commit=baseline.px4_commit,
-        positions=[],
+        baseline_gazebo_version=baseline.gazebo_sim_version,
+        simulator_name=os.environ.get("BYTEWOLF_SIMULATOR", "gz_x500"),
+        sitl_verification=sitl_verification,
+        positions=positions,
         started_at=execution.events[0].timestamp if execution.events else datetime.now(UTC),
     )
     directory = Path("simulation/artifacts/demo-point-rtl")
