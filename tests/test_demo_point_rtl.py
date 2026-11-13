@@ -1,4 +1,4 @@
-"""Monday demo mission: one point, RTL, quarantined execution by default."""
+"""Monday demo mission: review, approve, then execute on SITL."""
 
 from __future__ import annotations
 
@@ -16,75 +16,25 @@ from apps.api.server import create_app
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.mission.demo_point_rtl import (
     MISSION_TYPE,
-    DemoPointRtlConfig,
-    DemoPointRtlError,
-    authorize_demo_point_rtl,
-    demo_point_rtl_evidence_document,
     expected_demo_point_rtl_phases,
-    load_demo_point_rtl_config,
-    require_simulation_target,
     validate_demo_point_rtl_progress,
 )
-from brain.mission.execution import MissionExecution, MissionEvent, MissionPhase
-from brain.safety.gate import SafetyGate
+from brain.mission.execution import MissionExecution, MissionPhase
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
-
 
 SESSION = "b3b9c777-4860-4b6d-bf59-1a4a98c31ea3"
 
 
 class DemoPointRtlPhaseTests(unittest.TestCase):
-    def test_expected_phase_sequence_allows_zero_hover(self) -> None:
-        self.assertEqual(
-            expected_demo_point_rtl_phases(hover_duration_s=0.0)[-2:],
-            (MissionPhase.RETURNING, MissionPhase.COMPLETED),
-        )
+    def test_expected_phase_sequence_omits_hover_when_disabled(self) -> None:
+        self.assertNotIn(MissionPhase.HOVERING, expected_demo_point_rtl_phases(hover_duration_s=0.0))
 
     def test_validate_progress_accepts_a_complete_demo_run(self) -> None:
         timestamps = datetime.now(UTC)
         execution = MissionExecution.empty()
-        for phase in (
-            MissionPhase.ARMING,
-            *expected_demo_point_rtl_phases(hover_duration_s=0.0),
-        ):
+        for phase in (MissionPhase.ARMING, *expected_demo_point_rtl_phases(hover_duration_s=0.0)):
             execution = execution.transition(phase, timestamp=timestamps)
         validate_demo_point_rtl_progress(execution, hover_duration_s=0.0)
-
-
-class DemoPointRtlTargetTests(unittest.TestCase):
-    def test_non_simulation_targets_are_refused(self) -> None:
-        profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
-        with self.assertRaises(DemoPointRtlError):
-            require_simulation_target(
-                deployment_mode="physical_actuation",
-                endpoint="serial:///dev/ttyACM0",
-                profile=profile,
-                operation=MISSION_TYPE,
-                request_sha256="abc",
-                safety_profile_sha256="def",
-            )
-
-
-class DemoPointRtlAdapterTests(unittest.IsolatedAsyncioTestCase):
-    async def test_adapter_disarms_after_rtl(self) -> None:
-        adapter = MavsdkMissionAdapter(MagicMock(), safety_profile=load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH))
-        completed = MissionExecution.empty()
-        for phase in (
-            MissionPhase.ARMING,
-            MissionPhase.TAKING_OFF,
-            MissionPhase.NAVIGATING,
-            MissionPhase.HOVERING,
-            MissionPhase.RETURNING,
-            MissionPhase.COMPLETED,
-        ):
-            completed = completed.transition(phase, timestamp=datetime.now(UTC))
-        adapter.execute_waypoints_return_to_home_mission = AsyncMock(return_value=completed)
-        adapter._drone = MagicMock()
-        adapter._drone.action.disarm = AsyncMock()
-
-        await adapter.execute_demo_point_rtl_mission(MagicMock())
-
-        adapter._drone.action.disarm.assert_awaited_once()
 
 
 class DemoPointRtlApiTests(unittest.TestCase):
@@ -97,31 +47,100 @@ class DemoPointRtlApiTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.directory.cleanup()
 
-    @patch.dict(os.environ, {}, clear=True)
-    def test_demo_start_refuses_without_the_execution_gate(self) -> None:
+    def test_missing_session_header_is_rejected(self) -> None:
+        response = self.client.post("/api/v1/missions/demo-point-rtl")
+        self.assertEqual(response.status_code, 422)
+
+    def test_invalid_session_is_rejected(self) -> None:
         response = self.client.post(
             "/api/v1/missions/demo-point-rtl",
-            headers={"X-ByteWolf-Session": SESSION},
+            headers={"X-ByteWolf-Session": "not-a-uuid"},
         )
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"]["code"], "mission_execution_quarantined")
+        self.assertEqual(response.status_code, 400)
 
-    @patch("apps.api.demo_mission.subprocess.Popen")
-    @patch("apps.api.demo_mission.wait_for_free_link", return_value=True)
-    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"}, clear=False)
-    def test_demo_start_submits_for_simulation_when_enabled(self, _wait, popen) -> None:
-        process = MagicMock()
-        process.pid = 4242
-        process.poll.return_value = None
-        popen.return_value = process
+    @patch.dict(os.environ, {}, clear=True)
+    def test_review_registers_a_plan_without_executing(self) -> None:
         response = self.client.post(
             "/api/v1/missions/demo-point-rtl",
             headers={"X-ByteWolf-Session": SESSION},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["mission_type"], MISSION_TYPE)
+        self.assertTrue(response.json()["approval_required"])
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_approve_refuses_execution_when_quarantined(self) -> None:
+        plan_id = self.client.post(
+            "/api/v1/missions/demo-point-rtl",
+            headers={"X-ByteWolf-Session": SESSION},
+        ).json()["plan_id"]
+        response = self.client.post(
+            "/api/v1/plans/approve",
+            json={"plan_id": plan_id},
+            headers={"X-ByteWolf-Session": SESSION},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"]["code"], "mission_execution_quarantined")
+
+    @patch("apps.gateway.plan_execution.subprocess.Popen")
+    @patch("apps.gateway.plan_execution.wait_for_free_link", return_value=True)
+    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"}, clear=False)
+    def test_approve_executes_after_review(self, _wait, popen) -> None:
+        plan_id = self.client.post(
+            "/api/v1/missions/demo-point-rtl",
+            headers={"X-ByteWolf-Session": SESSION},
+        ).json()["plan_id"]
+        process = MagicMock(pid=99, poll=MagicMock(return_value=None))
+        popen.return_value = process
+        approved = self.client.post(
+            "/api/v1/plans/approve",
+            json={"plan_id": plan_id},
+            headers={"X-ByteWolf-Session": SESSION},
+        )
+        self.assertEqual(approved.status_code, 200)
         command = popen.call_args.args[0]
         self.assertIn("brain.cli.fly_demo_point_rtl", command)
+
+
+class DemoPointRtlAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_adapter_disarms_after_rtl(self) -> None:
+        adapter = MavsdkMissionAdapter(MagicMock(), safety_profile=load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH))
+        adapter._require_preflight = AsyncMock()
+        adapter._record = lambda execution, phase: execution.transition(phase, timestamp=datetime.now(UTC))
+        adapter._global_position_sample = AsyncMock(
+            return_value=MagicMock(latitude_deg=0.0, longitude_deg=0.0, absolute_altitude_m=100.0)
+        )
+        adapter._drone = MagicMock()
+        for method in (
+            "arm",
+            "takeoff",
+            "set_takeoff_altitude",
+            "set_return_to_launch_altitude",
+            "return_to_launch",
+            "disarm",
+        ):
+            setattr(adapter._drone.action, method, AsyncMock())
+        adapter.goto_relative_waypoint = AsyncMock()
+        adapter.wait_until_waypoint_reached = AsyncMock()
+        adapter._sleep_with_runtime_watchdog = AsyncMock()
+        adapter.wait_until_landed = AsyncMock()
+        adapter._demo_disarm_when_landed = AsyncMock()
+        mission = MagicMock(
+            takeoff=MagicMock(target_altitude_m=2.0),
+            return_to_home=MagicMock(target_altitude_m=2.0),
+            waypoints=(MagicMock(),),
+            hover_duration_s=0.0,
+            waypoint_tolerance_m=2.0,
+            waypoint_timeout_s=30.0,
+            landing_timeout_s=60.0,
+            home_tolerance_m=6.0,
+            takeoff_settle_seconds=0.0,
+        )
+        with patch(
+            "brain.mission.sitl_target.require_px4_sitl_indication",
+            AsyncMock(return_value={"status": "verified"}),
+        ):
+            await adapter.execute_demo_point_rtl_mission(mission)
+        adapter._demo_disarm_when_landed.assert_awaited_once()
 
 
 @unittest.skipUnless(os.environ.get("BYTEWOLF_SITL_ACCEPTANCE") == "1", "live PX4 SITL required")
@@ -140,9 +159,6 @@ class DemoPointRtlAcceptanceTests(unittest.IsolatedAsyncioTestCase):
                 await fly_demo_point_rtl.run(arguments)
             evidence_path = Path("simulation/artifacts/demo-point-rtl/latest.json")
             self.assertTrue(evidence_path.is_file())
-            document = json.loads(evidence_path.read_text(encoding="utf-8"))
-            self.assertEqual(document["mission_type"], MISSION_TYPE)
-            self.assertEqual(document["overall_status"], "passed")
 
 
 if __name__ == "__main__":

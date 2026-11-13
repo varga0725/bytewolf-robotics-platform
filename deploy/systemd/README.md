@@ -58,10 +58,11 @@ executor after review and approval when mission execution is explicitly enabled.
 The installer does not publish the loopback socket. If an operator needs remote
 Control Room access, they must configure an authenticated path themselves — for
 example a VPN or reverse proxy with identity checks — and keep the upstream
-target at `127.0.0.1:8080`. Requests that arrive on a non-loopback hostname
-still require Tailscale Serve identity headers and an allowlist when
-`BYTEWOLF_TAILSCALE_OPERATORS` is set in the ignored `.env`; that boundary is
-application-side, not something this installer configures.
+target at `127.0.0.1:8080`. If the Control Room API is exposed beyond loopback, configure operator
+authentication in front of it yourself. When `BYTEWOLF_TAILSCALE_OPERATORS` is
+set, the application rejects requests whose `Tailscale-User-Login` header is
+not on that allowlist; that check runs in the API process and is unrelated to
+anything the systemd installer configures.
 
 **`simulation.gazebo.map_view`.** It injects a camera model into the running
 world, so it must not run during any evidence run. Render with `--once` when you

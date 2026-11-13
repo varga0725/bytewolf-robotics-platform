@@ -3,7 +3,7 @@
 ## Támogatott környezetek
 
 Az Ubuntu 22.04 x86_64 a dedikált operatív és bizonyítékgyűjtő host (PX4 SITL
-v1.17.0, Gazebo Harmonic 8.14.0, headless systemd, opcionális ROS 2 Humble
+v1.17.0, Gazebo Harmonic 8.15.0 (noble), headless systemd, opcionális ROS 2 Humble
 bridge). A natív Apple Silicon macOS továbbra is támogatott vizuális fejlesztői
 host a rögzített PX4-patchcsel és Gazebo Harmonic 8.12.0-val. Az eltérő Gazebo-
 verziók miatt a két host bizonyítékai nem felcserélhetők; a pontos pineket a

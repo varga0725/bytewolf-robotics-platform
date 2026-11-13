@@ -45,8 +45,13 @@ class DeploymentArgumentWiringTests(unittest.TestCase):
         for module, _required in ACTUATION_CLIS:
             with self.subTest(cli=module.__name__):
                 source = inspect.getsource(module.run)
+                marker = (
+                    "require_simulation_target("
+                    if module is fly_demo_point_rtl
+                    else "authorize_actuation_connection("
+                )
                 self.assertLess(
-                    source.index("authorize_actuation_connection("),
+                    source.index(marker),
                     source.index("from mavsdk import System"),
                 )
 
@@ -63,8 +68,10 @@ class DeploymentArgumentWiringTests(unittest.TestCase):
                 self.assertEqual(arguments.deployment_mode, expected)
 
     def test_gateway_fixes_subprocess_execution_to_simulation(self) -> None:
-        source = inspect.getsource(telegram_mission_gateway._execute_with_cli)
-        self.assertIn('"--deployment-mode",\n                "simulation",', source)
+        from apps.gateway import plan_execution
+
+        source = inspect.getsource(plan_execution._execution_command)
+        self.assertIn('"--deployment-mode",\n            "simulation",', source)
         self.assertNotIn("arguments.deployment_mode", source)
 
 

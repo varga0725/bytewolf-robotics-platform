@@ -6,10 +6,13 @@ Ubuntu 22.04 host, and how to tell whether it actually relayed anything.
 This is a second host, not a replacement. macOS remains a supported development
 environment and every script here keeps working there.
 
-## Why Ubuntu 22.04 specifically
+## Why Ubuntu 22.04 or 24.04
 
-ROS 2 Humble is the distribution this project's bridge contract targets, and
-22.04 is where Humble is native. That choice forces the rest of this page.
+ROS 2 Humble is the distribution this project's bridge contract targets. Use
+22.04 (jammy) where Humble is native, or 24.04 (noble) for the pinned Linux
+Gazebo Sim 8.15.0 baseline. The Gazebo APT source line uses
+`$(lsb_release -cs)` — on noble it pulls 8.15.0; on jammy the archive still
+ships 8.14.x and does not match the noble pin in `baseline.yaml`.
 
 ## The two interpreters
 
@@ -137,9 +140,10 @@ the processes separate avoids either dependency shadowing the other. Ubuntu's
 
 It selects the `linux` profile on this host and prints which profile it chose.
 The Linux profile expects an unpatched v1.17.0 tree — the recorded macOS build
-patch must **not** be applied here — and Gazebo 8.14.0, the only release the OSRF
-stable archive carries for jammy. Wind results from this host are close to the
-macOS 8.12.0 numbers but not proven identical; see the profile's own comment.
+patch must **not** be applied here — and Gazebo 8.15.0 from the OSRF stable
+archive on noble (24.04). Jammy hosts pin 8.14.0 historically; wind results
+from this host are close to the macOS 8.12.0 numbers but not proven identical;
+see the profile's own comment.
 
 ## Running the bridge
 
@@ -236,11 +240,19 @@ configured point, the pinned PX4 baseline commit, and timestamps.
 
 ### Submit from the Control Room API
 
+The demo follows the same approval boundary as map missions: review, then
+explicit approve. The session header must be a UUID the dashboard already uses.
+
 ```bash
 export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
 .venv/bin/python -m apps.api.server   # http://127.0.0.1:8080
+SESSION=<dashboard-session-uuid>
 curl -s -X POST http://127.0.0.1:8080/api/v1/missions/demo-point-rtl \
-  -H 'X-ByteWolf-Session: local-demo'
+  -H "X-ByteWolf-Session: ${SESSION}"
+# note plan_id from the response, then:
+curl -s -X POST http://127.0.0.1:8080/api/v1/plans/approve \
+  -H "Content-Type: application/json" -H "X-ByteWolf-Session: ${SESSION}" \
+  -d '{"plan_id":"<plan-id-from-review>"}'
 ```
 
 Optional waypoint overrides use `BYTEWOLF_DEMO_POINT_NORTH_M`,
