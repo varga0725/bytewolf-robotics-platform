@@ -1,7 +1,9 @@
 """Web/mobile API must expose data and preserve the approval boundary."""
 
 import json
+import os
 from pathlib import Path
+from unittest.mock import patch
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -163,6 +165,7 @@ class ApiServerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "completed")
 
+    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"})
     def test_chat_requires_approval_before_execution(self) -> None:
         headers = {"X-ByteWolf-Session": SESSION}
         proposed = self.client.post("/api/v1/chat", headers=headers, json={"text": "repülj"})

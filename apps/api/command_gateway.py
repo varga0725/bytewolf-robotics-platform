@@ -88,7 +88,10 @@ class DashboardCommandGateway:
         )
 
     def approve(self, session_id: str, plan_id: str) -> DashboardReply:
+        from shared.safety.execution_gate import require_mission_execution_enabled
+
         self._require_pending(session_id, plan_id)
+        require_mission_execution_enabled()
         self._pending_by_session.pop(session_id)
         result = self._execute(plan_id)
         return DashboardReply(f"A küldetés {result}.", "submitted", plan_id=plan_id)

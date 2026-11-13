@@ -310,10 +310,12 @@ def _converse_with_nim(text: str) -> ConversationReply:
 
 
 def _execute_with_cli(plan_name: str) -> str:
-    if os.environ.get("BYTEWOLF_MISSION_EXECUTION_ENABLED", "false").strip().lower() not in {"1", "true", "yes"}:
-        raise TelegramGatewayError(
-            "A SITL küldetés-végrehajtás karanténban van a stabil felszállási acceptance teszt lezárásáig."
-        )
+    from shared.safety.execution_gate import MissionExecutionQuarantinedError, require_mission_execution_enabled
+
+    try:
+        require_mission_execution_enabled()
+    except MissionExecutionQuarantinedError as error:
+        raise TelegramGatewayError(error.refusal.message) from error
     plan_path = _DEFAULT_PLAN_DIRECTORY / plan_name
     if not _PLAN_NAME.fullmatch(plan_name) or not plan_path.is_file():
         raise TelegramGatewayError("Reviewed plan does not exist.")

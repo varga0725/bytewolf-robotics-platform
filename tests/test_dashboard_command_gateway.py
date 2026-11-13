@@ -1,8 +1,11 @@
 """The dashboard command path may propose missions, never bypass approval."""
 
+import os
 import unittest
+from unittest.mock import patch
 
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway
+from shared.safety.execution_gate import MissionExecutionQuarantinedError
 
 
 class DashboardCommandGatewayTests(unittest.TestCase):
@@ -23,6 +26,7 @@ class DashboardCommandGatewayTests(unittest.TestCase):
         self.assertTrue(reply.approval_required)
         self.assertEqual(reply.plan_id, "plan-1")
 
+    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"})
     def test_only_the_same_session_can_approve_its_pending_plan(self) -> None:
         self.gateway.chat("browser-1", "repülj")
 
@@ -32,6 +36,14 @@ class DashboardCommandGatewayTests(unittest.TestCase):
 
         self.assertEqual(self.executed, ["plan-1"])
         self.assertEqual(reply.status, "submitted")
+
+    def test_approve_refuses_execution_until_the_gate_is_open(self) -> None:
+        self.gateway.chat("browser-1", "repülj")
+
+        with self.assertRaises(MissionExecutionQuarantinedError):
+            self.gateway.approve("browser-1", "plan-1")
+
+        self.assertEqual(self.executed, [])
 
     def test_cancel_removes_the_pending_plan(self) -> None:
         self.gateway.chat("browser-1", "repülj")

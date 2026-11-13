@@ -753,8 +753,12 @@ def _execution_status(artifact_dir: Path, mission_id: str) -> dict[str, str]:
 
 
 def _handle_gateway(call: object) -> DashboardReply:
+    from shared.safety.execution_gate import MissionExecutionQuarantinedError
+
     try:
         return call()  # type: ignore[operator]
+    except MissionExecutionQuarantinedError as error:
+        raise HTTPException(status_code=403, detail=error.refusal.as_detail()) from error
     except PermissionError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except (RuntimeError, ValueError) as error:
