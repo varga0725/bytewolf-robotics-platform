@@ -46,6 +46,8 @@ class MavsdkAction(Protocol):
     async def hold(self) -> None: ...
     async def land(self) -> None: ...
     async def return_to_launch(self) -> None: ...
+    async def disarm(self) -> None: ...
+
     async def goto_location(
         self, latitude_deg: float, longitude_deg: float, absolute_altitude_m: float, yaw_deg: float
     ) -> None: ...
@@ -445,6 +447,14 @@ class MavsdkMissionAdapter:
             )
             raise
         return self._record(execution, MissionPhase.COMPLETED)
+
+    async def execute_demo_point_rtl_mission(
+        self, mission: TakeoffWaypointsReturnToHomeMission
+    ) -> MissionExecution:
+        """Bounded one-point demo: Action goto, RTL, land, then explicit disarm."""
+        execution = await self.execute_waypoints_return_to_home_mission(mission)
+        await self._drone.action.disarm()
+        return execution
 
     async def _require_preflight(self) -> None:
         """Verify PX4 telemetry before issuing any configuration or flight command."""

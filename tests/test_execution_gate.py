@@ -111,6 +111,16 @@ class ExecutionGateApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.executed, [plan_id])
 
+    @patch.dict(os.environ, {}, clear=True)
+    def test_demo_point_rtl_start_refuses_when_quarantined(self) -> None:
+        response = self.client.post(
+            "/api/v1/missions/demo-point-rtl",
+            headers={"X-ByteWolf-Session": SESSION},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"]["code"], "mission_execution_quarantined")
+
+
 class TelegramExecutionGateTests(unittest.TestCase):
     @patch.dict(os.environ, {}, clear=True)
     def test_telegram_execute_refuses_when_quarantined(self) -> None:

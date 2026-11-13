@@ -192,6 +192,60 @@ That is fail-closed and correct — no command reached the vehicle — but it is
 the lease handover the dashboard path performs. Stop the bridge before flying a
 mission.
 
+## Monday demo SITL acceptance (`demo-point-rtl`)
+
+The Control Room can submit a bounded Action-only demo — takeoff, one configured
+local point, PX4 return-to-launch, land, and disarm — but only when
+`BYTEWOLF_MISSION_EXECUTION_ENABLED=true`. By default the execution gate stays
+closed and every submit endpoint returns a typed refusal.
+
+### Start PX4 SITL
+
+**Preferred (pinned Gazebo Harmonic `gz_x500`):**
+
+```bash
+cd ~/bytewolf-robotics/platform
+./simulation/gazebo/launch/run_px4_gazebo_headless.zsh base
+```
+
+**Fallback without Gazebo (PX4 v1.17.0 SIH):**
+
+```bash
+cd ~/bytewolf-robotics/PX4-Autopilot
+make px4_sitl sihsim_quadx
+```
+
+The MAVSDK endpoint must remain loopback UDP, for example `udpin://127.0.0.1:14540`.
+Override with `BYTEWOLF_PX4_ENDPOINT` when your local SITL publishes elsewhere on
+the same host.
+
+### Run the acceptance test
+
+With SITL running and the platform venv active:
+
+```bash
+cd ~/bytewolf-robotics/platform
+export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
+export BYTEWOLF_SITL_ACCEPTANCE=1
+.venv/bin/python -m unittest tests.test_demo_point_rtl.DemoPointRtlAcceptanceTests -v
+```
+
+On success the run writes
+`simulation/artifacts/demo-point-rtl/latest.json` with phase transitions, the
+configured point, the pinned PX4 baseline commit, and timestamps.
+
+### Submit from the Control Room API
+
+```bash
+export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
+.venv/bin/python -m apps.api.server   # http://127.0.0.1:8080
+curl -s -X POST http://127.0.0.1:8080/api/v1/missions/demo-point-rtl \
+  -H 'X-ByteWolf-Session: local-demo'
+```
+
+Optional waypoint overrides use `BYTEWOLF_DEMO_POINT_NORTH_M`,
+`BYTEWOLF_DEMO_POINT_EAST_M`, and `BYTEWOLF_DEMO_POINT_ALTITUDE_M`.
+
 ## What this host cannot do
 
 No physical vehicle is attached, and none is authorised from here. USB devices

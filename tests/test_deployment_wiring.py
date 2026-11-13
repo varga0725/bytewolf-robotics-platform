@@ -11,6 +11,7 @@ from brain.cli import (
     check_usb_bench,
     dashboard_telemetry,
     fly_controlled_interruption,
+    fly_demo_point_rtl,
     fly_nim_mission,
     fly_return_to_home,
     fly_takeoff_hover_land,
@@ -27,6 +28,7 @@ ACTUATION_CLIS = (
     (fly_waypoint_square_land, ()),
     (fly_controlled_interruption, ("--interruption-action", "hold")),
     (fly_nim_mission, ("--mission-spec-file", "reviewed.json")),
+    (fly_demo_point_rtl, ()),
 )
 
 

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway, DashboardReply
 from apps.api.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
+from apps.api.demo_mission import DemoMissionStartError, start_demo_point_rtl
 from apps.api.point_mission import PointMissionError, review_point_mission, review_survey_mission
 from apps.agent.pi_conversation import PiConversation
 from apps.agent.pi_memory_extractor import extract_memory_delta
@@ -309,6 +310,18 @@ def create_app(
     @app.post("/api/v1/plans/cancel")
     def cancel(request: PlanRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
         return _handle_gateway(lambda: command_gateway.cancel(_session(x_bytewolf_session), request.plan_id))
+
+    @app.post("/api/v1/missions/demo-point-rtl")
+    def demo_point_rtl(request: Request) -> dict[str, object]:
+        """Start the bounded Monday demo on SITL only when execution is enabled."""
+        from shared.safety.execution_gate import MissionExecutionQuarantinedError
+
+        try:
+            return start_demo_point_rtl()
+        except MissionExecutionQuarantinedError as error:
+            raise HTTPException(status_code=403, detail=error.refusal.as_detail()) from error
+        except DemoMissionStartError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.post("/api/v1/missions/point")
     def point_mission(
