@@ -35,8 +35,8 @@ DEFAULT_DEMO_GZ_CAMERA_MODE = "overview"
 _OVERVIEW_HFOV_DEG = 60.0
 _OVERVIEW_ASPECT_W_H = 16.0 / 9.0
 _OVERVIEW_BOUND_MARGIN = 0.15
-_OVERVIEW_AZIMUTH_RAD = math.radians(225.0)
-_OVERVIEW_ELEVATION_RAD = math.radians(35.0)
+_OVERVIEW_AUTO_SW_OFFSET_M = 10.0
+_OVERVIEW_AUTO_HEIGHT_M = 12.0
 _OVERVIEW_POSE_LIMITS = {
     "x": (0.0, 2000.0),
     "y": (0.0, 2000.0),
@@ -104,6 +104,17 @@ class OverviewPose6:
         return [self.x, self.y, self.z, self.roll, self.pitch, self.yaw]
 
 
+# Server-verified Baylands demo overview (frame-by-frame); also written to demo_gui.config.
+DEFAULT_DEMO_OVERVIEW_POSE = OverviewPose6(
+    x=199.0,
+    y=149.0,
+    z=12.0,
+    roll=0.0,
+    pitch=0.5,
+    yaw=0.7853981633974483,
+)
+
+
 def parse_demo_gz_camera_mode_env() -> tuple[str, str | None]:
     """Return requested camera mode and validation error (invalid values still default to overview at runtime)."""
     raw = os.environ.get("BYTEWOLF_DEMO_GZ_CAMERA_MODE", DEFAULT_DEMO_GZ_CAMERA_MODE).strip().lower()
@@ -117,10 +128,12 @@ def effective_demo_gz_camera_mode() -> tuple[str, str | None]:
     return parse_demo_gz_camera_mode_env()
 
 
-def parse_overview_pose_env() -> tuple[OverviewPose6 | None, str | None]:
+def parse_overview_pose_env() -> tuple[OverviewPose6 | Literal["auto"] | None, str | None]:
     raw = os.environ.get("BYTEWOLF_DEMO_GZ_OVERVIEW_POSE", "").strip()
     if not raw:
         return None, None
+    if raw.lower() == "auto":
+        return "auto", None
     parts = raw.replace(",", " ").split()
     if len(parts) != 6:
         return None, "BYTEWOLF_DEMO_GZ_OVERVIEW_POSE must have six numbers (x y z roll pitch yaw)"
@@ -185,32 +198,6 @@ def _overview_vertical_fov_rad() -> float:
     return 2.0 * math.atan(math.tan(hfov / 2.0) / _OVERVIEW_ASPECT_W_H)
 
 
-def _euler_to_quaternion(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
-    cr = math.cos(roll * 0.5)
-    sr = math.sin(roll * 0.5)
-    cp = math.cos(pitch * 0.5)
-    sp = math.sin(pitch * 0.5)
-    cy = math.cos(yaw * 0.5)
-    sy = math.sin(yaw * 0.5)
-    qw = cr * cp * cy + sr * sp * sy
-    qx = sr * cp * cy - cr * sp * sy
-    qy = cr * sp * cy + sr * cp * sy
-    qz = cr * cp * sy - sr * sp * cy
-    return qx, qy, qz, qw
-
-
-def _quaternion_to_euler(qx: float, qy: float, qz: float, qw: float) -> tuple[float, float, float]:
-    sinr_cosp = 2.0 * (qw * qx + qy * qz)
-    cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy)
-    roll = math.atan2(sinr_cosp, cosr_cosp)
-    sinp = 2.0 * (qw * qy - qz * qx)
-    pitch = math.asin(max(-1.0, min(1.0, sinp)))
-    siny_cosp = 2.0 * (qw * qz + qx * qy)
-    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
-    yaw = math.atan2(siny_cosp, cosy_cosp)
-    return roll, pitch, yaw
-
-
 def _normalize(vec: tuple[float, float, float]) -> tuple[float, float, float]:
     length = math.sqrt(vec[0] ** 2 + vec[1] ** 2 + vec[2] ** 2)
     if length <= 1e-9:
@@ -218,26 +205,81 @@ def _normalize(vec: tuple[float, float, float]) -> tuple[float, float, float]:
     return (vec[0] / length, vec[1] / length, vec[2] / length)
 
 
-def quaternion_look_at(eye: tuple[float, float, float], target: tuple[float, float, float]) -> tuple[float, float, float, float]:
-    """World-frame quaternion so the camera at ``eye`` looks at ``target`` (camera forward = -Z in OGRE)."""
-    forward = _normalize((target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]))
+def _cross(a: tuple[float, float, float], b: tuple[float, float, float]) -> tuple[float, float, float]:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+
+
+def _dot(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def overview_orientation_toward(
+    eye: tuple[float, float, float],
+    target: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    """Roll/pitch/yaw (radians) for gz GUI camera_pose: roll=0, yaw toward target, +pitch = nose down."""
+    dx = target[0] - eye[0]
+    dy = target[1] - eye[1]
+    dz_down = eye[2] - target[2]
+    horiz = math.hypot(dx, dy)
+    if horiz < 1e-9:
+        yaw = 0.0
+        pitch = math.pi / 2.0 if dz_down > 0.0 else -math.pi / 2.0
+    else:
+        yaw = math.atan2(dy, dx)
+        pitch = math.atan2(dz_down, horiz)
+    return 0.0, pitch, yaw
+
+
+def camera_forward_unit(roll: float, pitch: float, yaw: float) -> tuple[float, float, float]:
+    """World-frame unit forward for gz GUI RPY (Rz(yaw) * Ry(pitch) * Rx(roll) on +X)."""
+    del roll  # overview uses roll=0; kept for API symmetry.
+    cp = math.cos(pitch)
+    sp = math.sin(pitch)
+    cy = math.cos(yaw)
+    sy = math.sin(yaw)
+    return (cp * cy, cp * sy, -sp)
+
+
+def camera_basis(
+    roll: float, pitch: float, yaw: float,
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    forward = camera_forward_unit(roll, pitch, yaw)
     world_up = (0.0, 0.0, 1.0)
-    right = _normalize(
-        (
-            forward[1] * world_up[2] - forward[2] * world_up[1],
-            forward[2] * world_up[0] - forward[0] * world_up[2],
-            forward[0] * world_up[1] - forward[1] * world_up[0],
-        )
-    )
-    up = (
-        right[1] * forward[2] - right[2] * forward[1],
-        right[2] * forward[0] - right[0] * forward[2],
-        right[0] * forward[1] - right[1] * forward[0],
-    )
-    # Rotation matrix [right, up, -forward] as column basis for camera-to-world.
-    m00, m01, m02 = right[0], up[0], -forward[0]
-    m10, m11, m12 = right[1], up[1], -forward[1]
-    m20, m21, m22 = right[2], up[2], -forward[2]
+    right = _normalize(_cross(forward, world_up))
+    if math.hypot(right[0], right[1], right[2]) < 1e-9:
+        right = (1.0, 0.0, 0.0)
+    up = _normalize(_cross(right, forward))
+    return forward, right, up
+
+
+def look_direction_alignment(
+    eye: tuple[float, float, float],
+    target: tuple[float, float, float],
+    roll: float,
+    pitch: float,
+    yaw: float,
+) -> float:
+    forward = camera_forward_unit(roll, pitch, yaw)
+    to_target = _normalize((target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]))
+    return _dot(forward, to_target)
+
+
+def _quaternion_from_rotation_matrix(
+    m00: float,
+    m01: float,
+    m02: float,
+    m10: float,
+    m11: float,
+    m12: float,
+    m20: float,
+    m21: float,
+    m22: float,
+) -> tuple[float, float, float, float]:
     trace = m00 + m11 + m22
     if trace > 0.0:
         s = math.sqrt(trace + 1.0) * 2.0
@@ -267,6 +309,23 @@ def quaternion_look_at(eye: tuple[float, float, float], target: tuple[float, flo
     return qx / length, qy / length, qz / length, qw / length
 
 
+def gz_gui_rpy_to_quaternion(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
+    """Quaternion for gz.msgs.Pose orientation: R = Rz(yaw) * Ry(pitch) * Rx(roll), intrinsic GUI axes."""
+    cr, sr = math.cos(roll), math.sin(roll)
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    m00 = cy * cp
+    m01 = cy * sp * sr - sy * cr
+    m02 = cy * sp * cr + sy * sr
+    m10 = sy * cp
+    m11 = sy * sp * sr + cy * cr
+    m12 = sy * sp * cr - cy * sr
+    m20 = -sp
+    m21 = cp * sr
+    m22 = cp * cr
+    return _quaternion_from_rotation_matrix(m00, m01, m02, m10, m11, m12, m20, m21, m22)
+
+
 def _rotate_vector_by_quaternion(
     vec: tuple[float, float, float], qx: float, qy: float, qz: float, qw: float
 ) -> tuple[float, float, float]:
@@ -281,87 +340,98 @@ def _rotate_vector_by_quaternion(
     )
 
 
+def quaternion_rotates_x_to_forward(
+    qx: float, qy: float, qz: float, qw: float,
+) -> tuple[float, float, float]:
+    return _rotate_vector_by_quaternion((1.0, 0.0, 0.0), qx, qy, qz, qw)
+
+
 def point_in_overview_frustum(
     point: tuple[float, float, float],
     *,
     eye: tuple[float, float, float],
-    orientation: tuple[float, float, float, float],
+    roll: float,
+    pitch: float,
+    yaw: float,
     hfov_rad: float | None = None,
     vfov_rad: float | None = None,
 ) -> bool:
     hfov = math.radians(_OVERVIEW_HFOV_DEG) if hfov_rad is None else hfov_rad
     vfov = _overview_vertical_fov_rad() if vfov_rad is None else vfov_rad
-    qx, qy, qz, qw = orientation
-    # World-to-camera uses the inverse (conjugate) of the camera orientation quaternion.
-    local = _rotate_vector_by_quaternion(
-        (point[0] - eye[0], point[1] - eye[1], point[2] - eye[2]),
-        -qx,
-        -qy,
-        -qz,
-        qw,
-    )
-    inv_len = 1.0 / math.sqrt(
-        local[0] * local[0] + local[1] * local[1] + local[2] * local[2] + 1e-12
-    )
-    lx, ly, lz = local[0] * inv_len, local[1] * inv_len, local[2] * inv_len
-    if lz >= -1e-6:
+    forward, right, up = camera_basis(roll, pitch, yaw)
+    to_point = _normalize((point[0] - eye[0], point[1] - eye[1], point[2] - eye[2]))
+    ahead = _dot(to_point, forward)
+    if ahead <= 1e-6:
         return False
-    yaw_angle = math.atan2(lx, -lz)
-    pitch_angle = math.atan2(ly, -lz)
+    lateral = _dot(to_point, right)
+    vertical = _dot(to_point, up)
+    yaw_angle = math.atan2(lateral, ahead)
+    pitch_angle = math.atan2(vertical, ahead)
     return abs(yaw_angle) <= hfov / 2.0 and abs(pitch_angle) <= vfov / 2.0
 
 
-def compute_auto_overview_pose(config: DemoWaypointMissionConfig) -> OverviewPose6:
-    """Place the GUI camera so the full demo path fits in a 60°×(16:9) frustum with 15% margin."""
+def mission_overview_target_center(
+    config: DemoWaypointMissionConfig,
+) -> tuple[float, float, float]:
     points = mission_overview_world_points(config)
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
     zs = [point[2] for point in points]
+    return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0, (min(zs) + max(zs)) / 2.0
+
+
+def compute_auto_overview_pose(config: DemoWaypointMissionConfig) -> OverviewPose6:
+    """Opt-in auto overview: SW offset like the verified pose, gz RPY toward bbox center, 60°×16:9 fit."""
+    points = mission_overview_world_points(config)
+    cx, cy, cz = mission_overview_target_center(config)
     margin = 1.0 + _OVERVIEW_BOUND_MARGIN
-    cx = (min(xs) + max(xs)) / 2.0
-    cy = (min(ys) + max(ys)) / 2.0
-    cz = (min(zs) + max(zs)) / 2.0
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    zs = [point[2] for point in points]
     hx = max((max(xs) - min(xs)) / 2.0 * margin, 2.0)
     hy = max((max(ys) - min(ys)) / 2.0 * margin, 2.0)
     hz = max((max(zs) - min(zs)) / 2.0 * margin, 2.0)
-    h_span = math.hypot(hx, hy)
     hfov = math.radians(_OVERVIEW_HFOV_DEG)
     vfov = _overview_vertical_fov_rad()
-    distance = max(h_span / math.tan(hfov / 2.0), hz / math.tan(vfov / 2.0))
-    offset_dir = (
-        math.cos(_OVERVIEW_ELEVATION_RAD) * math.cos(_OVERVIEW_AZIMUTH_RAD),
-        math.cos(_OVERVIEW_ELEVATION_RAD) * math.sin(_OVERVIEW_AZIMUTH_RAD),
-        math.sin(_OVERVIEW_ELEVATION_RAD),
-    )
-    for _ in range(24):
-        eye = (
-            cx + offset_dir[0] * distance,
-            cy + offset_dir[1] * distance,
-            cz + offset_dir[2] * distance,
-        )
-        orientation = quaternion_look_at(eye, (cx, cy, cz))
+    h_span = math.hypot(hx, hy)
+    min_horiz = h_span / math.tan(hfov / 2.0)
+    min_slant = hz / math.tan(vfov / 2.0)
+    xy_offset = max(_OVERVIEW_AUTO_SW_OFFSET_M, min_horiz / math.sqrt(2.0))
+    height = _OVERVIEW_AUTO_HEIGHT_M
+    for attempt in range(32):
+        eye = (cx - xy_offset, cy - xy_offset, height)
+        roll, pitch, yaw = overview_orientation_toward(eye, (cx, cy, cz))
         if all(
-            point_in_overview_frustum(point, eye=eye, orientation=orientation, hfov_rad=hfov, vfov_rad=vfov)
+            point_in_overview_frustum(
+                point,
+                eye=eye,
+                roll=roll,
+                pitch=pitch,
+                yaw=yaw,
+                hfov_rad=hfov,
+                vfov_rad=vfov,
+            )
             for point in points
         ):
-            roll, pitch, yaw = _quaternion_to_euler(*orientation)
             return OverviewPose6(eye[0], eye[1], eye[2], roll, pitch, yaw)
-        distance *= 1.12
-    orientation = quaternion_look_at(eye, (cx, cy, cz))
-    roll, pitch, yaw = _quaternion_to_euler(*orientation)
+        xy_offset *= 1.06
+        if attempt % 4 == 3 and height < min_slant:
+            height += 1.0
+    roll, pitch, yaw = overview_orientation_toward(eye, (cx, cy, cz))
     return OverviewPose6(eye[0], eye[1], eye[2], roll, pitch, yaw)
 
 
 def resolve_overview_pose(
     config: DemoWaypointMissionConfig,
-) -> tuple[OverviewPose6, Literal["auto", "env", "config"], str | None]:
+) -> tuple[OverviewPose6, Literal["auto", "env", "default"], str | None]:
     env_pose, env_err = parse_overview_pose_env()
     if env_err:
-        return compute_auto_overview_pose(config), "auto", env_err
-    if env_pose is not None:
+        return DEFAULT_DEMO_OVERVIEW_POSE, "default", env_err
+    if env_pose == "auto":
+        return compute_auto_overview_pose(config), "auto", None
+    if isinstance(env_pose, OverviewPose6):
         return env_pose, "env", None
-    auto = compute_auto_overview_pose(config)
-    return auto, "auto", None
+    return DEFAULT_DEMO_OVERVIEW_POSE, "default", None
 
 
 def resolve_gz_world_name() -> str:
@@ -642,7 +712,7 @@ class CameraSetupEvidence:
 
 
 def guicamera_request_text(pose: OverviewPose6) -> str:
-    qx, qy, qz, qw = _euler_to_quaternion(pose.roll, pose.pitch, pose.yaw)
+    qx, qy, qz, qw = gz_gui_rpy_to_quaternion(pose.roll, pose.pitch, pose.yaw)
     return (
         "pose: {"
         f"position: {{x: {pose.x}, y: {pose.y}, z: {pose.z}}}, "

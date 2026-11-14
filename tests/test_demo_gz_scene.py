@@ -19,19 +19,26 @@ from brain.mission.demo_gz_scene import (
     GzCli,
     apply_camera_follow,
     apply_overview_camera,
+    DEFAULT_DEMO_OVERVIEW_POSE,
     compute_auto_overview_pose,
     compute_frame_phase_epochs,
     default_demo_gui_config_path,
     effective_demo_gz_camera_mode,
     extract_review_frames,
+    gz_gui_rpy_to_quaternion,
+    look_direction_alignment,
+    mission_overview_target_center,
     mission_overview_world_points,
+    overview_orientation_toward,
     parse_follow_offset_env,
     place_waypoint_markers,
     point_in_overview_frustum,
+    quaternion_rotates_x_to_forward,
+    camera_forward_unit,
     resolve_follow_model_name,
+    resolve_overview_pose,
     wait_for_service,
     waypoint_world_position,
-    _euler_to_quaternion,
 )
 from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig, default_demo_waypoint_loop
 
@@ -147,7 +154,7 @@ class DemoGuiConfigTests(unittest.TestCase):
         self.assertTrue(path.is_file())
         text = path.read_text(encoding="utf-8")
         self.assertIn("1920", text)
-        self.assertIn("194.541 144.541", text)
+        self.assertIn("199 149 12", text)
         self.assertNotIn("EntityTree", text)
 
 
@@ -158,19 +165,83 @@ class OverviewCameraTests(unittest.TestCase):
         self.assertEqual(mode, "overview")
         self.assertIsNotNone(err)
 
-    def test_default_demo_plan_fits_overview_frustum(self) -> None:
+    def test_verified_default_pose_looks_at_mission_center(self) -> None:
         config = DemoWaypointMissionConfig(
             takeoff_altitude_m=8.0,
             waypoints=default_demo_waypoint_loop(),
             max_mission_items=12,
         )
-        pose = compute_auto_overview_pose(config)
-        orientation = _euler_to_quaternion(pose.roll, pose.pitch, pose.yaw)
+        center = mission_overview_target_center(config)
+        pose = DEFAULT_DEMO_OVERVIEW_POSE
+        dot = look_direction_alignment(
+            (pose.x, pose.y, pose.z),
+            center,
+            pose.roll,
+            pose.pitch,
+            pose.yaw,
+        )
+        self.assertGreater(dot, 0.95)
+
+    def test_overview_orientation_from_verified_position(self) -> None:
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=default_demo_waypoint_loop(),
+            max_mission_items=12,
+        )
+        center = mission_overview_target_center(config)
+        eye = (DEFAULT_DEMO_OVERVIEW_POSE.x, DEFAULT_DEMO_OVERVIEW_POSE.y, DEFAULT_DEMO_OVERVIEW_POSE.z)
+        roll, pitch, yaw = overview_orientation_toward(eye, center)
+        self.assertAlmostEqual(roll, 0.0, places=6)
+        self.assertAlmostEqual(yaw, 0.785, places=2)
+        self.assertAlmostEqual(pitch, 0.5, places=1)
+
+    def test_gz_rpy_quaternion_matches_forward_vector(self) -> None:
+        roll, pitch, yaw = 0.0, 0.5, 0.785
+        quat = gz_gui_rpy_to_quaternion(roll, pitch, yaw)
+        self.assertAlmostEqual(quat[0], -0.09463189003894941, places=6)
+        self.assertAlmostEqual(quat[1], 0.22859029822472746, places=6)
+        self.assertAlmostEqual(quat[2], 0.3706085142088027, places=6)
+        self.assertAlmostEqual(quat[3], 0.8952321543270941, places=6)
+        from_quat = quaternion_rotates_x_to_forward(*quat)
+        from_rpy = camera_forward_unit(roll, pitch, yaw)
+        self.assertAlmostEqual(from_quat[0], from_rpy[0], places=6)
+        self.assertAlmostEqual(from_quat[1], from_rpy[1], places=6)
+        self.assertAlmostEqual(from_quat[2], from_rpy[2], places=6)
+
+    def test_resolve_overview_uses_verified_default_without_env(self) -> None:
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=default_demo_waypoint_loop(),
+            max_mission_items=12,
+        )
+        env = dict(os.environ)
+        env.pop("BYTEWOLF_DEMO_GZ_OVERVIEW_POSE", None)
+        with patch.dict(os.environ, env, clear=True):
+            pose, source, err = resolve_overview_pose(config)
+        self.assertIsNone(err)
+        self.assertEqual(source, "default")
+        self.assertEqual(pose, DEFAULT_DEMO_OVERVIEW_POSE)
+
+    def test_auto_overview_opt_in_fits_frustum(self) -> None:
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=default_demo_waypoint_loop(),
+            max_mission_items=12,
+        )
+        with patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_OVERVIEW_POSE": "auto"}, clear=False):
+            pose, source, _ = resolve_overview_pose(config)
+        self.assertEqual(source, "auto")
         eye = (pose.x, pose.y, pose.z)
         points = mission_overview_world_points(config)
         for index, point in enumerate(points):
             self.assertTrue(
-                point_in_overview_frustum(point, eye=eye, orientation=orientation),
+                point_in_overview_frustum(
+                    point,
+                    eye=eye,
+                    roll=pose.roll,
+                    pitch=pose.pitch,
+                    yaw=pose.yaw,
+                ),
                 msg=f"point {index} {point} outside overview frustum",
             )
 
