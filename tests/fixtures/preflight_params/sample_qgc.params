@@ -1,0 +1,11 @@
+# Synthetic QGC export for offline preflight checker tests (not a real vehicle).
+COM_RC_IN_MODE 1
+COM_DL_LOSS_T 10
+NAV_DLL_ACT 2
+COM_LOW_BAT_ACT 3
+GF_ACTION 2
+GF_MAX_HOR_DIST 150
+GF_MAX_VER_DIST 25
+COM_ARM_WO_GPS 0
+NAV_RCL_ACT 2
+COM_RC_LOSS_T 0.5
