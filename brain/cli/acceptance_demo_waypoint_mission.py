@@ -23,7 +23,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--plan-file",
         type=Path,
-        required=True,
+        default=None,
         help="Reviewed demo-waypoint-mission plan with a matching approval record.",
     )
     parser.add_argument(
@@ -58,6 +58,23 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=True,
         help="Require screen capture status 'captured' or a flight screenshot artifact.",
     )
+    parser.add_argument(
+        "--approve-visual-review",
+        nargs="+",
+        type=Path,
+        metavar="RUN.json",
+        help="Mark visual_human_review approved on run evidence JSON files and refresh acceptance-latest.json.",
+    )
+    parser.add_argument(
+        "--reviewer",
+        default=None,
+        help="Operator name recorded with --approve-visual-review.",
+    )
+    parser.add_argument(
+        "--note",
+        default=None,
+        help="Optional note stored on approved visual review records.",
+    )
     return parser.parse_args(arguments)
 
 
@@ -85,6 +102,27 @@ def _ensure_plan_approval(plan_file: Path, *, record_approval: bool, confirm: bo
     require_matching_demo_waypoint_approval(plan_file)
 
 
+def _persist_run_document(document: dict[str, object]) -> None:
+    directory = Path("simulation/artifacts/demo-waypoint-mission")
+    payload = json.dumps(document, indent=2)
+    (directory / "latest.json").write_text(payload, encoding="utf-8")
+    run_name = document.get("evidence_run_filename")
+    if isinstance(run_name, str) and (directory / run_name).is_file():
+        (directory / run_name).write_text(payload, encoding="utf-8")
+
+
+def _finalize_acceptance_document(
+    document: dict[str, object],
+    *,
+    require_visual_evidence: bool,
+) -> dict[str, object]:
+    from brain.mission.demo_waypoint_mission import classify_acceptance_run
+
+    classify_acceptance_run(document, require_visual_evidence=require_visual_evidence)
+    _persist_run_document(document)
+    return document
+
+
 async def _run_once(
     *,
     endpoint: str,
@@ -94,7 +132,6 @@ async def _run_once(
     require_visual_evidence: bool,
 ) -> dict[str, object]:
     from brain.cli import fly_demo_waypoint_mission
-    from brain.mission.demo_waypoint_mission import acceptance_run_is_clean
 
     arguments = fly_demo_waypoint_mission.parse_arguments(
         [
@@ -114,34 +151,85 @@ async def _run_once(
     if not latest.is_file():
         raise RuntimeError("Acceptance run did not write demo-waypoint-mission/latest.json.")
     document = json.loads(latest.read_text(encoding="utf-8"))
-    if not acceptance_run_is_clean(document, require_visual_evidence=require_visual_evidence):
-        document["overall_status"] = "failed"
-        if not document.get("px4_ulog_relative_path"):
-            document["ulog_status"] = "missing"
-        if document.get("disarm_reason"):
-            document.setdefault(
-                "failure_reason",
-                f"disarm used fallback path: {document.get('disarm_reason')}",
+    return _finalize_acceptance_document(document, require_visual_evidence=require_visual_evidence)
+
+
+def approve_visual_reviews(
+    run_paths: list[Path],
+    *,
+    reviewer: str | None = None,
+    note: str | None = None,
+    require_visual_evidence: bool = True,
+) -> dict[str, object]:
+    from brain.mission.demo_waypoint_mission import (
+        acceptance_run_technically_clean,
+        classify_acceptance_run,
+        consecutive_acceptance_summary,
+    )
+
+    documents: list[dict[str, object]] = []
+    reviewed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    for path in run_paths:
+        if not path.is_file():
+            raise RuntimeError(f"Run evidence file not found: {path}")
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if not acceptance_run_technically_clean(document, require_visual_evidence=require_visual_evidence):
+            raise RuntimeError(
+                f"Refusing visual approval for non-clean run {path.name} "
+                "(mission, ULog, trajectory, disarm, or capture failed)."
             )
-        elif require_visual_evidence:
-            document.setdefault(
-                "failure_reason",
-                "visual evidence missing (need screen_capture.status=='captured' or screenshot)",
-            )
-        latest.write_text(json.dumps(document, indent=2), encoding="utf-8")
-    return document
+        if document.get("visual_review_reason") == "frames_missing":
+            raise RuntimeError(f"Refusing visual approval for {path.name}: review frames are missing.")
+        if document.get("visual_review_required") is not True:
+            raise RuntimeError(f"Refusing visual approval for {path.name}: visual_review_required is not set.")
+        document["visual_human_review"] = "approved"
+        document["visual_reviewed_at"] = reviewed_at
+        if reviewer:
+            document["visual_reviewer"] = reviewer
+        if note:
+            document["visual_review_note"] = note
+        classify_acceptance_run(document, require_visual_evidence=require_visual_evidence)
+        path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+        _persist_run_document(document)
+        documents.append(document)
+    summary = consecutive_acceptance_summary(
+        documents,
+        required_runs=len(documents),
+        require_visual_evidence=require_visual_evidence,
+    )
+    _write_summary(summary)
+    return summary
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
     os.environ["BYTEWOLF_SITL_ACCEPTANCE"] = "1"
     parsed = parse_arguments(arguments)
-    if parsed.runs <= 0:
-        print("--runs must be a positive integer.", file=sys.stderr)
-        return 2
 
     repository_root = Path(__file__).resolve().parents[2]
     if str(repository_root) not in sys.path:
         sys.path.insert(0, str(repository_root))
+
+    if parsed.approve_visual_review:
+        try:
+            summary = approve_visual_reviews(
+                list(parsed.approve_visual_review),
+                reviewer=parsed.reviewer,
+                note=parsed.note,
+                require_visual_evidence=parsed.require_visual_evidence,
+            )
+        except Exception as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        print(f"Visual review approved for {len(parsed.approve_visual_review)} run(s).")
+        print(f"Acceptance summary overall_status={summary.get('overall_status')}.")
+        return 0 if summary.get("overall_status") == "passed" else 0
+
+    if parsed.plan_file is None:
+        print("--plan-file is required for acceptance runs.", file=sys.stderr)
+        return 2
+    if parsed.runs <= 0:
+        print("--runs must be a positive integer.", file=sys.stderr)
+        return 2
 
     try:
         require_mission_execution_enabled()
@@ -172,7 +260,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     )
                 )
             )
-            if run_documents[-1].get("overall_status") != "passed":
+            if run_documents[-1].get("acceptance_status") == "failed":
                 break
     except Exception as error:
         print(f"Run failed: {error}", file=sys.stderr)
@@ -195,14 +283,21 @@ def main(arguments: Sequence[str] | None = None) -> int:
         require_visual_evidence=parsed.require_visual_evidence,
     )
     _write_summary(summary)
-    if summary["overall_status"] != "passed":
+    overall = summary.get("overall_status")
+    if overall == "passed":
+        print(f"Acceptance passed: {parsed.runs} consecutive clean runs.")
+        return 0
+    if overall == "pending_review":
         print(
-            f"Acceptance failed: need {parsed.runs} consecutive passes, got {summary['per_run_status']}.",
-            file=sys.stderr,
+            f"Acceptance pending visual review: {summary.get('per_run_status')}. "
+            "Approve frames with --approve-visual-review <run.json> [...].",
         )
-        return 1
-    print(f"Acceptance passed: {parsed.runs} consecutive clean runs.")
-    return 0
+        return 0
+    print(
+        f"Acceptance failed: need {parsed.runs} consecutive passes, got {summary.get('per_run_status')}.",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def _write_summary(summary: dict[str, object]) -> None:

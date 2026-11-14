@@ -190,7 +190,14 @@ async def run(arguments: argparse.Namespace) -> None:
                         from brain.mission.demo_gz_scene import DemoGzVisualDirector
 
                         gz_visual_director = DemoGzVisualDirector(config=config)
-                        await gz_visual_director.after_gui_recording_start()
+                        try:
+                            await gz_visual_director.after_gui_recording_start()
+                        except Exception as error:
+                            if screen_capture_result is None:
+                                screen_capture_result = {}
+                            screen_capture_result["gz_visual_setup_error"] = (
+                                f"{type(error).__name__}: {error}"
+                            )
         try:
             mission_started_epoch = time.time()
             on_armed = None
@@ -210,16 +217,26 @@ async def run(arguments: argparse.Namespace) -> None:
                         }
                         for event in execution.events
                     ]
-                    visual_evidence = gz_visual_director.build_post_capture_evidence(
-                        video_path=flight_capture.output_path,
-                        evidence_directory=evidence_directory,
-                        capture_started_epoch=flight_capture.capture_started_epoch or mission_started_epoch or time.time(),
-                        stamp=evidence_stamp,
-                        execution_events=execution_events,
-                        mission_items_reached=list(getattr(adapter, "_demo_mission_items_reached", [])),
-                        armed_at_epoch=getattr(adapter, "_demo_armed_at_epoch", None),
-                    )
-                    screen_capture_result.update(visual_evidence)
+                    try:
+                        visual_evidence = gz_visual_director.build_post_capture_evidence(
+                            video_path=flight_capture.output_path,
+                            evidence_directory=evidence_directory,
+                            capture_started_epoch=flight_capture.capture_started_epoch
+                            or mission_started_epoch
+                            or time.time(),
+                            stamp=evidence_stamp,
+                            execution_events=execution_events,
+                            mission_items_reached=list(getattr(adapter, "_demo_mission_items_reached", [])),
+                            armed_at_epoch=getattr(adapter, "_demo_armed_at_epoch", None),
+                            require_visual_review=True,
+                        )
+                        screen_capture_result.update(visual_evidence)
+                    except Exception as error:
+                        screen_capture_result["gz_visual_finalize_error"] = (
+                            f"{type(error).__name__}: {error}"
+                        )
+                        screen_capture_result.setdefault("visual_review_required", True)
+                        screen_capture_result.setdefault("visual_review_reason", "frames_missing")
         validate_demo_waypoint_mission_progress(
             execution,
             items_reached=tuple(getattr(adapter, "_demo_mission_items_reached", ())),
@@ -397,6 +414,9 @@ def _write_acceptance_evidence(
             "visual_review_frames",
             "visual_review_frame_paths",
             "visual_human_review",
+            "visual_review_reason",
+            "gz_visual_setup_error",
+            "gz_visual_finalize_error",
             "spawn_origin",
             "demo_gui_config_relative_path",
         ):
@@ -407,6 +427,8 @@ def _write_acceptance_evidence(
         document["failure_reason"] = ulog_failure_reason or "PX4 ULog was not archived before evidence was written."
     payload = json.dumps(document, indent=2)
     run_name = f"demo-waypoint-mission-{stamp}.json"
+    document["evidence_run_filename"] = run_name
+    payload = json.dumps(document, indent=2)
     (directory / run_name).write_text(payload, encoding="utf-8")
     (directory / "latest.json").write_text(payload, encoding="utf-8")
     return {"directory": str(directory), "run": run_name}

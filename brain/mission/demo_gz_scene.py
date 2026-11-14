@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -21,6 +22,7 @@ BAYLANDS_DEMO_SPAWN_WORLD_Y_M = 155.0
 BAYLANDS_DEMO_GROUND_Z_OFFSET_M = 0.4
 DEFAULT_GZ_WORLD_NAME = "baylands"
 DEFAULT_FOLLOW_MODEL_NAME = "x500_0"
+_FOLLOW_MODEL_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 DEFAULT_FOLLOW_OFFSET = (-5.0, -1.5, 2.5)
 _FOLLOW_OFFSET_LIMITS = {
     "x": (-25.0, 5.0),
@@ -60,6 +62,15 @@ def demo_gui_config_enabled() -> bool:
 
 def resolve_gz_world_name() -> str:
     return os.environ.get("PX4_GZ_WORLD", DEFAULT_GZ_WORLD_NAME).strip() or DEFAULT_GZ_WORLD_NAME
+
+
+def resolve_follow_model_name() -> tuple[str, str | None]:
+    raw = os.environ.get("BYTEWOLF_DEMO_GZ_FOLLOW_MODEL", DEFAULT_FOLLOW_MODEL_NAME).strip()
+    if not raw:
+        return DEFAULT_FOLLOW_MODEL_NAME, None
+    if not _FOLLOW_MODEL_PATTERN.fullmatch(raw):
+        return DEFAULT_FOLLOW_MODEL_NAME, "BYTEWOLF_DEMO_GZ_FOLLOW_MODEL must match ^[A-Za-z0-9_]+$"
+    return raw, None
 
 
 def waypoint_world_position(
@@ -473,11 +484,11 @@ class DemoGzVisualDirector:
     async def after_gui_recording_start(self) -> None:
         import asyncio
 
-        model = os.environ.get("BYTEWOLF_DEMO_GZ_FOLLOW_MODEL", DEFAULT_FOLLOW_MODEL_NAME).strip()
+        model, model_err = resolve_follow_model_name()
         offset, offset_err = parse_follow_offset_env()
-        if offset_err:
+        if model_err or offset_err:
             self.camera_follow_history.append(
-                CameraFollowEvidence(error=offset_err).as_dict()
+                CameraFollowEvidence(error=model_err or offset_err).as_dict()
             )
             return
         assert offset is not None
@@ -490,9 +501,9 @@ class DemoGzVisualDirector:
     async def reaffirm_camera_follow_after_arm(self) -> None:
         import asyncio
 
-        model = os.environ.get("BYTEWOLF_DEMO_GZ_FOLLOW_MODEL", DEFAULT_FOLLOW_MODEL_NAME).strip()
+        model, model_err = resolve_follow_model_name()
         offset, offset_err = parse_follow_offset_env()
-        if offset is None or offset_err:
+        if model_err or offset is None or offset_err:
             return
         follow = await asyncio.to_thread(apply_camera_follow, self.cli, model_name=model, offset=offset, wait_for_services_s=5.0)
         self.camera_follow_history.append({"phase": "post_arm", **follow.as_dict()})
@@ -507,6 +518,7 @@ class DemoGzVisualDirector:
         execution_events: list[dict[str, object]],
         mission_items_reached: list[dict[str, object]],
         armed_at_epoch: float | None,
+        require_visual_review: bool = True,
     ) -> dict[str, object]:
         offsets = compute_frame_phase_epochs(
             capture_started_epoch=capture_started_epoch,
@@ -524,15 +536,18 @@ class DemoGzVisualDirector:
             "camera_follow": self.camera_follow_history[-1] if self.camera_follow_history else None,
             "camera_follow_steps": self.camera_follow_history or None,
             "waypoint_markers": self.markers.as_dict() if self.markers else None,
-            "visual_review_required": bool(frames),
-            "visual_review_frames": frames or None,
-            "visual_human_review": "pending" if frames else None,
             "spawn_origin": {
                 "world_x_m": BAYLANDS_DEMO_SPAWN_WORLD_X_M,
                 "world_y_m": BAYLANDS_DEMO_SPAWN_WORLD_Y_M,
                 "ground_z_offset_m": BAYLANDS_DEMO_GROUND_Z_OFFSET_M,
             },
         }
-        if frames:
-            payload["visual_review_frame_paths"] = [frame["relative_path"] for frame in frames]
+        if require_visual_review:
+            payload["visual_review_required"] = True
+            payload["visual_review_frames"] = frames or None
+            if frames:
+                payload["visual_human_review"] = "pending"
+                payload["visual_review_frame_paths"] = [frame["relative_path"] for frame in frames]
+            else:
+                payload["visual_review_reason"] = "frames_missing"
         return payload

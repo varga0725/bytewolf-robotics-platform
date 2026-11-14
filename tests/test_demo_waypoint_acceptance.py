@@ -13,6 +13,9 @@ from brain.cli import acceptance_demo_waypoint_mission
 from brain.mission.demo_waypoint_mission import (
     _document_has_visual_evidence,
     acceptance_run_is_clean,
+    acceptance_run_status,
+    acceptance_run_technically_clean,
+    classify_acceptance_run,
     consecutive_acceptance_summary,
 )
 from brain.mission.demo_waypoint_reviewed_plan import write_reviewed_demo_waypoint_plan
@@ -133,8 +136,21 @@ class AcceptanceEvidenceTests(unittest.TestCase):
             "screen_capture": {"status": "captured", "relative_path": "screen.mp4"},
             "visual_review_required": True,
             "visual_human_review": "pending",
+            "visual_review_frames": [{"phase": "takeoff", "relative_path": "frames/a.png"}],
         }
         self.assertFalse(acceptance_run_is_clean(document))
+        self.assertEqual(acceptance_run_status(document), "pending_review")
+
+    def test_missing_review_frames_fails_acceptance_not_pending(self) -> None:
+        document = {
+            "overall_status": "passed",
+            "trajectory_png_relative_path": "trajectory.png",
+            "px4_ulog_relative_path": "runs/x.ulg",
+            "screen_capture": {"status": "captured", "relative_path": "screen.mp4"},
+            "visual_review_required": True,
+        }
+        self.assertEqual(classify_acceptance_run(document), "failed")
+        self.assertEqual(document.get("visual_review_reason"), "frames_missing")
 
     def test_captured_video_counts_after_human_visual_review(self) -> None:
         document = {
@@ -144,6 +160,7 @@ class AcceptanceEvidenceTests(unittest.TestCase):
             "screen_capture": {"status": "captured", "relative_path": "screen.mp4"},
             "visual_review_required": True,
             "visual_human_review": "approved",
+            "visual_review_frames": [{"phase": "takeoff", "relative_path": "frames/a.png"}],
         }
         self.assertTrue(acceptance_run_is_clean(document))
 
@@ -165,6 +182,22 @@ class AcceptanceEvidenceTests(unittest.TestCase):
         }
         self.assertFalse(acceptance_run_is_clean(document))
         self.assertTrue(acceptance_run_is_clean(document, require_visual_evidence=False))
+
+    def test_summary_pending_review_when_runs_await_frames(self) -> None:
+        runs = [
+            {
+                "overall_status": "passed",
+                "trajectory_png_relative_path": "t.png",
+                "px4_ulog_relative_path": "runs/x.ulg",
+                "screen_capture": {"status": "captured"},
+                "visual_review_required": True,
+                "visual_human_review": "pending",
+                "visual_review_frames": [{"phase": "takeoff", "relative_path": "frames/a.png"}],
+            }
+        ]
+        summary = consecutive_acceptance_summary(runs, required_runs=3)
+        self.assertEqual(summary["overall_status"], "pending_review")
+        self.assertEqual(summary["per_run_status"], ["pending_review"])
 
     def test_summary_requires_ulog_for_pass(self) -> None:
         runs = [

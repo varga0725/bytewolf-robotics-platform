@@ -22,6 +22,7 @@ from brain.mission.demo_gz_scene import (
     extract_review_frames,
     parse_follow_offset_env,
     place_waypoint_markers,
+    resolve_follow_model_name,
     wait_for_service,
     waypoint_world_position,
 )
@@ -35,6 +36,14 @@ class WaypointWorldConversionTests(unittest.TestCase):
         self.assertEqual(x, BAYLANDS_DEMO_SPAWN_WORLD_X_M + 5.0)
         self.assertEqual(y, BAYLANDS_DEMO_SPAWN_WORLD_Y_M + 10.0)
         self.assertEqual(z, BAYLANDS_DEMO_GROUND_Z_OFFSET_M + 8.0)
+
+
+class FollowModelValidationTests(unittest.TestCase):
+    def test_rejects_injection_characters(self) -> None:
+        with unittest.mock.patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_FOLLOW_MODEL": 'x500"; evil'}, clear=False):
+            model, err = resolve_follow_model_name()
+            self.assertIsNotNone(err)
+            self.assertEqual(model, "x500_0")
 
 
 class FollowOffsetValidationTests(unittest.TestCase):

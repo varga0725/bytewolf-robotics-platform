@@ -294,6 +294,40 @@ def _screenshot_counts_as_visual_evidence(screen: dict[str, object]) -> bool:
     return True
 
 
+def _visual_review_frames_present(document: dict[str, object]) -> bool:
+    frames = document.get("visual_review_frames")
+    if isinstance(frames, list) and len(frames) > 0:
+        return True
+    screen = document.get("screen_capture")
+    if isinstance(screen, dict):
+        nested = screen.get("visual_review_frames")
+        if isinstance(nested, list) and len(nested) > 0:
+            return True
+    paths = document.get("visual_review_frame_paths")
+    if isinstance(paths, list) and len(paths) > 0:
+        return True
+    if isinstance(screen, dict):
+        nested_paths = screen.get("visual_review_frame_paths")
+        if isinstance(nested_paths, list) and len(nested_paths) > 0:
+            return True
+    return False
+
+
+def _has_recorded_visual_capture(document: dict[str, object]) -> bool:
+    """Recorded video or valid screenshot, before human review."""
+    screen = document.get("screen_capture")
+    if isinstance(screen, dict) and screen.get("status") == "captured":
+        return True
+    if isinstance(screen, dict) and _screenshot_counts_as_visual_evidence(screen):
+        return True
+    top_level = {
+        "screenshot_relative_path": document.get("screen_capture_screenshot_relative_path"),
+        "screenshot_gui_alive": document.get("screen_capture_screenshot_gui_alive"),
+        "screenshot_non_uniform": document.get("screen_capture_screenshot_non_uniform"),
+    }
+    return _screenshot_counts_as_visual_evidence(top_level)
+
+
 def _visual_human_review_satisfied(document: dict[str, object]) -> bool:
     if document.get("visual_review_required") is not True:
         return True
@@ -322,12 +356,12 @@ def _document_has_visual_evidence(document: dict[str, object]) -> bool:
     return _screenshot_counts_as_visual_evidence(top_level)
 
 
-def acceptance_run_is_clean(
+def acceptance_run_technically_clean(
     document: dict[str, object],
     *,
     require_visual_evidence: bool = True,
 ) -> bool:
-    """A consecutive acceptance run needs completed outcome, ULog proof, and strict disarm/capture proof."""
+    """Mission, ULog, trajectory, disarm, and recorded capture — excluding human frame review."""
     if document.get("overall_status") != "passed":
         return False
     ulog_path = document.get("px4_ulog_relative_path")
@@ -335,12 +369,71 @@ def acceptance_run_is_clean(
         return False
     if not document.get("trajectory_png_relative_path"):
         return False
-    disarm_reason = document.get("disarm_reason")
-    if disarm_reason:
+    if document.get("disarm_reason"):
         return False
+    if require_visual_evidence and not _has_recorded_visual_capture(document):
+        return False
+    return True
+
+
+def acceptance_run_is_clean(
+    document: dict[str, object],
+    *,
+    require_visual_evidence: bool = True,
+) -> bool:
+    """Full consecutive acceptance gate including operator visual approval when required."""
+    if not acceptance_run_technically_clean(document, require_visual_evidence=require_visual_evidence):
+        return False
+    if require_visual_evidence and document.get("visual_review_required") is True:
+        if not _visual_review_frames_present(document):
+            return False
+        if not _visual_human_review_satisfied(document):
+            return False
     if require_visual_evidence and not _document_has_visual_evidence(document):
         return False
     return True
+
+
+def acceptance_run_status(
+    document: dict[str, object],
+    *,
+    require_visual_evidence: bool = True,
+) -> str:
+    """passed, pending_review (clean but awaiting frames approval), or failed."""
+    if not acceptance_run_technically_clean(document, require_visual_evidence=require_visual_evidence):
+        return "failed"
+    if not require_visual_evidence:
+        return "passed"
+    if acceptance_run_is_clean(document, require_visual_evidence=require_visual_evidence):
+        return "passed"
+    if document.get("visual_review_required") is True and not _visual_review_frames_present(document):
+        return "failed"
+    if document.get("visual_review_required") is True:
+        review = document.get("visual_human_review")
+        screen = document.get("screen_capture")
+        if review == "approved" or (
+            isinstance(screen, dict) and screen.get("visual_human_review") == "approved"
+        ):
+            return "passed" if acceptance_run_is_clean(document, require_visual_evidence=require_visual_evidence) else "failed"
+        if _visual_review_frames_present(document):
+            return "pending_review"
+    return "failed"
+
+
+def classify_acceptance_run(
+    document: dict[str, object],
+    *,
+    require_visual_evidence: bool = True,
+) -> str:
+    status = acceptance_run_status(document, require_visual_evidence=require_visual_evidence)
+    document["acceptance_status"] = status
+    if (
+        require_visual_evidence
+        and document.get("visual_review_required") is True
+        and not _visual_review_frames_present(document)
+    ):
+        document["visual_review_reason"] = "frames_missing"
+    return status
 
 
 def load_demo_waypoint_plan_config(plan_path: Path) -> DemoWaypointMissionConfig:
@@ -375,10 +468,24 @@ def consecutive_acceptance_summary(
     require_visual_evidence: bool = True,
 ) -> dict[str, object]:
     statuses = [
-        "passed" if acceptance_run_is_clean(document, require_visual_evidence=require_visual_evidence) else "failed"
+        str(document.get("acceptance_status"))
+        if document.get("acceptance_status")
+        else acceptance_run_status(document, require_visual_evidence=require_visual_evidence)
         for document in run_documents
     ]
-    passed = len(statuses) == required_runs and all(status == "passed" for status in statuses)
+    for document, status in zip(run_documents, statuses):
+        document["acceptance_status"] = status
+    all_passed = len(statuses) == required_runs and all(status == "passed" for status in statuses)
+    any_failed = any(status == "failed" for status in statuses)
+    any_pending = any(status == "pending_review" for status in statuses)
+    if all_passed:
+        overall = "passed"
+    elif any_failed:
+        overall = "failed"
+    elif any_pending:
+        overall = "pending_review"
+    else:
+        overall = "failed"
     visual_frame_paths: list[str] = []
     for document in run_documents:
         paths = document.get("visual_review_frame_paths")
@@ -393,7 +500,7 @@ def consecutive_acceptance_summary(
         "schema_version": "demo-waypoint-mission-acceptance.v0.1",
         "required_consecutive_runs": required_runs,
         "runs_recorded": len(run_documents),
-        "overall_status": "passed" if passed else "failed",
+        "overall_status": overall,
         "per_run_status": statuses,
         "runs": run_documents,
     }
