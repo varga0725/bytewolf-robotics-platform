@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from brain.preflight_params.evaluate import evaluate_params
+from brain.preflight_params.param_value import MAV_PARAM_TYPE_INT32, MAV_PARAM_TYPE_REAL32, ParamValue
 from brain.preflight_params.profile import PreflightCheckProfile
 from brain.preflight_params.report import format_text, write_json
 from brain.preflight_params.rules import RULES
@@ -17,18 +18,24 @@ from brain.preflight_params.sources import parse_qgc_params_file
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "preflight_params" / "sample_qgc.params"
 
 
-def _baseline_params() -> dict[str, float]:
+def _param(value: int | float, *, integer: bool = True) -> ParamValue:
+    if integer:
+        return ParamValue(int(value), MAV_PARAM_TYPE_INT32)
+    return ParamValue(float(value), MAV_PARAM_TYPE_REAL32)
+
+
+def _baseline_params() -> dict[str, ParamValue]:
     return {
-        "NAV_DLL_ACT": 2.0,
-        "COM_DL_LOSS_T": 10.0,
-        "COM_RC_IN_MODE": 1.0,
-        "COM_LOW_BAT_ACT": 3.0,
-        "GF_ACTION": 2.0,
-        "GF_MAX_HOR_DIST": 200.0,
-        "GF_MAX_VER_DIST": 30.0,
-        "COM_ARM_WO_GPS": 0.0,
-        "NAV_RCL_ACT": 2.0,
-        "COM_RC_LOSS_T": 0.5,
+        "NAV_DLL_ACT": _param(2),
+        "COM_DL_LOSS_T": _param(10),
+        "COM_RC_IN_MODE": _param(1),
+        "COM_LOW_BAT_ACT": _param(3),
+        "GF_ACTION": _param(2),
+        "GF_MAX_HOR_DIST": _param(200, integer=False),
+        "GF_MAX_VER_DIST": _param(30, integer=False),
+        "COM_ARM_WO_GPS": _param(0),
+        "NAV_RCL_ACT": _param(2),
+        "COM_RC_LOSS_T": _param(0.5, integer=False),
     }
 
 
@@ -49,13 +56,13 @@ class PreflightEvaluateTests(unittest.TestCase):
 
     def test_nav_dll_act_zero_is_fail(self) -> None:
         params = _baseline_params()
-        params["NAV_DLL_ACT"] = 0.0
+        params["NAV_DLL_ACT"] = _param(0)
         row = next(r for r in evaluate_params(params).results if r.param == "NAV_DLL_ACT")
         self.assertEqual(row.status, "FAIL")
 
     def test_nav_dll_act_land_requires_profile(self) -> None:
         params = _baseline_params()
-        params["NAV_DLL_ACT"] = 3.0
+        params["NAV_DLL_ACT"] = _param(3)
         without = next(r for r in evaluate_params(params).results if r.param == "NAV_DLL_ACT")
         self.assertEqual(without.status, "FAIL")
         with_profile = next(
@@ -68,42 +75,42 @@ class PreflightEvaluateTests(unittest.TestCase):
     def test_com_dl_loss_t_bounds(self) -> None:
         for bad in (0.0, -1.0, 10.5, 300.0):
             params = _baseline_params()
-            params["COM_DL_LOSS_T"] = bad
+            params["COM_DL_LOSS_T"] = _param(int(bad) if bad == int(bad) else bad, integer=bad == int(bad))
             row = next(r for r in evaluate_params(params).results if r.param == "COM_DL_LOSS_T")
             self.assertEqual(row.status, "FAIL", bad)
 
     def test_com_rc_in_mode_must_be_one(self) -> None:
         params = _baseline_params()
-        params["COM_RC_IN_MODE"] = 3.0
+        params["COM_RC_IN_MODE"] = _param(3)
         row = next(r for r in evaluate_params(params).results if r.param == "COM_RC_IN_MODE")
         self.assertEqual(row.status, "FAIL")
 
     def test_com_low_bat_act_must_be_three(self) -> None:
         params = _baseline_params()
-        params["COM_LOW_BAT_ACT"] = 0.0
+        params["COM_LOW_BAT_ACT"] = _param(0)
         row = next(r for r in evaluate_params(params).results if r.param == "COM_LOW_BAT_ACT")
         self.assertEqual(row.status, "FAIL")
 
     def test_geofence_rules(self) -> None:
         params = _baseline_params()
-        params["GF_ACTION"] = 0.0
+        params["GF_ACTION"] = _param(0)
         self.assertEqual(
             next(r for r in evaluate_params(params).results if r.param == "GF_ACTION").status, "FAIL"
         )
         params = _baseline_params()
-        params["GF_MAX_HOR_DIST"] = 0.0
+        params["GF_MAX_HOR_DIST"] = _param(0, integer=False)
         self.assertEqual(
             next(r for r in evaluate_params(params).results if r.param == "GF_MAX_HOR_DIST").status, "FAIL"
         )
         params = _baseline_params()
-        params["GF_MAX_VER_DIST"] = 0.0
+        params["GF_MAX_VER_DIST"] = _param(0, integer=False)
         self.assertEqual(
             next(r for r in evaluate_params(params).results if r.param == "GF_MAX_VER_DIST").status, "FAIL"
         )
 
     def test_extra_com_arm_wo_gps_warns_when_not_deny(self) -> None:
         params = _baseline_params()
-        params["COM_ARM_WO_GPS"] = 1.0
+        params["COM_ARM_WO_GPS"] = _param(1)
         row = next(r for r in evaluate_params(params).results if r.param == "COM_ARM_WO_GPS")
         self.assertEqual(row.status, "WARN")
 
@@ -147,6 +154,12 @@ class PreflightCliExitCodeTests(unittest.TestCase):
         self.assertEqual(exit_code_for_report(ok, read_error=False), 0)
         self.assertEqual(exit_code_for_report(bad, read_error=False), 1)
         self.assertEqual(exit_code_for_report(bad, read_error=True), 2)
+
+    def test_simulation_mode_rejects_non_loopback_with_exit_two(self) -> None:
+        from brain.preflight_params.cli import parse_arguments, run
+
+        args = parse_arguments(["--connection", "udpin://0.0.0.0:14540"])
+        self.assertEqual(run(args), 2)
 
 
 if __name__ == "__main__":

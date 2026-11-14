@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from math import isfinite
 from pathlib import Path
 import sys
 
-from brain.preflight_params.evaluate import evaluate_params
+from brain.preflight_params.evaluate import PreflightReport, evaluate_params
 from brain.preflight_params.mavlink import MavlinkReadError
+from brain.preflight_params.param_value import ParamValue
 from brain.preflight_params.profile import PreflightCheckProfile
 from brain.preflight_params.report import print_report, write_json
 from brain.preflight_params.sources import load_params_from_connection, parse_qgc_params_file
-from brain.safety.deployment import add_deployment_arguments, authorize_readonly_connection
+from brain.safety.deployment import (
+    DeploymentAuthorizationError,
+    add_deployment_arguments,
+    authorize_readonly_connection,
+)
 
 
 def _positive_seconds(value: str) -> float:
@@ -28,13 +33,13 @@ def _positive_seconds(value: str) -> float:
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Read-only PX4 preflight parameter checker (no writes, no arm, no mission upload).",
+        description="Read-only PX4 preflight parameter checker (no writes, no onboard plan upload).",
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "--connection",
         metavar="URL",
-        help="MAVLink connection (e.g. udpin://0.0.0.0:14540). Read-only parameter download.",
+        help="MAVLink connection (e.g. udpin://127.0.0.1:14540). Read-only parameter download.",
     )
     source.add_argument(
         "--params-file",
@@ -72,23 +77,31 @@ def exit_code_for_report(report: object, *, read_error: bool) -> int:
     return 0
 
 
-def run(arguments: argparse.Namespace) -> int:
+def load_params_for_arguments(arguments: argparse.Namespace) -> dict[str, ParamValue]:
+    if arguments.params_file is not None:
+        return parse_qgc_params_file(arguments.params_file)
+    authorize_readonly_connection(arguments.deployment_mode, arguments.connection)
+    return load_params_from_connection(arguments.connection, timeout_s=arguments.timeout)
+
+
+def run_checked(arguments: argparse.Namespace) -> tuple[int, PreflightReport | None, Mapping[str, ParamValue] | None]:
     profile = PreflightCheckProfile(accept_nav_dll_land=arguments.accept_nav_dll_land)
     try:
-        if arguments.params_file is not None:
-            params = parse_qgc_params_file(arguments.params_file)
-        else:
-            authorize_readonly_connection(arguments.deployment_mode, arguments.connection)
-            params = load_params_from_connection(arguments.connection, timeout_s=arguments.timeout)
-    except (MavlinkReadError, OSError, ValueError) as error:
+        params = load_params_for_arguments(arguments)
+    except (MavlinkReadError, DeploymentAuthorizationError, OSError, ValueError) as error:
         print(f"read error: {error}", file=sys.stderr)
-        return 2
+        return 2, None, None
 
     report = evaluate_params(params, profile=profile)
     print_report(report)
     if arguments.json is not None:
         write_json(report, arguments.json)
-    return exit_code_for_report(report, read_error=False)
+    return exit_code_for_report(report, read_error=False), report, params
+
+
+def run(arguments: argparse.Namespace) -> int:
+    exit_code, _, _ = run_checked(arguments)
+    return exit_code
 
 
 def main(arguments: Sequence[str] | None = None) -> None:

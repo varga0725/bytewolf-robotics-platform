@@ -16,10 +16,20 @@ def format_text(report: PreflightReport) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _format_actual(value: int | float | None) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, int):
+        return str(value)
+    if float(value).is_integer():
+        return str(int(value))
+    return f"{value:g}"
+
+
 def _format_result_row(row: ParamCheckResult) -> list[str]:
     tag = row.status
     extra = " [beyond core]" if row.group == "extra" else ""
-    actual = "—" if row.actual is None else f"{row.actual:g}"
+    actual = _format_actual(row.actual)
     return [
         f"[{tag}]{extra} {row.param}: {row.reason}",
         f"  expected: {row.expected} | actual: {actual}",

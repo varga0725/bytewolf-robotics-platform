@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from brain.preflight_params.mavlink import MavlinkReadError, fetch_params_over_mavlink
+from brain.preflight_params.param_value import ParamValue, param_value_from_qgc_export
 
 # QGC / PX4 .params lines: optional vehicle/component columns, then name and value.
 _PARAM_LINE = re.compile(
@@ -13,10 +14,10 @@ _PARAM_LINE = re.compile(
 )
 
 
-def parse_qgc_params_file(path: Path) -> dict[str, float]:
+def parse_qgc_params_file(path: Path) -> dict[str, ParamValue]:
     """Parse a QGroundControl parameter export without contacting the vehicle."""
 
-    params: dict[str, float] = {}
+    params: dict[str, ParamValue] = {}
     for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -24,13 +25,13 @@ def parse_qgc_params_file(path: Path) -> dict[str, float]:
         match = _PARAM_LINE.match(line)
         if not match:
             raise MavlinkReadError(f"Cannot parse parameter line {line_number} in {path}: {raw_line!r}")
-        params[match.group("name")] = float(match.group("value"))
+        params[match.group("name")] = param_value_from_qgc_export(float(match.group("value")))
     if not params:
         raise MavlinkReadError(f"No parameters found in {path}")
     return params
 
 
-def load_params_from_connection(connection: str, *, timeout_s: float) -> dict[str, float]:
+def load_params_from_connection(connection: str, *, timeout_s: float) -> dict[str, ParamValue]:
     """Download the PX4 parameter set over MAVLink (read-only)."""
 
     return fetch_params_over_mavlink(connection, timeout_s=timeout_s)

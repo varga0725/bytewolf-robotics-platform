@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from brain.preflight_params.param_value import ParamValue, snapshot_numeric_values
 from brain.preflight_params.profile import PreflightCheckProfile
 from brain.preflight_params.rules import RULES, CheckStatus, ParamRule
 
@@ -17,7 +19,8 @@ class ParamCheckResult:
     rationale: str
     status: CheckStatus
     reason: str
-    actual: float | None
+    actual: int | float | None
+    param_type: int | None
 
 
 @dataclass(frozen=True)
@@ -49,40 +52,61 @@ class PreflightReport:
                     "status": row.status,
                     "reason": row.reason,
                     "actual": row.actual,
+                    "param_type": row.param_type,
                 }
                 for row in self.results
             ],
         }
 
 
-def _lookup(params: dict[str, float], name: str) -> float | None:
+def _find_entry(params: Mapping[str, ParamValue], name: str) -> ParamValue | None:
     if name in params:
         return params[name]
-    # PX4 may expose uppercase-only ids; QGC exports match param names.
-    for key, value in params.items():
+    for key, entry in params.items():
         if key.upper() == name.upper():
-            return value
+            return entry
     return None
 
 
 def evaluate_params(
-    params: dict[str, float],
+    params: Mapping[str, ParamValue],
     *,
     profile: PreflightCheckProfile | None = None,
 ) -> PreflightReport:
     """Run every rule against ``params`` (missing keys are FAIL / not readable)."""
 
     active = profile or PreflightCheckProfile()
+    numeric = snapshot_numeric_values(params)
     results: list[ParamCheckResult] = []
     for rule in RULES:
-        results.append(_evaluate_rule(rule, params, active))
+        results.append(_evaluate_rule(rule, params, numeric, active))
     summary = _summarize(results)
     return PreflightReport(tuple(results), summary)
 
 
-def _evaluate_rule(rule: ParamRule, params: dict[str, float], profile: PreflightCheckProfile) -> ParamCheckResult:
-    actual = _lookup(params, rule.param)
-    status, reason = rule.check(actual, profile)
+def _evaluate_rule(
+    rule: ParamRule,
+    params: Mapping[str, ParamValue],
+    numeric: dict[str, int | float],
+    profile: PreflightCheckProfile,
+) -> ParamCheckResult:
+    entry = _find_entry(params, rule.param)
+    actual_display: int | float | None
+    param_type: int | None
+    check_value: float | None
+    if entry is not None:
+        actual_display = entry.display_value
+        param_type = entry.param_type
+        check_value = float(actual_display)
+    elif rule.param in numeric:
+        actual_display = numeric[rule.param]
+        param_type = None
+        check_value = float(actual_display)
+    else:
+        actual_display = None
+        param_type = None
+        check_value = None
+    status, reason = rule.check(check_value, profile)
     return ParamCheckResult(
         param=rule.param,
         expected=rule.expected,
@@ -90,7 +114,8 @@ def _evaluate_rule(rule: ParamRule, params: dict[str, float], profile: Preflight
         rationale=rule.rationale,
         status=status,
         reason=reason,
-        actual=actual,
+        actual=actual_display,
+        param_type=param_type,
     )
 
 
