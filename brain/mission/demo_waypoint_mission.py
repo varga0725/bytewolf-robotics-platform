@@ -294,7 +294,21 @@ def _screenshot_counts_as_visual_evidence(screen: dict[str, object]) -> bool:
     return True
 
 
+def _visual_human_review_satisfied(document: dict[str, object]) -> bool:
+    if document.get("visual_review_required") is not True:
+        return True
+    review = document.get("visual_human_review")
+    if review == "approved":
+        return True
+    screen = document.get("screen_capture")
+    if isinstance(screen, dict) and screen.get("visual_human_review") == "approved":
+        return True
+    return False
+
+
 def _document_has_visual_evidence(document: dict[str, object]) -> bool:
+    if not _visual_human_review_satisfied(document):
+        return False
     screen = document.get("screen_capture")
     if isinstance(screen, dict) and screen.get("status") == "captured":
         return True
@@ -365,7 +379,17 @@ def consecutive_acceptance_summary(
         for document in run_documents
     ]
     passed = len(statuses) == required_runs and all(status == "passed" for status in statuses)
-    return {
+    visual_frame_paths: list[str] = []
+    for document in run_documents:
+        paths = document.get("visual_review_frame_paths")
+        if isinstance(paths, list):
+            visual_frame_paths.extend(str(path) for path in paths)
+        screen = document.get("screen_capture")
+        if isinstance(screen, dict):
+            nested = screen.get("visual_review_frame_paths")
+            if isinstance(nested, list):
+                visual_frame_paths.extend(str(path) for path in nested)
+    summary: dict[str, object] = {
         "schema_version": "demo-waypoint-mission-acceptance.v0.1",
         "required_consecutive_runs": required_runs,
         "runs_recorded": len(run_documents),
@@ -373,3 +397,11 @@ def consecutive_acceptance_summary(
         "per_run_status": statuses,
         "runs": run_documents,
     }
+    if visual_frame_paths:
+        summary["visual_review_frame_paths"] = visual_frame_paths
+        summary["visual_review_required"] = True
+        summary["operator_note"] = (
+            "Human frame review is required before visual evidence counts toward acceptance. "
+            "Set visual_human_review to approved on each run document after reviewing extracted PNGs."
+        )
+    return summary

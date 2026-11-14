@@ -125,6 +125,28 @@ class AcceptanceEvidenceTests(unittest.TestCase):
         self.assertFalse(_document_has_visual_evidence(document))
         self.assertFalse(acceptance_run_is_clean(document))
 
+    def test_captured_video_requires_human_visual_review_when_flagged(self) -> None:
+        document = {
+            "overall_status": "passed",
+            "trajectory_png_relative_path": "trajectory.png",
+            "px4_ulog_relative_path": "runs/x.ulg",
+            "screen_capture": {"status": "captured", "relative_path": "screen.mp4"},
+            "visual_review_required": True,
+            "visual_human_review": "pending",
+        }
+        self.assertFalse(acceptance_run_is_clean(document))
+
+    def test_captured_video_counts_after_human_visual_review(self) -> None:
+        document = {
+            "overall_status": "passed",
+            "trajectory_png_relative_path": "trajectory.png",
+            "px4_ulog_relative_path": "runs/x.ulg",
+            "screen_capture": {"status": "captured", "relative_path": "screen.mp4"},
+            "visual_review_required": True,
+            "visual_human_review": "approved",
+        }
+        self.assertTrue(acceptance_run_is_clean(document))
+
     def test_bare_screenshot_path_without_gui_alive_flags_is_not_visual_evidence(self) -> None:
         document = {
             "overall_status": "passed",

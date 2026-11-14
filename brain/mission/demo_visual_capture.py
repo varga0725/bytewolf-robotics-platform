@@ -48,6 +48,7 @@ class CaptureResult:
     gz_gui_args_rejected: list[str] | None = None
     gui_env_libgl_software: bool | None = None
     gui_retry_render_engine: str | None = None
+    demo_gui_config_relative_path: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {"status": self.status}
@@ -79,6 +80,8 @@ class CaptureResult:
             payload["gui_env_libgl_software"] = self.gui_env_libgl_software
         if self.gui_retry_render_engine is not None:
             payload["gui_retry_render_engine"] = self.gui_retry_render_engine
+        if self.demo_gui_config_relative_path is not None:
+            payload["demo_gui_config_relative_path"] = self.demo_gui_config_relative_path
         return payload
 
 
@@ -106,6 +109,8 @@ class _CaptureSession:
     gz_gui_args_rejected: list[str] = field(default_factory=list)
     gui_env_libgl_software: bool | None = None
     gui_retry_render_engine: str | None = None
+    capture_started_epoch: float | None = None
+    demo_gui_config_path: str | None = None
 
     def cleanup(self) -> None:
         for process in reversed(self.child_processes):
@@ -152,6 +157,10 @@ class DemoFlightScreenCapture:
     _started_at: float | None = field(default=None, init=False)
     _result: CaptureResult | None = field(default=None, init=False)
 
+    @property
+    def capture_started_epoch(self) -> float | None:
+        return self._session.capture_started_epoch
+
     def start(self) -> CaptureResult:
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is None:
@@ -173,6 +182,8 @@ class DemoFlightScreenCapture:
         command = [
             ffmpeg,
             "-y",
+            "-draw_mouse",
+            "0",
             "-f",
             "x11grab",
             "-framerate",
@@ -195,6 +206,7 @@ class DemoFlightScreenCapture:
         except OSError as error:
             return CaptureResult("failed", reason=str(error))
         self._started_at = time.monotonic()
+        self._session.capture_started_epoch = time.time()
         self._result = CaptureResult("recording")
         self._start_gui_liveness_sampling()
         self._schedule_midflight_screenshot()
@@ -246,6 +258,7 @@ class DemoFlightScreenCapture:
             "gz_gui_args_rejected": self._session.gz_gui_args_rejected or None,
             "gui_env_libgl_software": self._session.gui_env_libgl_software,
             "gui_retry_render_engine": self._session.gui_retry_render_engine,
+            "demo_gui_config_relative_path": _demo_gui_config_relative(self._session.demo_gui_config_path),
         }
         if elapsed > self.max_duration_s:
             return CaptureResult("failed", reason="capture exceeded max duration before stop", **common)
@@ -655,6 +668,29 @@ def _repository_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _demo_gui_config_relative(path: str | None) -> str | None:
+    if path is None:
+        return None
+    candidate = Path(path)
+    try:
+        return str(candidate.relative_to(_repository_root()))
+    except ValueError:
+        return candidate.name
+
+
+def _resolved_demo_gui_launch_args(extra_args: list[str]) -> list[str]:
+    if any(token == "--gui-config" for token in extra_args):
+        return []
+    from brain.mission.demo_gz_scene import default_demo_gui_config_path, demo_gui_config_enabled
+
+    if not demo_gui_config_enabled():
+        return []
+    config_path = default_demo_gui_config_path()
+    if not config_path.is_file():
+        return []
+    return ["--gui-config", str(config_path)]
+
+
 def _parse_gz_gui_extra_env() -> tuple[dict[str, str], list[str]]:
     raw = os.environ.get("BYTEWOLF_DEMO_GZ_GUI_EXTRA_ENV", "").strip()
     if not raw:
@@ -792,6 +828,10 @@ def _launch_gz_gui_client(
     extra_args, rejected_args = _validated_gz_gui_args()
     if force_render_engine in {"ogre", "ogre2"}:
         extra_args = _replace_render_engine_args(extra_args, force_render_engine)
+    config_args = _resolved_demo_gui_launch_args(extra_args)
+    if session is not None and config_args:
+        session.demo_gui_config_path = config_args[1]
+    extra_args = [*extra_args, *config_args]
     if session is not None:
         session.gz_gui_args_rejected = rejected_args
     command = [gz, "sim", "-g", *extra_args]

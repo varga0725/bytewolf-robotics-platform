@@ -108,6 +108,7 @@ async def run(arguments: argparse.Namespace) -> None:
     dashboard_relay_task: asyncio.Task[None] | None = None
     flight_capture: DemoFlightScreenCapture | None = None
     screen_capture_result: dict[str, object] | None = None
+    gz_visual_director = None
     position_samples: list[dict[str, object]] = []
     mission_started_epoch: float | None = None
     ulog_failure_reason: str | None = None
@@ -184,14 +185,41 @@ async def run(arguments: argparse.Namespace) -> None:
                     screenshot_path=evidence_directory / f"screen-{evidence_stamp}.png",
                 )
                 screen_capture_result = (await asyncio.to_thread(flight_capture.start)).as_dict()
+                if screen_capture_result.get("status") == "recording":
+                    if os.environ.get("BYTEWOLF_DEMO_GZ_VISUAL", "1").strip().lower() not in {"0", "false", "no"}:
+                        from brain.mission.demo_gz_scene import DemoGzVisualDirector
+
+                        gz_visual_director = DemoGzVisualDirector(config=config)
+                        await gz_visual_director.after_gui_recording_start()
         try:
             mission_started_epoch = time.time()
-            execution = await execute_demo_waypoint_mission(adapter, config)
+            on_armed = None
+            if gz_visual_director is not None:
+                on_armed = gz_visual_director.reaffirm_camera_follow_after_arm
+            execution = await execute_demo_waypoint_mission(adapter, config, on_armed=on_armed)
         finally:
             sampler_stop.set()
             await sampler_task
             if flight_capture is not None:
                 screen_capture_result = (await asyncio.to_thread(flight_capture.stop)).as_dict()
+                if gz_visual_director is not None and screen_capture_result is not None and adapter is not None:
+                    execution_events = [
+                        {
+                            "phase": event.phase.value,
+                            "timestamp": event.timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                        }
+                        for event in execution.events
+                    ]
+                    visual_evidence = gz_visual_director.build_post_capture_evidence(
+                        video_path=flight_capture.output_path,
+                        evidence_directory=evidence_directory,
+                        capture_started_epoch=flight_capture.capture_started_epoch or mission_started_epoch or time.time(),
+                        stamp=evidence_stamp,
+                        execution_events=execution_events,
+                        mission_items_reached=list(getattr(adapter, "_demo_mission_items_reached", [])),
+                        armed_at_epoch=getattr(adapter, "_demo_armed_at_epoch", None),
+                    )
+                    screen_capture_result.update(visual_evidence)
         validate_demo_waypoint_mission_progress(
             execution,
             items_reached=tuple(getattr(adapter, "_demo_mission_items_reached", ())),
@@ -361,6 +389,19 @@ def _write_acceptance_evidence(
             document["screen_capture_screenshot_relative_path"] = screen_capture_status.get("screenshot_relative_path")
             document["screen_capture_screenshot_gui_alive"] = screen_capture_status.get("screenshot_gui_alive")
             document["screen_capture_screenshot_non_uniform"] = screen_capture_status.get("screenshot_non_uniform")
+        for key in (
+            "camera_follow",
+            "camera_follow_steps",
+            "waypoint_markers",
+            "visual_review_required",
+            "visual_review_frames",
+            "visual_review_frame_paths",
+            "visual_human_review",
+            "spawn_origin",
+            "demo_gui_config_relative_path",
+        ):
+            if key in screen_capture_status:
+                document[key] = screen_capture_status[key]
     if ulog_status != "captured":
         document["overall_status"] = "failed"
         document["failure_reason"] = ulog_failure_reason or "PX4 ULog was not archived before evidence was written."

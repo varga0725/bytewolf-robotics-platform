@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,7 @@ async def execute_demo_waypoint_mission(
     config: DemoWaypointMissionConfig,
     *,
     action_timeout_s: float = 45.0,
+    on_armed: "callable[[], object] | None" = None,
 ) -> MissionExecution:
     from mavsdk.mission import MissionItem, MissionPlan
 
@@ -60,6 +62,14 @@ async def execute_demo_waypoint_mission(
         )
         await asyncio.wait_for(adapter._drone.action.arm(), timeout=action_timeout_s)
         armed = True
+        adapter._demo_armed_at_epoch = time.time()
+        if on_armed is not None:
+            try:
+                awaited = on_armed()
+                if asyncio.iscoroutine(awaited):
+                    await asyncio.wait_for(awaited, timeout=10.0)
+            except Exception:
+                logging.getLogger(__name__).warning("demo waypoint on_armed hook failed", exc_info=True)
         await asyncio.wait_for(adapter._drone.mission.start_mission(), timeout=action_timeout_s)
         airborne = True
         execution = adapter._record(execution, MissionPhase.NAVIGATING)

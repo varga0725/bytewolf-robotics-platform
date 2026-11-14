@@ -318,6 +318,22 @@ from before arm until disarm (cap:
 to `skipped` without failing the flight; trajectory PNG and PX4 ULog are mandatory
 for a clean acceptance run. Summary: `acceptance-latest.json`.
 
+**Framing the drone (acceptance `xvfb`):** by default the gz GUI loads
+`config/gz/demo_gui.config` (full `1920x1080` window, initial camera near the
+Baylands spawn at `197 155 5 0 0.35 0`). Disable with
+`BYTEWOLF_DEMO_GZ_GUI_CONFIG=0`. After the GUI is up, the runner (when
+`BYTEWOLF_DEMO_GZ_VISUAL` is not `0`) polls `/gui/follow`, follows `x500_0`, sets
+follow offset (default `-5 -1.5 2.5` via `BYTEWOLF_DEMO_GZ_FOLLOW_OFFSET`), places
+small semi-transparent waypoint sphere markers (world
+`x = 205 + east_m`, `y = 155 + north_m`, `z = 0.4 + relative_altitude_m`), and
+re-asserts follow after arm. Marker/follow failures are recorded only — they never
+abort the mission. `ffmpeg` uses `-draw_mouse 0`.
+
+**Human visual review:** when review PNGs are extracted under `frames/`
+(`visual_review_required: true`), acceptance does **not** treat the video as clean
+visual evidence until an operator sets `visual_human_review` to `approved` on the
+run JSON (frame paths are listed in the run document and `acceptance-latest.json`).
+
 ### Control Room review / approve
 
 ```bash

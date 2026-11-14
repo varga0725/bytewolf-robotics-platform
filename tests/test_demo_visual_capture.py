@@ -181,6 +181,37 @@ class WindowCleanupSafetyTests(unittest.TestCase):
             self.assertNotIn("LIBGL_ALWAYS_SOFTWARE", env)
             self.assertFalse(session.gui_env_libgl_software)
 
+    def test_ffmpeg_capture_omits_mouse_cursor(self) -> None:
+        from brain.mission.demo_visual_capture import DemoFlightScreenCapture
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "clip.mp4"
+            with patch("brain.mission.demo_visual_capture.shutil.which") as which:
+                which.side_effect = lambda name: f"/usr/bin/{name}" if name in {"ffmpeg", "Xvfb", "gz"} else None
+                with patch("brain.mission.demo_visual_capture.subprocess.Popen") as popen:
+                    popen.return_value = MagicMock(stdin=MagicMock(), poll=MagicMock(return_value=None))
+                    with patch(
+                        "brain.mission.demo_visual_capture._launch_gz_gui_with_startup_retry",
+                        return_value=MagicMock(pid=1, poll=MagicMock(return_value=None)),
+                    ):
+                        with patch("brain.mission.demo_visual_capture._wait_s"):
+                            capture = DemoFlightScreenCapture(output, mode="xvfb")
+                            capture.start()
+                    argv = popen.call_args_list[-1].args[0]
+                    self.assertIn("-draw_mouse", argv)
+                    idx = argv.index("-draw_mouse")
+                    self.assertEqual(argv[idx + 1], "0")
+
+    def test_default_demo_gui_config_is_passed_to_gz(self) -> None:
+        from brain.mission.demo_visual_capture import _resolved_demo_gui_launch_args
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("BYTEWOLF_DEMO_GZ_GUI_ARGS", None)
+            args = _resolved_demo_gui_launch_args([])
+        self.assertEqual(len(args), 2)
+        self.assertEqual(args[0], "--gui-config")
+        self.assertTrue(Path(args[1]).name == "demo_gui.config")
+
     def test_xvfb_starts_with_glx_extensions(self) -> None:
         from brain.mission.demo_visual_capture import DemoFlightScreenCapture
 
