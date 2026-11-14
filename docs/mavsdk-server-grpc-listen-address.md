@@ -62,3 +62,5 @@ approved outside BYT-46).
 
 The dashboard telemetry relay (`brain.cli.dashboard_telemetry`) therefore
 remains on the embedded-server path until one of those exists.
+
+Follow-up: BYT-49 (read-only pymavlink backend, approved 2026-11-14).
