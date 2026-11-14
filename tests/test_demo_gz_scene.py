@@ -6,7 +6,7 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from brain.mission.commands import WaypointCommand
 from brain.mission.demo_gz_scene import (
@@ -122,13 +122,14 @@ class FrameTimingTests(unittest.TestCase):
                 output.write_bytes(b"png")
                 return MagicMock(returncode=0)
 
-            frames = extract_review_frames(
-                video,
-                Path(directory) / "frames",
-                {"takeoff": 5.0},
-                stamp="t1",
-                ffmpeg_run=fake_run,
-            )
+            with patch("brain.mission.demo_gz_scene.shutil.which", return_value="/usr/bin/ffmpeg"):
+                frames = extract_review_frames(
+                    video,
+                    Path(directory) / "frames",
+                    {"takeoff": 5.0},
+                    stamp="t1",
+                    ffmpeg_run=fake_run,
+                )
             self.assertEqual(len(frames), 1)
             self.assertIn("-ss", calls[0])
 
