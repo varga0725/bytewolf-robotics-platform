@@ -35,8 +35,10 @@ Cél: a FC él, a firmware a baseline, a szenzorok kalibráltak. **Propeller né
 akku nélkül.** A Pixhawk USB-C-ről táplálható és teljesen konfigurálható.
 
 1. Csatlakoztasd a Pixhawk 6C-t USB-C-vel a laptophoz, indíts QGroundControl-t.
-2. Ellenőrizd/flasheld a **PX4 v1.17.0** firmware-t — ez a projekt baseline
-   (`twin.yaml: simulation.px4_version`, `simulation/px4/macos-build.patch`).
+2. Rögzítsd a telepített firmware verzióját, de **ne flasheld automatikusan**.
+   A tényleges controlleren PX4 v1.16.0 került megfigyelésre, míg a SITL
+   baseline v1.17.0. Frissítés csak külön migrációs, kompatibilitási és rollback
+   terv jóváhagyása után történhet.
 3. Airframe: **Holybro X500 V2 (Quad X)**.
 4. Szenzor-kalibráció: accelerometer, gyroscope, magnetometer/compass, szintezés (level horizon).
 5. GPS: kültéren ellenőrizd a fix-et (M8N/M10), figyeld a HDOP/sat count értéket.
@@ -169,7 +171,7 @@ tényleges bench-mérés után.
 
 ## Bring-up ellenőrzőlista
 
-- [ ] Pixhawk 6C USB bring-up + PX4 v1.17.0 + szenzor-kalibráció (QGroundControl)
+- [ ] Pixhawk 6C USB bring-up + firmware-döntés (jelenleg v1.16.0) + szenzor-kalibráció (QGroundControl)
 - [ ] IMU/baro Allan-variance recording → `twin.yaml` measured (mérés után)
 - [ ] Airframe száraz tömeg + inercia → `twin.yaml` measured (mérés után)
 - [ ] Kültéri GPS-fix scatter (M8N/M10) → `sensors.gps.*_noise_m`

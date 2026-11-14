@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-unittest.txt
       - name: Run the unittest suite
         # The suite is the gate: no lint or formatter is configured in this repo.
         run: python -m unittest discover -s tests -v

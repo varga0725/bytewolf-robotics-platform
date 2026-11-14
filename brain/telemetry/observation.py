@@ -20,7 +20,7 @@ time.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 from functools import lru_cache
 import json
@@ -147,10 +147,10 @@ def _parse_timestamp(value: str) -> datetime:
         raise ObservationContractError(
             f"Observation timestamp '{value}' has no offset; an age cannot be measured from it."
         )
-    return timestamp.astimezone(UTC)
+    return timestamp.astimezone(timezone.utc)
 
 
 def _utc(moment: datetime) -> datetime:
     if moment.tzinfo is None or moment.utcoffset() is None:
         raise ObservationContractError("The current time must be timezone-aware to measure an age.")
-    return moment.astimezone(UTC)
+    return moment.astimezone(timezone.utc)

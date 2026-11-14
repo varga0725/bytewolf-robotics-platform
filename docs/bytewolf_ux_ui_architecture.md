@@ -6,6 +6,16 @@
 
 ---
 
+> **Történeti, aspirációs dokumentum.** A „Jóváhagyott” címke nem jelent
+> implementációs vagy fizikai repülési bizonyítékot. A szállított vezérlési
+> felületre a `product-direction-dji-inspired-v0_1.md`, a
+> `frontend-control-room-plan.md` és a `server-control-safety-v0_1.md` az
+> irányadó. A fizikai aktuáció jelenleg tiltott; az itt szereplő mobil,
+> vészvezérlési és egyérintéses folyamatok csak koncepciók, amíg külön nem
+> implementáltak és igazoltak.
+
+---
+
 ## 1. Termékkontextus és UX Értelmezés
 
 A **ByteWolf Robotics Platform** egy úttörő, AI-native robotikai operációs rendszer és vezérlőfelület, amely szakít a hagyományos, egyedi robothardverekhez láncolt siló-alkalmazásokkal. A platform alapfilozófiája:

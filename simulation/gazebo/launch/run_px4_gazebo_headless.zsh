@@ -45,7 +45,13 @@ fi
 
 export HEADLESS=1
 export PX4_GZ_WORLD="$WORLD"
-export CMAKE_PREFIX_PATH="$(brew --prefix qt@5):${CMAKE_PREFIX_PATH:-}"
+if [[ "$(uname)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+  typeset qt_prefix
+  qt_prefix="$(brew --prefix qt@5 2>/dev/null || true)"
+  if [[ -n "$qt_prefix" && -d "$qt_prefix" ]]; then
+    export CMAKE_PREFIX_PATH="${qt_prefix}:${CMAKE_PREFIX_PATH:-}"
+  fi
+fi
 WORLD_FILE=${PX4_GZ_WORLD_FILE:-$PX4_ROOT/Tools/simulation/gz/worlds/$WORLD.sdf}
 WORLD_FILE=${WORLD_FILE:A}
 
@@ -142,6 +148,14 @@ PX4_OWNS_RUN_DIR=0
 if [[ -z "${PX4_RUN_DIR_KEEP:-}" ]]; then
   PX4_OWNS_RUN_DIR=1
 fi
+
+if [[ -d "$PX4_RUN_DIR" ]]; then
+  PX4_RUN_DIR="$(cd "$PX4_RUN_DIR" && pwd)"
+elif command -v realpath >/dev/null 2>&1; then
+  PX4_RUN_DIR="$(realpath "$PX4_RUN_DIR" 2>/dev/null || print -r -- "$PX4_RUN_DIR")"
+fi
+export BYTEWOLF_PX4_RUN_DIR="$PX4_RUN_DIR"
+export PX4_RUN_DIR
 
 if [[ ! -d "$PX4_RUN_DIR" ]]; then
   print -u2 "Nem hozható létre a PX4 futási könyvtár: $PX4_RUN_DIR"

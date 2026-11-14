@@ -10,6 +10,12 @@ from brain.cli.artifacts import prepare_flight_run_recording, recorded_execution
 from brain.cli.mavsdk_lifecycle import acquire_px4_link, stop_owned_mavsdk_server
 from brain.mission.execution import MissionExecution
 from brain.mission.flight import authorize_takeoff_waypoint_land
+from brain.safety.deployment import (
+    actuation_request_sha256,
+    add_deployment_arguments,
+    authorize_actuation_connection,
+    file_sha256,
+)
 from brain.safety.gate import SafetyGate
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
@@ -30,7 +36,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="Versioned vehicle twin YAML that supplies non-overridable safety limits.",
     )
     parser.add_argument("--waypoint-timeout", type=float, default=30.0)
-    parser.add_argument("--endpoint", default="udpin://0.0.0.0:14540")
+    parser.add_argument("--endpoint", default="udpin://127.0.0.1:14540")
     parser.add_argument("--connection-timeout", type=float, default=15.0)
     parser.add_argument("--preflight-wait-seconds", type=float, default=120.0)
     parser.add_argument(
@@ -61,6 +67,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--px4-ulog", type=Path, default=None,
         help="Completed PX4 .ulg file to archive with a run-linked integrity manifest.",
     )
+    add_deployment_arguments(parser, actuation_capable=True)
     return parser.parse_args(arguments)
 
 
@@ -75,8 +82,6 @@ async def run(arguments: argparse.Namespace) -> None:
     dashboard_stop_event: asyncio.Event | None = None
     dashboard_relay_task: asyncio.Task[None] | None = None
     try:
-        from mavsdk import System
-
         profile = load_safety_profile(arguments.safety_profile)
         gate = SafetyGate(profile.flight_limits())
         mission = authorize_takeoff_waypoint_land(
@@ -89,6 +94,35 @@ async def run(arguments: argparse.Namespace) -> None:
             waypoint_timeout_s=arguments.waypoint_timeout,
         )
         safety_decision = "approved"
+        operation = "waypoint-land"
+        request_sha256 = actuation_request_sha256(
+            {
+                "operation": operation,
+                "vehicle_id": profile.vehicle_id,
+                "takeoff_altitude_m": mission.takeoff.target_altitude_m,
+                "north_m": mission.waypoint.north_m,
+                "east_m": mission.waypoint.east_m,
+                "waypoint_altitude_m": mission.waypoint.target_altitude_m,
+                "hover_duration_s": mission.hover_duration_s,
+                "waypoint_timeout_s": mission.waypoint_timeout_s,
+            }
+        )
+        authorize_actuation_connection(
+            arguments.deployment_mode,
+            arguments.endpoint,
+            vehicle_id=profile.vehicle_id,
+            operation=operation,
+            request_sha256=request_sha256,
+            safety_profile_sha256=file_sha256(arguments.safety_profile),
+            physical_actuation_enabled=profile.physical_actuation_enabled,
+            permit_path=arguments.physical_actuation_permit,
+        )
+        try:
+            from mavsdk import System
+        except ModuleNotFoundError as error:
+            raise RuntimeError(
+                "MAVSDK is not installed. Run: .venv/bin/pip install -r requirements.txt"
+            ) from error
         system = System(port=arguments.mavsdk_server_port)
         adapter = MavsdkMissionAdapter(system, safety_profile=profile, preflight_wait_s=arguments.preflight_wait_seconds)
         print(f"Connecting to PX4 at {arguments.endpoint}...")

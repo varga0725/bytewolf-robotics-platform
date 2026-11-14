@@ -1,0 +1,358 @@
+# ROS 2 Humble telemetry bridge — Ubuntu runbook
+
+How to stand up the optional telemetry-only ROS 2 bridge beside PX4 SITL on an
+Ubuntu 22.04 host, and how to tell whether it actually relayed anything.
+
+This is a second host, not a replacement. macOS remains a supported development
+environment and every script here keeps working there.
+
+## Why Ubuntu 22.04 or 24.04
+
+ROS 2 Humble is the distribution this project's bridge contract targets. Use
+22.04 (jammy) where Humble is native, or 24.04 (noble) for the pinned Linux
+Gazebo Sim 8.15.0 baseline. The Gazebo APT source line uses
+`$(lsb_release -cs)` — on noble it pulls 8.15.0; on jammy the archive still
+ships 8.14.x and does not match the noble pin in `baseline.yaml`.
+
+## The two interpreters
+
+This is the part that surprises people, so it comes first.
+
+| | Python | Why |
+| --- | --- | --- |
+| Platform (`.venv`) | 3.12 | The codebase uses `StrEnum`, which is 3.11+ |
+| Bridge (`.venv-ros`) | 3.10 | Humble builds `rclpy` against `libpython3.10` |
+
+They cannot be merged. Humble's `rclpy` will not import on 3.12, and the
+platform will not import on 3.10 unless the bridge's import chain stays free of
+3.11+ syntax and names — which is exactly what
+`tests/test_x500v2_ros2_telemetry_adapter.py::RosInterpreterCompatibilityTests`
+holds it to. If you add `datetime.UTC`, `StrEnum` or similar anywhere under
+`brain/telemetry/` or `robots/drone/x500v2/ros2/`, that test fails and tells you
+the bridge can no longer run.
+
+Ubuntu 22.04 ships Python 3.10 as its system interpreter, so the platform venv
+needs a newer one from the deadsnakes PPA.
+
+## Host setup
+
+```bash
+# Python 3.12 for the platform venv
+sudo add-apt-repository -y ppa:deadsnakes/ppa
+sudo apt-get install -y python3.12 python3.12-venv python3.12-dev
+
+# Build toolchain. zsh matters: the launchers use a zsh shebang.
+sudo apt-get install -y zsh cmake ninja-build build-essential git
+
+# Gazebo Harmonic
+sudo curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
+  -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] \
+http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+  | sudo tee /etc/apt/sources.list.d/gazebo-stable.list
+sudo apt-get update && sudo apt-get install -y gz-harmonic
+
+# ROS 2 Humble. ros-base is enough; the desktop metapackage adds GUI tools a
+# headless server cannot use.
+sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+  -o /usr/share/keyrings/ros-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+  | sudo tee /etc/apt/sources.list.d/ros2.list
+sudo apt-get update && sudo apt-get install -y ros-humble-ros-base \
+  ros-humble-sensor-msgs ros-humble-std-msgs python3.10-venv
+```
+
+If `add-apt-repository` hangs on a Launchpad timeout, add the PPA by hand: read
+`signing_key_fingerprint` from
+`https://api.launchpad.net/devel/~deadsnakes/+archive/ubuntu/ppa`, fetch that key
+from `keyserver.ubuntu.com`, and write a `signed-by=` source. Verify the
+fingerprint against what the API reported rather than trusting the download.
+
+## PX4
+
+The checkout path must contain no spaces — a PX4 subproject breaks on them — and
+`PX4-Autopilot` is a symlink to a sibling directory, git-ignored third-party
+source.
+
+```bash
+git clone --recursive --branch v1.17.0 \
+  https://github.com/PX4/PX4-Autopilot.git ~/bytewolf-robotics/PX4-Autopilot
+ln -sfn ~/bytewolf-robotics/PX4-Autopilot ~/bytewolf-robotics/platform/PX4-Autopilot
+
+cd ~/bytewolf-robotics/PX4-Autopilot
+bash Tools/setup/ubuntu.sh --no-nuttx --no-sim-tools
+
+# --no-sim-tools skips gazebo-classic, which would collide with Harmonic, but it
+# also skips build dependencies the simulation modules need. Install those
+# without gazebo-classic:
+sudo apt-get install -y --no-install-recommends libopencv-dev libeigen3-dev \
+  protobuf-compiler pkg-config libgstreamer-plugins-base1.0-dev libxml2-utils
+
+export PATH="$HOME/.local/bin:$PATH"
+make px4_sitl
+```
+
+**Build with `make px4_sitl`, not `make px4_sitl gz_x500`.** The second form also
+*launches* the simulator, in interactive mode. On a headless host the `pxh>`
+prompt then fills the output pipe without bound — it reached an 11 GB log file
+here before anyone noticed. The launchers run PX4 in daemon mode (`-d`) for
+exactly this reason.
+
+## Platform environment
+
+```bash
+cd ~/bytewolf-robotics/platform
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m unittest discover -s tests
+```
+
+The suite must be green here, with no PX4 and no Gazebo. If it is not, stop:
+something is wrong that a simulator will not explain.
+
+`requirements.txt` alone leaves the vision and biometric tests failing on missing
+`cv2` and `cryptography`; those live in `requirements-vision-research.txt`, which
+is deliberately outside the safety-core baseline. Install it too if you want the
+whole suite, and note that CI installs only the former.
+
+## Bridge environment
+
+```bash
+cd ~/bytewolf-robotics/platform
+python3.10 -m venv --system-site-packages .venv-ros
+.venv-ros/bin/pip install mavsdk jsonschema PyYAML certifi
+```
+
+`--system-site-packages` is what lets this venv see Humble's `rclpy` after the
+ROS setup script is sourced.
+
+The deployed camera relays use `/usr/bin/python3.10 -s` rather than this venv.
+Gazebo Harmonic's generated messages require Ubuntu's matching protobuf package,
+while current MAVSDK releases require a newer protobuf in `.venv-ros`. Keeping
+the processes separate avoids either dependency shadowing the other. Ubuntu's
+`python3-pil` supplies the camera relays' JPEG edge encoder.
+
+## Baseline
+
+```bash
+.venv/bin/python -m simulation.baseline
+```
+
+It selects the `linux` profile on this host and prints which profile it chose.
+The Linux profile expects an unpatched v1.17.0 tree — the recorded macOS build
+patch must **not** be applied here — and Gazebo 8.15.0 from the OSRF stable
+archive on noble (24.04). Jammy hosts pin 8.14.0 historically; wind results
+from this host are close to the macOS 8.12.0 numbers but not proven identical;
+see the profile's own comment.
+
+## Running the bridge
+
+Two terminals, in this order.
+
+```bash
+# 1 — simulator
+cd ~/bytewolf-robotics/platform
+./simulation/gazebo/launch/run_px4_gazebo_headless.zsh base
+
+# 2 — bridge, in the ROS interpreter
+cd ~/bytewolf-robotics/platform
+source /opt/ros/humble/setup.bash
+PYTHONPATH="$PWD:$PYTHONPATH" .venv-ros/bin/python -m brain.cli.ros2_telemetry_bridge
+```
+
+Verify from a third shell, after sourcing ROS:
+
+```bash
+ros2 topic list | grep bytewolf
+ros2 topic echo --once /bytewolf/x500v2_reference_01/telemetry/position
+ros2 topic echo --once /bytewolf/x500v2_reference_01/telemetry/battery
+ros2 topic echo --once /bytewolf/x500v2_reference_01/telemetry/flight_state
+```
+
+A topic existing is not evidence that anything was relayed. Echo them, and read
+the run's own artifact under `simulation/artifacts/ros2-bridge/`: it records the
+per-topic counts, which is what separates "the bridge relayed telemetry" from
+"the bridge started". That directory is deliberately not the mission artifact
+tree — a mission artifact says what was flown, the bridge artifact says what was
+observed.
+
+Exactly three topics are declared, and only those cross into ROS. The relay
+carries more streams than that (attitude, IMU, GNSS detail, NED velocity, landed
+state, battery diagnostics); they continue to the dashboard snapshot and are
+withheld from ROS by contract. Widening that set is a versioned contract change
+with its own safety review.
+
+## The bridge holds the PX4 link
+
+Unlike the dashboard relay, this bridge does not hand the link over. Start a
+mission while it runs and the mission refuses itself:
+
+```
+Px4LinkUnavailableError: The PX4 endpoint is still held by another process.
+Stop the telemetry bridge or the other mission, then try again; nothing was commanded.
+```
+
+That is fail-closed and correct — no command reached the vehicle — but it is not
+the lease handover the dashboard path performs. Stop the bridge before flying a
+mission.
+
+## Monday demo SITL acceptance (`demo-point-rtl`)
+
+The Control Room can submit a bounded Action-only demo — takeoff, one configured
+local point, PX4 return-to-launch, land, and disarm — but only when
+`BYTEWOLF_MISSION_EXECUTION_ENABLED=true`. By default the execution gate stays
+closed and every submit endpoint returns a typed refusal.
+
+### Start PX4 SITL
+
+**Preferred (pinned Gazebo Harmonic `gz_x500`):**
+
+```bash
+cd ~/bytewolf-robotics/platform
+./simulation/gazebo/launch/run_px4_gazebo_headless.zsh base
+```
+
+**Fallback without Gazebo (PX4 v1.17.0 SIH):**
+
+```bash
+cd ~/bytewolf-robotics/PX4-Autopilot
+make px4_sitl sihsim_quadx
+```
+
+The MAVSDK endpoint must remain loopback UDP, for example `udpin://127.0.0.1:14540`.
+Override with `BYTEWOLF_PX4_ENDPOINT` when your local SITL publishes elsewhere on
+the same host.
+
+### Run the acceptance test
+
+With SITL running and the platform venv active:
+
+```bash
+cd ~/bytewolf-robotics/platform
+export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
+export BYTEWOLF_SITL_ACCEPTANCE=1
+.venv/bin/python -m brain.cli.acceptance_demo_point_rtl
+```
+
+The platform venv may install a third-party top-level `tests` package that shadows
+`python -m unittest tests.test_demo_point_rtl`. Prefer the CLI above, or discover
+from the repository root with an explicit `top_level_dir`:
+
+```bash
+PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -p 'test_demo_point_rtl.py' --top-level-dir .
+```
+
+On success the run writes
+`simulation/artifacts/demo-point-rtl/latest.json` with phase transitions, the
+configured point, the pinned PX4 baseline commit, and timestamps.
+
+### Submit from the Control Room API
+
+The demo follows the same approval boundary as map missions: review, then
+explicit approve. The session header must be a UUID the dashboard already uses.
+
+```bash
+export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
+.venv/bin/python -m apps.api.server   # http://127.0.0.1:8080
+SESSION=<dashboard-session-uuid>
+curl -s -X POST http://127.0.0.1:8080/api/v1/missions/demo-point-rtl \
+  -H "X-ByteWolf-Session: ${SESSION}"
+# note plan_id from the response, then:
+curl -s -X POST http://127.0.0.1:8080/api/v1/plans/approve \
+  -H "Content-Type: application/json" -H "X-ByteWolf-Session: ${SESSION}" \
+  -d '{"plan_id":"<plan-id-from-review>"}'
+```
+
+Optional waypoint overrides use `BYTEWOLF_DEMO_POINT_NORTH_M`,
+`BYTEWOLF_DEMO_POINT_EAST_M`, and `BYTEWOLF_DEMO_POINT_ALTITUDE_M`.
+
+## Monday demo SITL acceptance (`demo-waypoint-mission`)
+
+Multi-waypoint loop for Monday: takeoff, MAVSDK Mission upload (`start_mission`,
+AUTO mission items, `set_return_to_launch_after_mission(true)`), RTL, land, disarm.
+SafetyGate validates every item before upload; multi-signal SITL verification runs
+before arming (same rules as demo-point-rtl).
+
+### Run the acceptance gate (3 consecutive clean runs)
+
+```bash
+cd ~/bytewolf-robotics/platform
+# Operator must enable the gate; the acceptance CLI does not set this.
+export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
+export BYTEWOLF_SITL_ACCEPTANCE=1
+export BYTEWOLF_PX4_RUN_DIR=/path/to/px4/run/dir
+PLAN=simulation/artifacts/agent-missions/<mission-id>.demo-waypoint-mission.json
+.venv/bin/python -m brain.cli.acceptance_demo_waypoint_mission \
+  --plan-file "${PLAN}" --runs 3 \
+  --record-operator-approval --confirm-plan-execution
+```
+
+The `.approval.json` sidecar is an integrity check (plan SHA-256 match), not a
+standalone authorisation. Physical actuation stays locked; simulation-only
+deployment checks and `SafetyGate` remain the real safety layer.
+
+Evidence lands under `simulation/artifacts/demo-waypoint-mission/` (`latest.json`,
+per-run JSON, `trajectory-*.png` on every run, optional `screen-*.mp4` when
+`ffmpeg` is available). Pick the capture backend with
+`BYTEWOLF_DEMO_SCREEN_CAPTURE_MODE=x11|xvfb` or
+`--screen-capture-mode x11|xvfb` on `fly_demo_waypoint_mission` (CLI wins).
+`x11` uses the current `DISPLAY`, grabs only the gz GUI window (WM_CLASS, exact
+title, operator-supplied PID, or `BYTEWOLF_DEMO_SCREEN_CAPTURE_GEOMETRY=WxH+X+Y`)
+— never full desktop. Cleanup terminates only child processes this tool started
+(`gz sim -g`, `Xvfb`, `ffmpeg`); it never runs `xdotool windowclose` on a window
+found on the operator display. On `x11`, `BYTEWOLF_DEMO_LAUNCH_GZ_GUI` defaults
+to `0`; set it to `1` only to attach a new `gz sim -g` on that display. On
+`xvfb`, launch defaults to `1`. `xvfb` starts `Xvfb` on `BYTEWOLF_DEMO_XVFB_DISPLAY_NUM`
+with a default `1920x1080x24` screen and GLX (`+extension GLX +render -noreset`),
+launches `gz sim -g` with `GZ_IP`/`PX4_GZ_STANDALONE`, and records the **full**
+private Xvfb screen (`1920x1080+0+0` by default) because that display holds only
+the gz GUI. Do **not** export `LIBGL_ALWAYS_SOFTWARE=1` for acceptance: OGRE2 +
+software GL on Mesa GLX kills `gz sim -g` early (SIGSEGV). The capture helper
+strips inherited `LIBGL_ALWAYS_SOFTWARE` unless you add it through the allowlisted
+`BYTEWOLF_DEMO_GZ_GUI_EXTRA_ENV`. If the GUI dies within the first 10 s, it
+retries once with `--render-engine ogre` (`gui_retry_render_engine` in evidence).
+Evidence records `gz_gui_pid`, `gui_env_libgl_software`, and `gz_gui_alive_at_stop`;
+status cannot be `captured` if the GUI process was not alive at stop. Capture runs
+from before arm until disarm (cap:
+`BYTEWOLF_DEMO_SCREEN_CAPTURE_MAX_S`). Missing tools set `screen_capture.status`
+to `skipped` without failing the flight; trajectory PNG and PX4 ULog are mandatory
+for a clean acceptance run. Summary: `acceptance-latest.json`.
+
+**Framing the drone (acceptance `xvfb`):** by default the gz GUI loads
+`config/gz/demo_gui.config` (full `1920x1080` window, initial camera near the
+Baylands spawn at `197 155 5 0 0.35 0`). Disable with
+`BYTEWOLF_DEMO_GZ_GUI_CONFIG=0`. After the GUI is up, the runner (when
+`BYTEWOLF_DEMO_GZ_VISUAL` is not `0`) polls `/gui/follow`, follows `x500_0`, sets
+follow offset (default `-5 -1.5 2.5` via `BYTEWOLF_DEMO_GZ_FOLLOW_OFFSET`), places
+small semi-transparent waypoint sphere markers (world
+`x = 205 + east_m`, `y = 155 + north_m`, `z = 0.4 + relative_altitude_m`), and
+re-asserts follow after arm. Marker/follow failures are recorded only — they never
+abort the mission. `ffmpeg` uses `-draw_mouse 0`.
+
+**Human visual review:** when review PNGs are extracted under `frames/`
+(`visual_review_required: true`), acceptance does **not** treat the video as clean
+visual evidence until an operator sets `visual_human_review` to `approved` on the
+run JSON (frame paths are listed in the run document and `acceptance-latest.json`).
+
+### Control Room review / approve
+
+```bash
+export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
+.venv/bin/python -m apps.api.server
+SESSION=<dashboard-session-uuid>
+curl -s -X POST http://127.0.0.1:8080/api/v1/missions/demo-waypoint-mission \
+  -H "X-ByteWolf-Session: ${SESSION}"
+curl -s -X POST http://127.0.0.1:8080/api/v1/plans/approve \
+  -H "Content-Type: application/json" -H "X-ByteWolf-Session: ${SESSION}" \
+  -d '{"plan_id":"<plan-id-from-review>"}'
+```
+
+Tune the default square loop with `BYTEWOLF_DEMO_WAYPOINT_ALTITUDE_M`,
+`BYTEWOLF_DEMO_WAYPOINT_LEG_M`, and `BYTEWOLF_DEMO_WAYPOINT_COUNT` (1–11).
+
+## What this host cannot do
+
+No physical vehicle is attached, and none is authorised from here. USB devices
+must be passed through to reach a virtualised host at all. Camera capture needs a
+real UVC device. None of that is required for this bridge, which is
+telemetry-only and never commands anything.

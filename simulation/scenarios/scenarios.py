@@ -13,11 +13,15 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Protocol
 from uuid import uuid4
 
 from simulation.gazebo.fault_injection import FaultInjectionError, apply_px4_parameters
+from simulation.scenarios.report_status import report_exit_code
+from simulation.scenarios.scenario_contract import scenario_contract_violation
+from simulation.scenarios.sitl_startup import unlink_stderr_log, wait_for_sitl_launch
 from simulation.gazebo.wind_probe import GazeboPoseObserver, expected_hover_tilt_deg
 from simulation.gazebo.wind_profiles import (
     SUPPORTED_WIND_SPEEDS_M_S,
@@ -160,7 +164,7 @@ P0_SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         "link-unavailable",
         "brain.cli.fly_takeoff_hover_land",
-        ("--endpoint", "udpin://0.0.0.0:14541", "--connection-timeout", "2"),
+        ("--endpoint", "udpin://127.0.0.1:14541", "--connection-timeout", "2"),
         safety_rejection="must-fail-closed-before-arm-on-link-loss",
         fallback_expectation="no-flight-command",
         expected_returncode=1,
@@ -312,6 +316,7 @@ class ScenarioRunner:
         self._sitl_start_attempts = sitl_start_attempts
         self._sitl_retry_delay_s = sitl_retry_delay_s
         self._sleep = sleep
+        self._scenario_subprocess_env: dict[str, str] = {}
 
     def run(self, scenarios: Iterable[Scenario], output_directory: Path) -> Path:
         """Run every scenario and write one JSON report, including failures."""
@@ -350,10 +355,18 @@ class ScenarioRunner:
     ) -> tuple[ScenarioResult, ...]:
         """Preserve the accepted P0.v1 shared-SITL execution contract."""
         sitl_process: ManagedProcess | None = None
+        px4_run_directory = output_directory / "px4-sitl-run"
+        px4_run_directory.mkdir(parents=True, exist_ok=True)
+        sitl_environment = _px4_run_directory_environment(px4_run_directory)
+        self._scenario_subprocess_env = sitl_environment
         try:
-            sitl_process = self._start_sitl()
-            if sitl_process is not None:
-                self._sleep(self._startup_wait_s)
+            sitl_process = self._start_sitl(sitl_environment)
+            launch_failure = self._sitl_launch_failure(sitl_process)
+            if launch_failure is not None:
+                return tuple(
+                    self._blocked_result(scenario, launch_failure, output_directory)
+                    for scenario in scenarios
+                )
             if sitl_process is not None and not self._readiness_check(sitl_process):
                 return tuple(
                     self._blocked_result(scenario, "SITL readiness check failed.", output_directory)
@@ -368,6 +381,7 @@ class ScenarioRunner:
         finally:
             if sitl_process is not None:
                 self._stop_sitl(sitl_process)
+            self._scenario_subprocess_env = {}
 
     def _run_with_fresh_sitl(self, scenario: Scenario, output_directory: Path) -> ScenarioResult:
         """Run one disruptive scenario against a brand-new bounded SITL lifecycle."""
@@ -378,11 +392,22 @@ class ScenarioRunner:
             # record a wind condition the simulation never applied.
             return self._blocked_result(scenario, f"Could not build the wind fixture: {error}", output_directory)
 
+        artifact_directory = self._artifact_directory(output_directory, scenario)
+        px4_run_directory = artifact_directory / "px4-run-root"
+        px4_run_directory.mkdir(parents=True, exist_ok=True)
+        px4_env = _px4_run_directory_environment(px4_run_directory)
+        self._scenario_subprocess_env = px4_env
+        if environment is None:
+            environment = px4_env
+        else:
+            environment = {**environment, **px4_env}
+
         sitl_process: ManagedProcess | None = None
         try:
             sitl_process = self._start_sitl(environment)
-            if sitl_process is not None:
-                self._sleep(self._startup_wait_s)
+            launch_failure = self._sitl_launch_failure(sitl_process)
+            if launch_failure is not None:
+                return self._blocked_result(scenario, launch_failure, output_directory, wind)
             if sitl_process is not None and not self._readiness_check(sitl_process):
                 return self._blocked_result(scenario, "SITL readiness check failed.", output_directory, wind)
             try:
@@ -401,6 +426,7 @@ class ScenarioRunner:
         finally:
             if sitl_process is not None:
                 self._stop_sitl(sitl_process)
+            self._scenario_subprocess_env = {}
 
     def _run_observed_wind_scenario(
         self, scenario: Scenario, output_directory: Path, wind: WindEvidence
@@ -573,6 +599,7 @@ class ScenarioRunner:
             )
         if self._uses_default_command_runner:
             return self._run_isolated_scenario(scenario, command, artifact_directory)
+        subprocess_env = {**os.environ, **self._scenario_subprocess_env} if self._scenario_subprocess_env else None
         try:
             completed = self._command_runner(
                 command,
@@ -581,6 +608,7 @@ class ScenarioRunner:
                 text=True,
                 cwd=self._project_root,
                 timeout=self._scenario_timeout_s,
+                env=subprocess_env,
             )
         except subprocess.TimeoutExpired as error:
             stdout = error.stdout.decode() if isinstance(error.stdout, bytes) else error.stdout or ""
@@ -596,12 +624,14 @@ class ScenarioRunner:
         self, scenario: Scenario, command: tuple[str, ...], artifact_directory: Path
     ) -> ScenarioResult:
         """Run a bounded mission; its CLI shuts down its MAVSDK child in ``finally``."""
+        subprocess_env = {**os.environ, **self._scenario_subprocess_env} if self._scenario_subprocess_env else None
         process = subprocess.Popen(
             command,
             cwd=self._project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=subprocess_env,
         )
         deadline = time.monotonic() + self._scenario_timeout_s
         while process.poll() is None and time.monotonic() < deadline:
@@ -646,23 +676,44 @@ class ScenarioRunner:
             return None
         launch_environment = {**os.environ, **environment} if environment else None
         for attempt in range(self._sitl_start_attempts):
+            stderr_log = tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                prefix="sitl-launch-",
+                suffix=".log",
+                delete=False,
+            )
             try:
-                return self._process_starter(
+                process = self._process_starter(
                     self.sitl_command,
                     cwd=self._project_root,
                     env=launch_environment,
-                    # The process is intentionally long-lived and its output is never
-                    # consumed here.  Keeping it in pipes can block PX4 once a pipe
-                    # fills, preventing MAVLink from ever becoming available.
+                    # The process is intentionally long-lived. A pipe would fill and
+                    # block PX4/gz during multi-scenario P0 runs; logs go to a file
+                    # instead and only the tail is read on early exit.
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=stderr_log,
                 )
+                stderr_log.close()
+                setattr(process, "stderr_log_path", Path(stderr_log.name))
+                return process
             except OSError:
+                stderr_log.close()
+                Path(stderr_log.name).unlink(missing_ok=True)
                 if attempt + 1 == self._sitl_start_attempts:
                     raise
                 self._sleep(self._sitl_retry_delay_s)
         raise AssertionError("The SITL startup retry loop must return or raise.")
+
+    def _sitl_launch_failure(self, process: ManagedProcess | None) -> str | None:
+        if process is None:
+            return None
+        return wait_for_sitl_launch(
+            process,
+            startup_wait_s=self._startup_wait_s,
+            sleep=self._sleep,
+        )
 
     def _stop_sitl(self, process: ManagedProcess) -> None:
         """Terminate the launcher; its trap reaps both PX4 and Gazebo children."""
@@ -672,6 +723,7 @@ class ScenarioRunner:
         except subprocess.TimeoutExpired:
             os.kill(process.pid, signal.SIGKILL)
             process.wait(timeout=5.0)
+        unlink_stderr_log(process)
 
     def _blocked_result(
         self, scenario: Scenario, reason: str, output_directory: Path, wind: WindEvidence | None = None
@@ -697,7 +749,7 @@ class ScenarioRunner:
         artifact_directory: Path,
         status: str | None = None,
     ) -> ScenarioResult:
-        return ScenarioResult(
+        result = ScenarioResult(
             identifier=scenario.identifier,
             module=scenario.module,
             command=command,
@@ -712,6 +764,16 @@ class ScenarioRunner:
             expected_returncode=scenario.expected_returncode,
             artifact_directory=str(artifact_directory),
         )
+        violation = scenario_contract_violation(
+            scenario_identifier=scenario.identifier,
+            fallback_expectation=scenario.fallback_expectation,
+            stdout=stdout,
+            stderr=stderr,
+            artifact_directory=artifact_directory,
+        )
+        if violation and result.status == "passed":
+            return replace(result, status="failed", stderr=f"{stderr}\n{violation}".strip())
+        return result
 
 
 def _with_wind(result: ScenarioResult, wind: WindEvidence | None) -> ScenarioResult:
@@ -727,6 +789,16 @@ def _process_started(process: ManagedProcess) -> bool:
 def _terminate_process(process_id: int) -> None:
     """Stop the lifecycle-owning launcher without requesting a macOS session."""
     os.kill(process_id, signal.SIGTERM)
+
+
+def _px4_run_directory_environment(px4_run_directory: Path) -> dict[str, str]:
+    """Environment for a retained PX4 SITL working directory (parameters and ULogs)."""
+    location = str(px4_run_directory)
+    return {
+        "BYTEWOLF_PX4_RUN_DIR": location,
+        "PX4_RUN_DIR": location,
+        "PX4_RUN_DIR_KEEP": "1",
+    }
 
 
 def _latest_artifact(directory: Path) -> Path | None:
@@ -821,6 +893,7 @@ def main(arguments: Iterable[str] | None = None) -> None:
             minimum_success_rate=parsed.minimum_success_rate,
         )
     print(f"Headless P0 report: {report_path}")
+    sys.exit(report_exit_code(report_path))
 
 
 if __name__ == "__main__":

@@ -6,7 +6,17 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from brain.telemetry.ulog import ULogCaptureError, archive_px4_ulog, write_ulog_unavailable_manifest
+import time
+
+from brain.telemetry.ulog import (
+    ULogCaptureError,
+    archive_px4_ulog,
+    describe_px4_run_directory,
+    discover_newest_px4_ulog,
+    ensure_px4_ulog_archived,
+    resolve_px4_run_directory,
+    write_ulog_unavailable_manifest,
+)
 
 
 class ULogArchiveTests(unittest.TestCase):
@@ -32,6 +42,134 @@ class ULogArchiveTests(unittest.TestCase):
 
         self.assertEqual(manifest["status"], "unavailable")
         self.assertEqual(manifest["reason"], "SITL logger disabled")
+
+    def test_discovers_the_newest_ulg_under_a_px4_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = Path(directory)
+            older = run_root / "log" / "2026-01-01" / "older.ulg"
+            newer = run_root / "log" / "2026-01-02" / "newer.ulg"
+            older.parent.mkdir(parents=True)
+            newer.parent.mkdir(parents=True)
+            older.write_bytes(b"old")
+            newer.write_bytes(b"new")
+            newer.touch()
+            older.touch()
+            import os
+            import time
+
+            now = time.time()
+            os.utime(older, (now - 10, now - 10))
+            os.utime(newer, (now, now))
+
+            discovered = discover_newest_px4_ulog(run_root)
+
+        self.assertEqual(discovered, newer)
+
+    def test_resolve_px4_run_directory_makes_relative_paths_absolute(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            resolved = Path(directory) / "px4-run"
+            resolved.mkdir()
+            import os
+
+            os.environ["BYTEWOLF_PX4_RUN_DIR"] = "px4-run"
+            previous = os.getcwd()
+            try:
+                os.chdir(directory)
+                discovered = resolve_px4_run_directory()
+            finally:
+                os.chdir(previous)
+                os.environ.pop("BYTEWOLF_PX4_RUN_DIR", None)
+            self.assertEqual(discovered, resolved.resolve())
+
+    def test_waits_for_a_late_ulg_on_disk(self) -> None:
+        import os
+        import threading
+
+        with tempfile.TemporaryDirectory() as directory:
+            artifact_dir = Path(directory) / "artifacts"
+            artifact_dir.mkdir()
+            run_dir = Path(directory) / "px4-run"
+            log_dir = run_dir / "log" / "2026-01-01"
+            log_dir.mkdir(parents=True)
+            source = log_dir / "flight.ulg"
+            started = time.time()
+            os.environ["BYTEWOLF_PX4_RUN_DIR"] = str(run_dir.resolve())
+
+            def write_later() -> None:
+                time.sleep(0.6)
+                source.write_bytes(b"ULog\x01late")
+
+            thread = threading.Thread(target=write_later, daemon=True)
+            thread.start()
+            try:
+                relative, status, reason = ensure_px4_ulog_archived(
+                    artifact_dir,
+                    "run-late",
+                    run_started_epoch=started - 1.0,
+                    timeout_s=3.0,
+                    poll_interval_s=0.1,
+                )
+            finally:
+                os.environ.pop("BYTEWOLF_PX4_RUN_DIR", None)
+            thread.join(timeout=5.0)
+            self.assertEqual(status, "captured")
+            self.assertIsNotNone(relative)
+            self.assertIsNone(reason)
+
+    def test_rejects_stale_ulg_outside_the_run_window(self) -> None:
+        import os
+
+        with tempfile.TemporaryDirectory() as directory:
+            artifact_dir = Path(directory) / "artifacts"
+            artifact_dir.mkdir()
+            run_dir = Path(directory) / "px4-run"
+            source = run_dir / "log" / "2020-01-01" / "stale.ulg"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"ULog\x01stale")
+            stale = time.time() - 3 * 86400
+            os.utime(source, (stale, stale))
+            os.environ["BYTEWOLF_PX4_RUN_DIR"] = str(run_dir.resolve())
+            try:
+                _relative, status, reason = ensure_px4_ulog_archived(
+                    artifact_dir,
+                    "run-old",
+                    run_started_epoch=time.time(),
+                    timeout_s=0.5,
+                    poll_interval_s=0.05,
+                )
+            finally:
+                os.environ.pop("BYTEWOLF_PX4_RUN_DIR", None)
+        self.assertEqual(status, "missing")
+        self.assertIsNotNone(reason)
+
+    def test_picks_newest_ulg_inside_the_run_window(self) -> None:
+        import os
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "px4-run"
+            first = run_dir / "log" / "day1" / "a.ulg"
+            second = run_dir / "log" / "day1" / "b.ulg"
+            first.parent.mkdir(parents=True)
+            first.write_bytes(b"a")
+            second.write_bytes(b"b")
+            started = time.time()
+            os.utime(first, (started + 1, started + 1))
+            os.utime(second, (started + 2, started + 2))
+            chosen = discover_newest_px4_ulog(run_dir, min_mtime_epoch=started)
+        self.assertEqual(chosen, second)
+
+    def test_describe_run_directory_reports_configured_but_missing(self) -> None:
+        import os
+
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "nope"
+            os.environ["BYTEWOLF_PX4_RUN_DIR"] = str(missing)
+            try:
+                path, reason = describe_px4_run_directory()
+            finally:
+                os.environ.pop("BYTEWOLF_PX4_RUN_DIR", None)
+        self.assertIsNone(path)
+        self.assertEqual(reason, "configured but missing")
 
     def test_refuses_missing_or_non_px4_log_sources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

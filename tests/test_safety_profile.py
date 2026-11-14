@@ -18,6 +18,7 @@ class SafetyProfileTests(unittest.TestCase):
         self.assertEqual(profile.max_altitude_m, 20.0)
         self.assertEqual(profile.max_radius_m, 2000.0)
         self.assertEqual(profile.minimum_battery_percent_to_start, 40.0)
+        self.assertFalse(profile.physical_actuation_enabled)
         with self.assertRaises(FrozenInstanceError):
             profile.max_altitude_m = 100.0  # type: ignore[misc]
 

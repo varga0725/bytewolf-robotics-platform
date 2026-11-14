@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import base64
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -152,8 +152,11 @@ def camera_topic(sensor: str, *, full_sensors: bool = False) -> str:
     if sensor not in {"down", "front"}:
         raise ValueError(f"Unknown camera sensor: {sensor}")
     if full_sensors:
-        return FULL_DOWN_CAMERA_TOPIC if sensor == "down" else FULL_FRONT_CAMERA_TOPIC
-    return DOWN_CAMERA_TOPIC if sensor == "down" else FRONT_CAMERA_TOPIC
+        topic = FULL_DOWN_CAMERA_TOPIC if sensor == "down" else FULL_FRONT_CAMERA_TOPIC
+    else:
+        topic = DOWN_CAMERA_TOPIC if sensor == "down" else FRONT_CAMERA_TOPIC
+    world = os.environ.get("PX4_GZ_WORLD", "baylands").strip() or "baylands"
+    return topic.replace("/world/baylands/", f"/world/{world}/")
 
 
 def publish_frame(
@@ -234,7 +237,7 @@ def run_camera_stream(
     camera_path: Path,
     detections_path: Path,
     sensor_id: str,
-    detector: DetectorAdapter,
+    detector: DetectorAdapter | None,
     now: Callable[[], datetime] | None = None,
     period_s: float = 1 / 30,
     detect_period_s: float = 0.2,
@@ -244,17 +247,21 @@ def run_camera_stream(
     subscribe: Callable[..., object] = subscribe_camera_frames,
 ) -> None:
     """Relay frames from the camera topic to the dashboard until stopped."""
-    clock = now or (lambda: datetime.now(UTC))
+    clock = now or (lambda: datetime.now(timezone.utc))
     keep_going = should_continue or (lambda: True)
     camera_path.parent.mkdir(parents=True, exist_ok=True)
     detections_path.parent.mkdir(parents=True, exist_ok=True)
 
     schedule = _PublishSchedule(period_s=period_s, detect_period_s=detect_period_s)
-    detection_worker = DetectionWorker(
-        detector,
-        detections_path,
-        on_error=lambda error: print(f"Detector skipped a frame: {type(error).__name__}: {error}"),
-    ).start()
+    detection_worker = (
+        DetectionWorker(
+            detector,
+            detections_path,
+            on_error=lambda error: print(f"Detector skipped a frame: {type(error).__name__}: {error}"),
+        ).start()
+        if detector is not None
+        else None
+    )
 
     def publish(frame: CameraFrame) -> None:
         moment = time.monotonic()
@@ -265,7 +272,7 @@ def run_camera_stream(
         # to cap the picture on its own. It runs beside the stream, on its own
         # slower cadence, well inside the 0.5 s freshness the detections
         # contract declares.
-        if schedule.should_detect(moment):
+        if detection_worker is not None and schedule.should_detect(moment):
             detection_worker.submit(frame)
 
     node = None
@@ -276,7 +283,8 @@ def run_camera_stream(
         while keep_going():
             time.sleep(0.05)
     finally:
-        detection_worker.stop()
+        if detection_worker is not None:
+            detection_worker.stop()
         del node
 
 
@@ -338,6 +346,10 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
         "--detect-period-s", type=float, default=0.2,
         help="Seconds between detector runs. Kept inside the 0.5 s the detections contract allows.",
     )
+    parser.add_argument(
+        "--no-detections", action="store_true",
+        help="Publish frames only; a separate model service owns detection output.",
+    )
     parsed = parser.parse_args(arguments)
 
     topic = camera_topic(parsed.sensor, full_sensors=parsed.full_sensors)
@@ -357,7 +369,9 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
     detections_path = parsed.detections_file or Path(
         f"simulation/artifacts/dashboard/detections{suffixed}.json"
     )
-    detector = DetectorAdapter(ColourMarkerBackend(DEFAULT_MARKER, label="marker"), source=f"gz {sensor_id}")
+    detector = None if parsed.no_detections else DetectorAdapter(
+        ColourMarkerBackend(DEFAULT_MARKER, label="marker"), source=f"gz {sensor_id}"
+    )
     print(f"Streaming {parsed.sensor} camera ({parsed.format}) to {camera_path} + {detections_path} (Ctrl-C to stop)")
     try:
         run_camera_stream(

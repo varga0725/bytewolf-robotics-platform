@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from math import isfinite
 from typing import Any
 
@@ -283,7 +283,7 @@ def _finite_value(value: Any, name: str) -> float:
 
 
 def _timestamp(observed_at: datetime | None) -> datetime:
-    timestamp = observed_at or datetime.now(UTC)
+    timestamp = observed_at or datetime.now(timezone.utc)
     if timestamp.tzinfo is None or timestamp.utcoffset() is None:
         raise TelemetryContractError("Telemetry timestamp must be timezone-aware.")
-    return timestamp.astimezone(UTC)
+    return timestamp.astimezone(timezone.utc)

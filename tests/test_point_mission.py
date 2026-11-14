@@ -9,7 +9,9 @@ approval can empty.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from unittest.mock import patch
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -149,6 +151,7 @@ class PointMissionApiTests(unittest.TestCase):
         self.assertEqual(response.json()["steps"], ["TAKEOFF", "GOTO_LOCAL", "HOLD", "RTL"])
         self.assertEqual(self.executed, [], "reviewing is not executing")
 
+    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"})
     def test_the_reviewed_point_can_then_be_approved_exactly_once(self) -> None:
         plan_id = self._pick().json()["plan_id"]
 

@@ -32,9 +32,9 @@ All Python runs through the project venv. The system Python lacks `jsonschema`/`
 and will fail.
 
 ```zsh
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3 -m venv .venv && .venv/bin/pip install -r requirements-unittest.txt
 
-# Full suite (fake MAVSDK collaborators, no SITL needed; ~4 s)
+# Full suite (fake MAVSDK collaborators, no SITL needed; ~10 s)
 .venv/bin/python -m unittest discover -s tests -v
 
 # One module / one test

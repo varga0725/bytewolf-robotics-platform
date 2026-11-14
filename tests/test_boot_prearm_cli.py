@@ -80,7 +80,7 @@ class BootPrearmCliTests(unittest.TestCase):
             self.assertEqual(len(artifact_paths), 1)
             artifact = json.loads(artifact_paths[0].read_text(encoding="utf-8"))
 
-        adapter.connect.assert_awaited_once_with("udpin://0.0.0.0:14540")
+        adapter.connect.assert_awaited_once_with("udpin://127.0.0.1:14540")
         adapter.verify_preflight.assert_awaited_once_with()
         self.assertEqual(artifact["outcome"], "completed")
         self.assertEqual(artifact["safety_decision"], "approved")

@@ -34,7 +34,24 @@ def _mission() -> SimpleNamespace:
     return SimpleNamespace(
         takeoff=SimpleNamespace(target_altitude_m=2.0),
         hover_duration_s=3.0,
-        waypoint=SimpleNamespace(north_m=5.0, east_m=0.0),
+        waypoint=SimpleNamespace(north_m=5.0, east_m=0.0, target_altitude_m=2.0),
+        waypoint_timeout_s=30.0,
+        landing_timeout_s=60.0,
+    )
+
+
+def _profile() -> SimpleNamespace:
+    """A serializable safety profile boundary for CLI artifact fixtures.
+
+    The CLIs hash the reviewed actuation request before connecting.  Returning
+    an unconstrained MagicMock here used to work only before that audit field
+    existed; its generated ``vehicle_id`` cannot be JSON-serialized and says
+    nothing about the contract the test meant to exercise.
+    """
+    return SimpleNamespace(
+        vehicle_id="x500v2_reference_01",
+        physical_actuation_enabled=False,
+        flight_limits=lambda: MagicMock(),
     )
 
 from brain.telemetry.link_lease import LEASE_PATH_ENV
@@ -112,7 +129,7 @@ class CliMissionArtifactTests(unittest.TestCase):
             adapter.execute = AsyncMock(return_value=execution)
             with (
                 patch.dict(sys.modules, {"mavsdk": mavsdk}),
-                patch.object(fly_takeoff_hover_land, "load_safety_profile", return_value=MagicMock()),
+                patch.object(fly_takeoff_hover_land, "load_safety_profile", return_value=_profile()),
                 patch.object(fly_takeoff_hover_land, "authorize_takeoff_hover_land", return_value=_mission()),
                 patch.object(fly_takeoff_hover_land, "MavsdkMissionAdapter", return_value=adapter),
                 patch.object(fly_takeoff_hover_land, "MavsdkTelemetryRelay", return_value=relay) as relay_factory,
@@ -146,7 +163,7 @@ class CliMissionArtifactTests(unittest.TestCase):
             adapter.execute = AsyncMock(return_value=execution)
             with (
                 patch.dict(sys.modules, {"mavsdk": mavsdk}),
-                patch.object(fly_takeoff_hover_land, "load_safety_profile", return_value=MagicMock()),
+                patch.object(fly_takeoff_hover_land, "load_safety_profile", return_value=_profile()),
                 patch.object(fly_takeoff_hover_land, "authorize_takeoff_hover_land", return_value=_mission()),
                 patch.object(fly_takeoff_hover_land, "MavsdkMissionAdapter", return_value=adapter),
                 patch.object(fly_takeoff_hover_land, "MavsdkTelemetryRelay", return_value=relay) as relay_factory,
@@ -181,7 +198,7 @@ class CliMissionArtifactTests(unittest.TestCase):
             adapter.execute = AsyncMock(return_value=execution)
             with (
                 patch.dict(sys.modules, {"mavsdk": mavsdk}),
-                patch.object(fly_takeoff_hover_land, "load_safety_profile", return_value=MagicMock()),
+                patch.object(fly_takeoff_hover_land, "load_safety_profile", return_value=_profile()),
                 patch.object(fly_takeoff_hover_land, "authorize_takeoff_hover_land", return_value=_mission()),
                 patch.object(fly_takeoff_hover_land, "MavsdkMissionAdapter", return_value=adapter),
                 patch.object(fly_takeoff_hover_land, "MavsdkTelemetryRelay", return_value=relay),
@@ -205,7 +222,7 @@ class CliMissionArtifactTests(unittest.TestCase):
                 mavsdk.System = MagicMock()  # type: ignore[attr-defined]
                 with (
                     patch.dict(sys.modules, {"mavsdk": mavsdk}),
-                    patch.object(module, "load_safety_profile", return_value=MagicMock()),
+                    patch.object(module, "load_safety_profile", return_value=_profile()),
                     patch.object(module, authorizer_name, return_value=_mission()),
                     patch.object(module, "MavsdkMissionAdapter", return_value=adapter),
                 ):
@@ -246,7 +263,7 @@ class CliMissionArtifactTests(unittest.TestCase):
                 mavsdk.System = MagicMock()  # type: ignore[attr-defined]
                 with (
                     patch.dict(sys.modules, {"mavsdk": mavsdk}),
-                    patch.object(module, "load_safety_profile", return_value=MagicMock()),
+                    patch.object(module, "load_safety_profile", return_value=_profile()),
                     patch.object(module, authorizer_name, return_value=_mission()),
                     patch.object(module, "MavsdkMissionAdapter", return_value=adapter),
                     self.assertRaisesRegex(RuntimeError, "low battery fallback"),

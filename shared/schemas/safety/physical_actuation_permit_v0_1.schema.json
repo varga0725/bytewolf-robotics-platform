@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytewolf.example/schemas/safety/physical_actuation_permit_v0_1.schema.json",
+  "title": "ByteWolf physical actuation permit v0.1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "permit_id",
+    "vehicle_id",
+    "endpoint",
+    "operation",
+    "request_sha256",
+    "safety_profile_sha256",
+    "operator",
+    "safety_observer",
+    "approved_at",
+    "expires_at",
+    "operator_checklist_confirmed"
+  ],
+  "properties": {
+    "schema_version": {"const": "physical_actuation_permit.v0.1"},
+    "permit_id": {"type": "string", "format": "uuid"},
+    "vehicle_id": {"type": "string", "minLength": 1},
+    "endpoint": {"type": "string", "minLength": 1},
+    "operation": {"type": "string", "minLength": 1},
+    "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "safety_profile_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "operator": {"type": "string", "minLength": 1},
+    "safety_observer": {"type": "string", "minLength": 1},
+    "approved_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "operator_checklist_confirmed": {"const": true}
+  },
+  "additionalProperties": false
+}

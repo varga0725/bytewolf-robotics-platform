@@ -11,6 +11,7 @@ from brain.cli.artifacts import write_run_artifact
 from brain.cli.mavsdk_lifecycle import acquire_px4_link, stop_owned_mavsdk_server
 from brain.mission.artifacts import MissionTelemetrySnapshot
 from brain.mission.execution import MissionExecution
+from brain.safety.deployment import add_deployment_arguments, authorize_readonly_connection
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 
 
@@ -37,7 +38,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument(
         "--endpoint",
-        default="udpin://0.0.0.0:14540",
+        default="udpin://127.0.0.1:14540",
         help="PX4 MAVLink endpoint exposed by SITL.",
     )
     parser.add_argument(
@@ -64,6 +65,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=None,
         help="Directory for the immutable boot/pre-arm audit artifact.",
     )
+    add_deployment_arguments(parser, actuation_capable=False)
     return parser.parse_args(arguments)
 
 
@@ -76,6 +78,7 @@ async def run(arguments: argparse.Namespace) -> None:
     failure_reason: str | None = None
     telemetry: MissionTelemetrySnapshot | None = None
     try:
+        authorize_readonly_connection(arguments.deployment_mode, arguments.endpoint)
         try:
             from mavsdk import System
         except ModuleNotFoundError as error:

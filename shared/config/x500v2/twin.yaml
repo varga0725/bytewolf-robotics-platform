@@ -1,9 +1,10 @@
 # Versioned configuration contract for the first X500 V2 digital-twin baseline.
 # Unknown physical values stay null until they are measured or manufacturer-sourced.
 #
-# A null here describes the real Holybro X500 V2, which nobody has measured. The
-# simulation still has to fly on some number, and it uses PX4's generic x500
-# model -- which has never been compared against an X500 V2. The `provenance`
+# A null here marks a physical quantity that has not been measured on this
+# airframe. USB bench identity, firmware, and telemetry evidence exists, but it
+# does not resolve flight dynamics. Simulation uses PX4's generic x500 model,
+# which has not been quantitatively matched to this X500 V2. The `provenance`
 # section at the end records that gap per parameter: what the simulation flies
 # on today, and how the real value gets resolved. Every null below must appear
 # there, so an unmeasured parameter cannot pass as a settled one.
@@ -191,6 +192,13 @@ safety:
       - [-1200, 1200]
   minimum_battery_percent_to_start: 40
   loss_of_link_action: RTL
+
+  # Physical actuation is a separate deployment decision from mission approval.
+  # It remains disabled until hardware bring-up, measured dynamics, independent
+  # failsafes and a reviewed physical-flight plan close their own gates. A
+  # short-lived operator permit cannot override this switch.
+  physical_actuation:
+    enabled: false
 
   # The Offboard control boundary. This is the only path by which a continuously
   # streamed setpoint could ever reach PX4, and it is disabled here until an

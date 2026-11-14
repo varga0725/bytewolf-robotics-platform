@@ -9,6 +9,17 @@ afterEach(() => {
 });
 
 describe("App telemetry status", () => {
+  it("accepts bounded browser/server clock skew", async () => {
+    const capturedAt = new Date(Date.now() + 2_000).toISOString();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      position: { latitude_deg: 47.4979, longitude_deg: 19.0402, absolute_altitude_m: 125.5, relative_altitude_m: 0 },
+      battery_percent: 100, in_air: false, heading_deg: 0, captured_at: capturedAt,
+    }), { status: 200 }))));
+
+    render(<App />);
+    expect(await screen.findByRole("region", { name: "Élő telemetria állapot" })).toHaveTextContent("Telemetria kapcsolódva");
+  });
+
   it("announces a fresh sample with its capture time and age", async () => {
     const capturedAt = new Date(Date.now() - 5_000).toISOString();
     vi.stubGlobal(

@@ -535,5 +535,8 @@ function boundedNumber(value: unknown, minimum: number, maximum: number): number
 function safeCaptureTime(value: unknown): value is string {
   if (typeof value !== "string" || value.trim() === "") return false;
   const capturedTime = Date.parse(value);
-  return Number.isFinite(capturedTime) && capturedTime <= Date.now();
+  // Browser and telemetry-host clocks can differ by a few milliseconds even
+  // when both use NTP. Reject material future data, but do not turn harmless
+  // transport/clock skew into a permanent "unavailable" dashboard.
+  return Number.isFinite(capturedTime) && capturedTime <= Date.now() + 5_000;
 }

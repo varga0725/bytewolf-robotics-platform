@@ -55,7 +55,13 @@ export PX4_GZ_WORLD="$WORLD"
 if [[ "$WORLD" == "baylands" ]]; then
   export PX4_GZ_MODEL_POSE=${PX4_GZ_MODEL_POSE:-205,155,0.4,0,0,0}
 fi
-export CMAKE_PREFIX_PATH="$(brew --prefix qt@5):${CMAKE_PREFIX_PATH:-}"
+if [[ "$(uname)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+  typeset qt_prefix
+  qt_prefix="$(brew --prefix qt@5 2>/dev/null || true)"
+  if [[ -n "$qt_prefix" && -d "$qt_prefix" ]]; then
+    export CMAKE_PREFIX_PATH="${qt_prefix}:${CMAKE_PREFIX_PATH:-}"
+  fi
+fi
 export PX4_GZ_MODELS="${PX4_GZ_MODELS:-$PX4_STOCK_MODELS}"
 PX4_GZ_MODELS=${PX4_GZ_MODELS:A}
 export GZ_SIM_RESOURCE_PATH="$PX4_GZ_MODELS:$PX4_STOCK_MODELS:${GZ_SIM_RESOURCE_PATH:-}"
@@ -87,6 +93,17 @@ if [[ "$PROFILE" == "full-sensors" ]]; then
   PX4_OWNS_RUN_DIR=0
   if [[ -z "${PX4_RUN_DIR_KEEP:-}" ]]; then
     PX4_OWNS_RUN_DIR=1
+  fi
+  if [[ -d "$PX4_RUN_DIR" ]]; then
+    PX4_RUN_DIR="$(cd "$PX4_RUN_DIR" && pwd)"
+  elif command -v realpath >/dev/null 2>&1; then
+    PX4_RUN_DIR="$(realpath "$PX4_RUN_DIR" 2>/dev/null || print -r -- "$PX4_RUN_DIR")"
+  fi
+  export BYTEWOLF_PX4_RUN_DIR="$PX4_RUN_DIR"
+  export PX4_RUN_DIR
+  if [[ ! -d "$PX4_RUN_DIR" ]]; then
+    print -u2 "Nem hozható létre a PX4 futási könyvtár: $PX4_RUN_DIR"
+    exit 1
   fi
   PX4_PID=0
   cleanup_full_sensors() {

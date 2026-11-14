@@ -72,6 +72,7 @@ class SafetyProfile:
     allowed_geofence: LocalPolygonGeofence | None = None
     offboard: OffboardLimits | None = None
     shield: ShieldLimits | None = None
+    physical_actuation_enabled: bool = False
 
     def flight_limits(self) -> FlightLimits:
         return FlightLimits(
@@ -114,7 +115,15 @@ def load_safety_profile(path: Path | str = DEFAULT_SAFETY_PROFILE_PATH) -> Safet
         allowed_geofence=_optional_geofence(safety),
         offboard=_optional_offboard(safety),
         shield=_optional_shield(safety),
+        physical_actuation_enabled=_optional_physical_actuation_enabled(safety),
     )
+
+
+def _optional_physical_actuation_enabled(source: Mapping[str, Any]) -> bool:
+    value = source.get("physical_actuation", {})
+    if not isinstance(value, Mapping):
+        raise SafetyProfileError("Safety profile field 'physical_actuation' must be a mapping.")
+    return _optional_boolean(value, "enabled", default=False)
 
 
 def _optional_shield(source: Mapping[str, Any]) -> ShieldLimits | None:

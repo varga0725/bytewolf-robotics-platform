@@ -57,7 +57,12 @@ export function MissionPage() {
   // pixel became ten metres, the aerial basemap shrank to 18 px, and a 2 m
   // obstacle cell to a fifth of a pixel. The radius is still drawn -- it is
   // just no longer what decides how much ground fits on screen.
-  const [mapRange, setMapRange] = useState(MAP_RANGES_M[0]);
+  // Typed as the whole union, not as whatever the first entry happens to be.
+  // `MAP_RANGES_M` is `as const`, so inferring from `[0]` narrows the state to
+  // the literal 50 and makes selecting 200 or 500 a compile error - which is
+  // what broke `tsc -b` while `npm test` stayed green, because vitest does not
+  // typecheck and CI never builds the frontend.
+  const [mapRange, setMapRange] = useState<(typeof MAP_RANGES_M)[number]>(MAP_RANGES_M[0]);
   const mapScale = (mapSize / 2) / mapRange;
   const envelopeRadius = envelope?.max_radius_m ?? null;
   const proposalState = plan ? "ellenőrizve" : busy ? "ellenőrzés alatt" : "előkészítés alatt";

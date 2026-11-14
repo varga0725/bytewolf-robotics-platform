@@ -1,13 +1,15 @@
 """MAVSDK adapter for executing an approved, bounded mission on PX4."""
 
 import asyncio
+import contextlib
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
-from math import isfinite
+from math import cos, isfinite, radians
 from typing import Protocol
 
 from brain.mission.commands import WaypointCommand
-from brain.mission.execution import MissionExecution, MissionPhase
+from brain.mission.execution import MissionExecution, MissionPhase, MissionTransitionError
 from brain.mission.artifacts import MissionTelemetrySnapshot
 from brain.mission.flight import (
     InterruptionAction,
@@ -46,6 +48,8 @@ class MavsdkAction(Protocol):
     async def hold(self) -> None: ...
     async def land(self) -> None: ...
     async def return_to_launch(self) -> None: ...
+    async def disarm(self) -> None: ...
+
     async def goto_location(
         self, latitude_deg: float, longitude_deg: float, absolute_altitude_m: float, yaw_deg: float
     ) -> None: ...
@@ -80,18 +84,31 @@ class MavsdkMissionAdapter:
         runtime_policy: RuntimePolicy | None = None,
         safety_profile: SafetyProfile | None = None,
         preflight_wait_s: float = 0.0,
+        protected_waypoint: Callable[[WaypointCommand], Awaitable[GlobalPosition]] | None = None,
     ) -> None:
         self._drone = drone
         self._sleep = sleep
         self._runtime_policy = runtime_policy or load_runtime_policy()
         self._safety_profile = safety_profile or load_safety_profile()
         self._preflight_wait_s = preflight_wait_s
+        self._protected_waypoint = protected_waypoint
         self._preflight_telemetry: MissionTelemetrySnapshot | None = None
         self._execution = MissionExecution.empty()
         self._runtime_watchdog = RuntimeTelemetryWatchdog(
             minimum_battery_percent=self._runtime_policy.minimum_battery_percent_to_continue,
             telemetry_sample_timeout_s=self._runtime_policy.telemetry_sample_timeout_s,
         )
+        self._peak_relative_altitude_m = 0.0
+        self._peak_altitude_stop: asyncio.Event | None = None
+        self._peak_altitude_task: asyncio.Task[None] | None = None
+        self._observed_in_air = False
+        self._observed_landed_state_airborne = False
+        self._observed_in_air_at: datetime | None = None
+        self._observed_landed_state_airborne_at: datetime | None = None
+        self._in_air_tracker_first_sample_at: datetime | None = None
+        self._in_air_tracker_ready_before_arm: bool | None = None
+        self._flight_observation_stop: asyncio.Event | None = None
+        self._flight_observation_tasks: list[asyncio.Task[None]] = []
 
     @property
     def preflight_telemetry(self) -> MissionTelemetrySnapshot | None:
@@ -110,6 +127,14 @@ class MavsdkMissionAdapter:
         """Transition and retain the trail, so a failure boundary keeps the phases reached."""
         self._execution = execution.transition(phase)
         return self._execution
+
+    def _safe_record(self, execution: MissionExecution, phase: MissionPhase) -> MissionExecution:
+        """Record a phase when legal; otherwise keep auditing without blocking recovery."""
+        try:
+            return self._record(execution, phase)
+        except MissionTransitionError:
+            self._execution = execution
+            return execution
 
     async def connect(self, system_address: str) -> None:
         await self._drone.connect(system_address=system_address)
@@ -130,11 +155,17 @@ class MavsdkMissionAdapter:
         execution = self._begin_execution()
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
+        await self._start_peak_altitude_tracking()
         try:
             await self._drone.action.arm()
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
+            await self.wait_until_relative_altitude_at_least(
+                mission.takeoff.target_altitude_m,
+                tolerance_m=0.3,
+                timeout_s=self._runtime_policy.waypoint_timeout_s,
+            )
             execution = self._record(execution, MissionPhase.HOVERING)
             await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
         except Exception:
@@ -142,6 +173,8 @@ class MavsdkMissionAdapter:
                 execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
             )
             raise
+        finally:
+            await self._stop_peak_altitude_tracking()
         return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
 
     async def execute_controlled_interruption_mission(
@@ -157,11 +190,17 @@ class MavsdkMissionAdapter:
         execution = self._begin_execution()
         await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
+        await self._start_peak_altitude_tracking()
         try:
             await self._drone.action.arm()
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
+            await self.wait_until_relative_altitude_at_least(
+                mission.takeoff.target_altitude_m,
+                tolerance_m=0.3,
+                timeout_s=self._runtime_policy.waypoint_timeout_s,
+            )
             execution = self._record(execution, MissionPhase.HOVERING)
             await self._sleep_with_runtime_watchdog(mission.interrupt_after_s)
             if mission.interruption_action is InterruptionAction.HOLD:
@@ -173,9 +212,13 @@ class MavsdkMissionAdapter:
                 execution, airborne, self._runtime_policy.landing_confirmation_timeout_s
             )
             raise
+        finally:
+            await self._stop_peak_altitude_tracking()
         return await self._normal_land(execution, self._runtime_policy.landing_confirmation_timeout_s)
 
     async def goto_relative_waypoint(self, command: WaypointCommand) -> GlobalPosition:
+        if self._protected_waypoint is not None:
+            return await self._protected_waypoint(command)
         position = await anext(self._drone.telemetry.position())
         self._require_runtime_global_position(position, "waypoint origin")
         target = relative_waypoint_to_global(
@@ -205,6 +248,132 @@ class MavsdkMissionAdapter:
             raise RuntimeError("PX4 position telemetry ended before reaching the waypoint.")
 
         await asyncio.wait_for(wait_for_match(), timeout=timeout_s)
+
+    async def wait_until_relative_altitude_at_least(
+        self, target_altitude_m: float, *, tolerance_m: float, timeout_s: float
+    ) -> None:
+        threshold_m = max(0.0, target_altitude_m - tolerance_m)
+
+        async def wait_for_altitude() -> None:
+            async for position in self._drone.telemetry.position():
+                altitude_m = float(position.relative_altitude_m)
+                self._peak_relative_altitude_m = max(self._peak_relative_altitude_m, altitude_m)
+                if altitude_m >= threshold_m:
+                    return
+            raise RuntimeError("PX4 position telemetry ended before reaching takeoff altitude.")
+
+        await asyncio.wait_for(wait_for_altitude(), timeout=timeout_s)
+
+    async def _start_peak_altitude_tracking(self) -> None:
+        self._peak_relative_altitude_m = 0.0
+        stop = asyncio.Event()
+        self._peak_altitude_stop = stop
+
+        async def watch() -> None:
+            try:
+                async for position in self._drone.telemetry.position():
+                    if stop.is_set():
+                        return
+                    altitude_m = float(position.relative_altitude_m)
+                    if altitude_m > self._peak_relative_altitude_m:
+                        self._peak_relative_altitude_m = altitude_m
+            except asyncio.CancelledError:
+                return
+
+        self._peak_altitude_task = asyncio.create_task(watch())
+
+    async def _stop_peak_altitude_tracking(self) -> None:
+        if self._peak_altitude_stop is not None:
+            self._peak_altitude_stop.set()
+        task = self._peak_altitude_task
+        self._peak_altitude_task = None
+        self._peak_altitude_stop = None
+        if task is None:
+            return
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (TimeoutError, asyncio.TimeoutError):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    def _mission_observed_airborne(self) -> bool:
+        return bool(self._observed_in_air or self._observed_landed_state_airborne)
+
+    def demo_flight_observation_document(self) -> dict[str, object]:
+        def _iso(moment: datetime | None) -> str | None:
+            if moment is None:
+                return None
+            return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+        return {
+            "observed_in_air": self._observed_in_air,
+            "observed_in_air_at": _iso(self._observed_in_air_at),
+            "observed_landed_state_airborne": self._observed_landed_state_airborne,
+            "observed_landed_state_airborne_at": _iso(self._observed_landed_state_airborne_at),
+            "in_air_tracker_first_sample_at": _iso(self._in_air_tracker_first_sample_at),
+            "in_air_tracker_ready_before_arm": self._in_air_tracker_ready_before_arm,
+        }
+
+    async def _wait_for_in_air_tracker_subscription(self, timeout_s: float = 3.0) -> bool:
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while asyncio.get_running_loop().time() < deadline:
+            if self._in_air_tracker_first_sample_at is not None:
+                return True
+            await asyncio.sleep(0.05)
+        return False
+
+    async def _start_flight_observation_tracking(self) -> None:
+        self._observed_in_air = False
+        self._observed_landed_state_airborne = False
+        self._observed_in_air_at = None
+        self._observed_landed_state_airborne_at = None
+        self._in_air_tracker_first_sample_at = None
+        self._in_air_tracker_ready_before_arm = None
+        stop = asyncio.Event()
+        self._flight_observation_stop = stop
+
+        async def watch_in_air() -> None:
+            try:
+                async for is_in_air in self._drone.telemetry.in_air():
+                    if self._in_air_tracker_first_sample_at is None:
+                        self._in_air_tracker_first_sample_at = datetime.now(UTC)
+                    if stop.is_set():
+                        return
+                    if is_in_air and not self._observed_in_air:
+                        self._observed_in_air = True
+                        self._observed_in_air_at = datetime.now(UTC)
+            except asyncio.CancelledError:
+                return
+
+        async def watch_landed_state() -> None:
+            try:
+                async for landed in self._drone.telemetry.landed_state():
+                    if stop.is_set():
+                        return
+                    state_name = getattr(landed, "name", str(landed))
+                    if state_name in {"IN_AIR", "FLYING", "TAKING_OFF"} and not self._observed_landed_state_airborne:
+                        self._observed_landed_state_airborne = True
+                        self._observed_landed_state_airborne_at = datetime.now(UTC)
+            except asyncio.CancelledError:
+                return
+
+        self._flight_observation_tasks = [
+            asyncio.create_task(watch_in_air()),
+            asyncio.create_task(watch_landed_state()),
+        ]
+
+    async def _stop_flight_observation_tracking(self) -> None:
+        if self._flight_observation_stop is not None:
+            self._flight_observation_stop.set()
+        tasks = self._flight_observation_tasks
+        self._flight_observation_tasks = []
+        self._flight_observation_stop = None
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError, RuntimeError):
+                await task
 
     async def execute_waypoint_mission(
         self, mission: TakeoffWaypointLandMission
@@ -339,13 +508,56 @@ class MavsdkMissionAdapter:
         self, timeout_s: float, require_airborne_observation: bool = True
     ) -> None:
         """Wait for telemetry to observe a landed state within the bounded timeout."""
+
         async def wait_for_landing() -> None:
-            observed_in_air = False
-            async for is_in_air in self._drone.telemetry.in_air():
-                observed_in_air = observed_in_air or is_in_air
-                if not is_in_air and (observed_in_air or not require_airborne_observation):
+            observed_in_air = self._mission_observed_airborne() if require_airborne_observation else True
+
+            async def consume_in_air() -> bool:
+                nonlocal observed_in_air
+                async for is_in_air in self._drone.telemetry.in_air():
+                    if is_in_air and not self._observed_in_air:
+                        self._observed_in_air = True
+                        self._observed_in_air_at = datetime.now(UTC)
+                    observed_in_air = (
+                        observed_in_air or is_in_air or self._mission_observed_airborne()
+                    )
+                    if not is_in_air and (observed_in_air or not require_airborne_observation):
+                        return True
+                return False
+
+            async def consume_landed_state() -> bool:
+                async for landed in self._drone.telemetry.landed_state():
+                    state_name = getattr(landed, "name", str(landed))
+                    if state_name in {"IN_AIR", "FLYING", "TAKING_OFF"} and not self._observed_landed_state_airborne:
+                        self._observed_landed_state_airborne = True
+                        self._observed_landed_state_airborne_at = datetime.now(UTC)
+                    if state_name == "ON_GROUND" and (
+                        self._mission_observed_airborne() or not require_airborne_observation
+                    ):
+                        return True
+                return False
+
+            in_air_task = asyncio.create_task(consume_in_air())
+            landed_task = asyncio.create_task(consume_landed_state())
+            try:
+                while not (in_air_task.done() and landed_task.done()):
+                    _done, _pending = await asyncio.wait(
+                        [in_air_task, landed_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for task in _done:
+                        if task.exception() is None and task.result():
+                            return
+                if in_air_task.exception() is None and in_air_task.result():
                     return
-            raise RuntimeError("PX4 in-air telemetry ended before confirming landing.")
+                if landed_task.exception() is None and landed_task.result():
+                    return
+                raise RuntimeError("PX4 landing telemetry ended before confirming landing.")
+            finally:
+                for task in (in_air_task, landed_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(in_air_task, landed_task, return_exceptions=True)
 
         await asyncio.wait_for(wait_for_landing(), timeout=timeout_s)
 
@@ -441,6 +653,249 @@ class MavsdkMissionAdapter:
             )
             raise
         return self._record(execution, MissionPhase.COMPLETED)
+
+    async def execute_demo_point_rtl_mission(
+        self,
+        mission: TakeoffWaypointsReturnToHomeMission,
+        *,
+        on_position_sample: Callable[[dict[str, float]], None] | None = None,
+        action_timeout_s: float = 45.0,
+    ) -> MissionExecution:
+        """Bounded one-point demo with bounded awaits and terminal recovery."""
+        from brain.mission.sitl_target import require_px4_sitl_indication
+
+        await self._require_preflight()
+        sitl_proof = await require_px4_sitl_indication(self._drone, timeout_s=action_timeout_s)
+        self._demo_sitl_proof = sitl_proof
+        home = await self._global_position_sample("home")
+        execution = self._begin_execution()
+        await asyncio.wait_for(
+            self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m),
+            timeout=action_timeout_s,
+        )
+        await asyncio.wait_for(
+            self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m),
+            timeout=action_timeout_s,
+        )
+        airborne = False
+        armed = False
+        landing_timeout_s = min(mission.landing_timeout_s, self._runtime_policy.landing_confirmation_timeout_s)
+        try:
+            await asyncio.wait_for(self._drone.action.arm(), timeout=action_timeout_s)
+            armed = True
+            execution = self._record(execution, MissionPhase.TAKING_OFF)
+            await asyncio.wait_for(self._drone.action.takeoff(), timeout=action_timeout_s)
+            airborne = True
+            await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
+            execution = self._record(execution, MissionPhase.NAVIGATING)
+            timeout_s = min(mission.waypoint_timeout_s, self._runtime_policy.waypoint_timeout_s)
+            for waypoint in mission.waypoints:
+                target = await self.goto_relative_waypoint(waypoint)
+                if on_position_sample is not None:
+                    on_position_sample(
+                        self._relative_position_sample(target, home, label="waypoint_target")
+                    )
+                await self.wait_until_waypoint_reached(target, mission.waypoint_tolerance_m, timeout_s)
+            if mission.hover_duration_s > 0.0:
+                execution = self._record(execution, MissionPhase.HOVERING)
+                await self._sleep_with_runtime_watchdog(mission.hover_duration_s)
+            execution = self._record(execution, MissionPhase.RETURNING)
+            await asyncio.wait_for(self._drone.action.return_to_launch(), timeout=action_timeout_s)
+            await asyncio.wait_for(
+                self.wait_until_landed(landing_timeout_s),
+                timeout=landing_timeout_s + 1.0,
+            )
+            airborne = False
+            landing_position = await self._global_position_sample("landing position")
+            home_error_m = horizontal_distance_m(home, landing_position)
+            if home_error_m > mission.home_tolerance_m:
+                raise RuntimeError(
+                    f"RTL landed {home_error_m:.1f} m from home; limit is {mission.home_tolerance_m:.1f} m."
+                )
+        except Exception:
+            execution = await self._demo_recover_airborne(
+                execution,
+                airborne=airborne,
+                armed=armed,
+                landing_timeout_s=landing_timeout_s,
+                action_timeout_s=action_timeout_s,
+            )
+            raise
+        execution = self._record(execution, MissionPhase.COMPLETED)
+        await self._demo_disarm_when_landed(landing_timeout_s, action_timeout_s)
+        return execution
+
+    @staticmethod
+    def _relative_position_sample(
+        target: GlobalPosition, home: GlobalPosition, *, label: str
+    ) -> dict[str, float]:
+        north = (target.latitude_deg - home.latitude_deg) * 111_000.0
+        east = (target.longitude_deg - home.longitude_deg) * 111_000.0 * max(
+            0.1, abs(cos(radians(home.latitude_deg)))
+        )
+        return {
+            "label": label,
+            "north_m": north,
+            "east_m": east,
+            "relative_altitude_m": target.absolute_altitude_m - home.absolute_altitude_m,
+        }
+
+    async def _vehicle_in_air_state(self, *, timeout_s: float = 2.0) -> bool | None:
+        sample = await self._latest_telemetry_sample(self._drone.telemetry.in_air, timeout_s=timeout_s)
+        if sample is None:
+            return None
+        return bool(sample)
+
+    async def _demo_resolve_effective_airborne(self, *, airborne: bool, armed: bool) -> bool:
+        """After arm, treat the vehicle as possibly airborne until telemetry proves otherwise."""
+        if airborne:
+            return True
+        if not armed:
+            return False
+        in_air = await self._vehicle_in_air_state()
+        if in_air is True:
+            return True
+        if in_air is False:
+            return False
+        return True
+
+    async def _demo_recover_airborne(
+        self,
+        execution: MissionExecution,
+        *,
+        airborne: bool,
+        armed: bool,
+        landing_timeout_s: float,
+        action_timeout_s: float,
+        rtl_timeout_s: float | None = None,
+    ) -> MissionExecution:
+        """RTL or land, then disarm only with on-ground confirmation."""
+        effective_airborne = await self._demo_resolve_effective_airborne(airborne=airborne, armed=armed)
+        if not effective_airborne and not armed:
+            return self._safe_record(execution, MissionPhase.FAILED)
+
+        rtl_bound_s = rtl_timeout_s
+        if rtl_bound_s is None:
+            rtl_bound_s = max(landing_timeout_s + action_timeout_s + 5.0, landing_timeout_s + 1.0)
+        land_wait_cap_s = max(landing_timeout_s + 1.0, rtl_bound_s)
+
+        if effective_airborne:
+            if execution.phase is not MissionPhase.RETURNING:
+                execution = self._safe_record(execution, MissionPhase.RETURNING)
+            try:
+                await asyncio.wait_for(self._drone.action.return_to_launch(), timeout=action_timeout_s)
+                await asyncio.wait_for(
+                    self.wait_until_landed(landing_timeout_s),
+                    timeout=land_wait_cap_s,
+                )
+            except Exception:
+                execution = self._safe_record(execution, MissionPhase.LANDING)
+                try:
+                    await asyncio.wait_for(self._drone.action.land(), timeout=action_timeout_s)
+                    await asyncio.wait_for(
+                        self.wait_until_landed(landing_timeout_s),
+                        timeout=land_wait_cap_s,
+                    )
+                except Exception:
+                    pass
+            try:
+                await self._demo_disarm_when_landed(landing_timeout_s, action_timeout_s)
+            except Exception:
+                pass
+            return self._safe_record(execution, MissionPhase.FAILED)
+
+        if armed:
+            try:
+                await self._demo_disarm_when_landed(landing_timeout_s, action_timeout_s)
+            except Exception:
+                pass
+        return self._safe_record(execution, MissionPhase.FAILED)
+
+    async def _latest_telemetry_sample(
+        self, stream_factory: Callable[[], AsyncIterator[object]], *, timeout_s: float
+    ) -> object | None:
+        async def _read_one() -> object | None:
+            stream = stream_factory() if callable(stream_factory) else stream_factory
+            async for value in stream:
+                return value
+            return None
+
+        try:
+            return await asyncio.wait_for(_read_one(), timeout=timeout_s)
+        except (TimeoutError, asyncio.TimeoutError):
+            return None
+
+    async def _confirmed_on_ground(self, *, timeout_s: float = 2.0) -> bool | None:
+        """Return whether the vehicle is on the ground, or None when telemetry is inconclusive."""
+        in_air = await self._latest_telemetry_sample(self._drone.telemetry.in_air, timeout_s=timeout_s)
+        if in_air is not None:
+            return not bool(in_air)
+        landed = await self._latest_telemetry_sample(self._drone.telemetry.landed_state, timeout_s=timeout_s)
+        if landed is None:
+            return None
+        state_name = getattr(landed, "name", str(landed))
+        if state_name == "ON_GROUND":
+            return True
+        if state_name in {"IN_AIR", "FLYING", "TAKING_OFF"}:
+            return False
+        return None
+
+    async def _demo_disarm_when_landed(self, landing_timeout_s: float, action_timeout_s: float) -> None:
+        reason: str | None = None
+        sample_timeout_s = min(2.0, landing_timeout_s)
+        try:
+            await asyncio.wait_for(
+                self.wait_until_landed(landing_timeout_s, require_airborne_observation=True),
+                timeout=landing_timeout_s + 1.0,
+            )
+        except (TimeoutError, asyncio.TimeoutError):
+            ground = await self._confirmed_on_ground(timeout_s=sample_timeout_s)
+            if ground is not True:
+                if ground is False:
+                    raise RuntimeError("Demo disarm refused: vehicle still reports in flight after landing wait.")
+                raise RuntimeError("Demo disarm refused: landing could not be confirmed.")
+            if self._mission_observed_airborne():
+                reason = (
+                    "disarm on ground after landing wait timeout "
+                    "(in-flight airborne telemetry was observed earlier)"
+                )
+            else:
+                reason = (
+                    "disarm on ground after landing wait timeout "
+                    "without in-flight in_air or landed_state airborne observation"
+                )
+
+        async def _wait_not_in_air() -> None:
+            async for in_air in self._drone.telemetry.in_air():
+                if not in_air:
+                    return
+            raise RuntimeError("in_air telemetry ended before confirming landing.")
+
+        try:
+            await asyncio.wait_for(_wait_not_in_air(), timeout=landing_timeout_s)
+        except (TimeoutError, asyncio.TimeoutError):
+            ground = await self._confirmed_on_ground(timeout_s=sample_timeout_s)
+            if ground is not True:
+                if ground is False:
+                    raise RuntimeError("Demo disarm refused: in_air stream stalled while still airborne.")
+                raise RuntimeError("Demo disarm refused: in_air stream stalled without ground confirmation.")
+            reason = reason or (
+                "disarm on ground after in_air subscription stalled before observing not in_air"
+            )
+
+        ground = await self._confirmed_on_ground(timeout_s=sample_timeout_s)
+        if ground is False:
+            raise RuntimeError("Demo disarm refused: vehicle still in_air.")
+        if ground is None:
+            in_air = await self._latest_telemetry_sample(self._drone.telemetry.in_air, timeout_s=1.0)
+            if in_air is True:
+                raise RuntimeError("Demo disarm refused: vehicle still in_air.")
+
+        if reason:
+            logging.getLogger(__name__).info("demo disarm: %s", reason)
+            self._demo_disarm_reason = reason
+
+        await asyncio.wait_for(self._drone.action.disarm(), timeout=action_timeout_s)
 
     async def _require_preflight(self) -> None:
         """Verify PX4 telemetry before issuing any configuration or flight command."""

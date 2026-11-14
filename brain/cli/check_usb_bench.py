@@ -17,6 +17,11 @@ import tempfile
 from uuid import uuid4
 
 from brain.cli.mavsdk_lifecycle import acquire_px4_link, stop_owned_mavsdk_server
+from brain.safety.deployment import (
+    DeploymentMode,
+    add_deployment_arguments,
+    authorize_readonly_connection,
+)
 
 
 DEFAULT_ARTIFACT_DIRECTORY = Path("simulation/artifacts/hardware-bench")
@@ -41,6 +46,11 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--sample-timeout", type=_positive_seconds, default=3.0)
     parser.add_argument("--mavsdk-server-port", type=int, default=50051)
     parser.add_argument("--artifact-dir", type=Path, default=DEFAULT_ARTIFACT_DIRECTORY)
+    add_deployment_arguments(
+        parser,
+        default_mode=DeploymentMode.BENCH_READONLY,
+        actuation_capable=False,
+    )
     return parser.parse_args(arguments)
 
 
@@ -166,6 +176,7 @@ async def run(arguments: argparse.Namespace) -> Path:
         "flight_readiness": {"status": "blocked", "reasons": ["diagnostics have not completed"]},
     }
     try:
+        authorize_readonly_connection(arguments.deployment_mode, arguments.endpoint)
         try:
             from mavsdk import System
         except ModuleNotFoundError as error:  # pragma: no cover - environment guard

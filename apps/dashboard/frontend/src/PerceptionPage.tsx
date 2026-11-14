@@ -10,8 +10,9 @@ type Sector = { from: number; to: number; distance: number };
 type PerceptionEvidence =
   | { state: "loading" | "unavailable" | "invalid" | "stale"; reason: string; capturedAt: string | null; detections: ValidDetection[]; coverage: Sector[] }
   | { state: "fresh"; reason: string; capturedAt: string; detections: ValidDetection[]; coverage: Sector[]; frame: Frame };
-type OccupancyCell = { north: number; east: number; size: number; disputed: boolean };
+type OccupancyCell = { north: number; east: number; size: number; disputed: boolean; label: string | null };
 type MapState = { verified: boolean; cells: OccupancyCell[]; rejected: number };
+type MapBackground = { metresPerPixel: number; width: number; height: number; capturedAt: string };
 
 const sensors: ReadonlyArray<{ id: SensorId; label: string }> = [
   { id: "front", label: "Elülső kamera" },
@@ -71,7 +72,7 @@ function readMap(value: unknown): MapState {
   let rejected = 0;
   for (const item of value.cells) {
     if (!isRecord(item) || !number(item.north_m) || !number(item.east_m) || !number(item.cell_size_m) || item.cell_size_m <= 0 || (item.disputed !== undefined && typeof item.disputed !== "boolean")) { rejected += 1; continue; }
-    cells.push({ north: item.north_m, east: item.east_m, size: item.cell_size_m, disputed: item.disputed === true });
+    cells.push({ north: item.north_m, east: item.east_m, size: item.cell_size_m, disputed: item.disputed === true, label: typeof item.semantic_label === "string" ? item.semantic_label : null });
   }
   return { verified: true, cells, rejected };
 }
@@ -80,7 +81,12 @@ function statusLabel(state: PerceptionEvidence["state"]): string {
   return state === "fresh" ? "FRISS" : state === "stale" ? "ELAVULT" : state === "loading" ? "BETÖLTÉS" : state === "unavailable" ? "NEM ELÉRHETŐ" : "ÉRVÉNYTELEN";
 }
 
-function OccupancyMap({ map }: { map: MapState }) {
+function readMapBackground(value: unknown): MapBackground | null {
+  if (!isRecord(value) || !number(value.metres_per_pixel) || value.metres_per_pixel <= 0 || !number(value.width) || !number(value.height) || !time(value.captured_at)) return null;
+  return { metresPerPixel: value.metres_per_pixel, width: value.width, height: value.height, capturedAt: value.captured_at };
+}
+
+function OccupancyMap({ map, background }: { map: MapState; background: MapBackground | null }) {
   // Folded, not spread: an API-sized grid spread as arguments throws.
   const scale = useMemo(() => 125 / map.cells.reduce(
       (widest, cell) => Math.max(widest, Math.abs(cell.north) + cell.size, Math.abs(cell.east) + cell.size),
@@ -89,8 +95,9 @@ function OccupancyMap({ map }: { map: MapState }) {
   return <section className="world-map-panel" aria-labelledby="perception-map-title">
     <p className="eyebrow">KÜLÖN BIZONYÍTÉKLÁNC</p><h3 id="perception-map-title">Mért akadályok</h3>
     <svg className="world-map" viewBox="0 0 300 300" role="img" aria-label="Perception akadálytérkép">
+      {background && <image className="world-map-background" href={`/api/v1/map-view?v=${encodeURIComponent(background.capturedAt)}`} x={150-background.width*background.metresPerPixel*scale/2} y={150-background.height*background.metresPerPixel*scale/2} width={background.width*background.metresPerPixel*scale} height={background.height*background.metresPerPixel*scale} preserveAspectRatio="none" />}
       <line className="map-axis" x1="150" y1="0" x2="150" y2="300" /><line className="map-axis" x1="0" y1="150" x2="300" y2="150" /><circle className="map-home" cx="150" cy="150" r="4" /><text className="map-label" x="158" y="18">É</text>
-      {map.verified && map.cells.map((cell, index) => { const size = Math.max(3, cell.size * scale); return <rect key={`${cell.north}-${cell.east}-${index}`} className={cell.disputed ? "world-map-cell world-map-cell--disputed" : "world-map-cell"} x={150 + cell.east * scale - size / 2} y={150 - cell.north * scale - size / 2} width={size} height={size} rx="2" aria-label={`${cell.disputed ? "Vitatott" : "Mért"} akadály: É ${coordinate(cell.north)} m, K ${coordinate(cell.east)} m`} />; })}
+      {map.verified && map.cells.map((cell, index) => { const size = Math.max(3, cell.size * scale); const x=150+cell.east*scale, y=150-cell.north*scale; return <g key={`${cell.north}-${cell.east}-${index}`}><rect className={cell.disputed ? "world-map-cell world-map-cell--disputed" : "world-map-cell"} x={x-size/2} y={y-size/2} width={size} height={size} rx="2" aria-label={`${cell.disputed ? "Vitatott" : "Mért"} akadály${cell.label ? `, ${cell.label}` : ""}: É ${coordinate(cell.north)} m, K ${coordinate(cell.east)} m`} />{cell.label && <text className="world-map-entity-label" x={x+5} y={y-5}>{cell.label}</text>}</g>; })}
     </svg>
     <p className="muted">{map.verified ? "Az üres terület ismeretlen, nem szabad vagy biztonságos. A cellák kizárólag mért akadályt jelentenek." : "A forrás foglaltsági jelentése nem igazolt; a cellák rejtve maradnak."}</p>
     {map.rejected > 0 && <p className="muted" role="status">{map.rejected} hibás térképcella elutasítva.</p>}
@@ -101,6 +108,7 @@ export function PerceptionPage() {
   const [sensor, setSensor] = useState<SensorId>("front");
   const [evidence, setEvidence] = useState<PerceptionEvidence>({ state: "loading", reason: "Adatok betöltése…", capturedAt: null, detections: [], coverage: [] });
   const [map, setMap] = useState<MapState>({ verified: false, cells: [], rejected: 0 });
+  const [background, setBackground] = useState<MapBackground | null>(null);
   // Every request carries the generation it was issued in, and only the newest
   // may answer. Without it, switching sensors while a request is in flight lets
   // the older response resolve last -- and the front camera's detections are
@@ -110,10 +118,11 @@ export function PerceptionPage() {
   const refresh = useCallback(() => {
     const issued = ++generation.current;
     setEvidence({ state: "loading", reason: "Adatok betöltése…", capturedAt: null, detections: [], coverage: [] });
-    void Promise.allSettled([api<unknown>(`/api/v1/cameras/${sensor}/detections`), api<unknown>("/api/v1/world-map")]).then(([detectionResult, mapResult]) => {
+    void Promise.allSettled([api<unknown>(`/api/v1/cameras/${sensor}/detections`), api<unknown>("/api/v1/world-map"), api<unknown>("/api/v1/map-view/meta")]).then(([detectionResult, mapResult, backgroundResult]) => {
       if (issued !== generation.current) return;
       setEvidence(detectionResult.status === "fulfilled" ? readEvidence(detectionResult.value) : { state: "unavailable", reason: "Az észlelési végpont nem elérhető.", capturedAt: null, detections: [], coverage: [] });
       setMap(mapResult.status === "fulfilled" ? readMap(mapResult.value) : { verified: false, cells: [], rejected: 0 });
+      setBackground(backgroundResult.status === "fulfilled" ? readMapBackground(backgroundResult.value) : null);
     });
   }, [sensor]);
 
@@ -131,17 +140,19 @@ export function PerceptionPage() {
     <div className="field-label"><label htmlFor="perception-sensor">Szenzorforrás</label><select id="perception-sensor" value={sensor} onChange={(event) => setSensor(event.target.value as SensorId)}>{sensors.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></div>
     <p className={`telemetry-sample telemetry-sample--${evidence.state === "fresh" ? "fresh" : evidence.state === "stale" ? "stale" : "unavailable"}`} role="status">ÉSZLELÉSI FORRÁS: {statusLabel(evidence.state)}</p>
     <p className="muted">{evidence.reason}{evidence.capturedAt ? <> Rögzítve: <time dateTime={evidence.capturedAt}>{evidence.capturedAt}</time>.</> : null}</p>
-    <div className="live-operations-grid">
-      <section className="live-operations-zone" aria-labelledby="perception-evidence-title"><p className="eyebrow">01 · KÉPI BIZONYÍTÉK</p><h3 id="perception-evidence-title">Validált észlelések</h3>
+    <div className="perception-grid">
+      <section className="live-operations-zone perception-camera" aria-labelledby="perception-evidence-title"><p className="eyebrow">01 · KÉPI BIZONYÍTÉK</p><h3 id="perception-evidence-title">Élőkép és validált észlelések</h3>
         <img className="camera-stream-frame" src={`/api/v1/cameras/${sensor}/stream`} alt={`${source.label} élőkép`} />
         {evidence.state === "fresh" && <ul className="data-list" aria-label="Validált objektumészlelések">{evidence.detections.length ? evidence.detections.map((detection, index) => <li key={`${detection.label}-${index}`}><strong>{detection.label}</strong><span>Bizonyossági jelzés: {Math.round(detection.confidence * 100)}% (nem kalibrált valószínűség)</span></li>) : <li>Nincs észlelés az érvényes képkockában. Ez nem igazol akadálymentességet.</li>}</ul>}
         {evidence.state !== "fresh" && <p className="muted">Az objektumészlelések visszatartva maradnak, amíg nincs friss és érvényes bizonyíték.</p>}
       </section>
-      <section className="live-operations-zone" aria-labelledby="perception-coverage-title"><p className="eyebrow">02 · LEFEDETTSÉGI HATÁR</p><h3 id="perception-coverage-title">Szenzor coverage</h3>
+      <div className="perception-side-stack">
+      <section className="live-operations-zone perception-coverage" aria-labelledby="perception-coverage-title"><p className="eyebrow">02 · LEFEDETTSÉGI HATÁR</p><h3 id="perception-coverage-title">Szenzorlefedettség</h3>
         {evidence.state === "fresh" && evidence.coverage.length > 0 ? <><ul className="data-list" aria-label="Igazolt szenzorlefedettség">{evidence.coverage.map((sector, index) => <li key={`${sector.from}-${sector.to}-${index}`}><strong>{sector.from}° – {sector.to}°</strong><span>Igazolt határ: legfeljebb {sector.distance} m</span></li>)}</ul><p className="muted">Az ezen kívüli terület ismeretlen; ebből a nézetből nem vezetünk le biztonságos mozgási teret.</p></> : <p className="muted"><strong>NINCS IGAZOLT LEFEDETTSÉG.</strong> Az ezen kívüli terület ismeretlen; ebből a nézetből nem vezetünk le biztonságos mozgási teret.</p>}
         <p className="muted">A képi észlelés, az akadályfoglaltság és a lefedettség külön bizonyítéklánc. Egyik sem helyettesíti a futásidejű safety shieldet.</p>
       </section>
-      <section className="live-operations-zone" aria-labelledby="perception-obstacle-title"><p className="eyebrow">03 · LOKÁLIS AKADÁLYBIZONYÍTÉK</p><h3 id="perception-obstacle-title">Foglaltsági térkép</h3><OccupancyMap map={map} /></section>
+      <section className="live-operations-zone" aria-labelledby="perception-obstacle-title"><p className="eyebrow">03 · LOKÁLIS AKADÁLYBIZONYÍTÉK</p><h3 id="perception-obstacle-title">Foglaltsági térkép</h3><OccupancyMap map={map} background={background} /></section>
+      </div>
     </div>
   </section>;
 }

@@ -10,6 +10,14 @@ The baseline pins content, not just versions: PX4 v1.17.0 does not build on
 Apple Silicon macOS as released, so the tree carries a recorded patch set and
 reports itself as ``v1.17.0-dirty``. Hashing the patched files pins the tree to
 its base commit plus exactly that patch, which a version string cannot do.
+
+Two hosts now build the twin, and exactly two things genuinely differ between
+them: whether that macOS patch applies, and which Gazebo release the host can
+install. Those live under ``profiles`` in the baseline; everything else stays
+shared and must hold everywhere. That split is the point. The world and model
+hashes are shared, so a mismatch there is real drift and can never be excused as
+a platform difference - which is precisely the property a per-host baseline
+would have destroyed.
 """
 
 from __future__ import annotations
@@ -19,6 +27,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+import platform
 import subprocess
 
 import yaml
@@ -36,15 +45,22 @@ class BaselineError(ValueError):
 
 @dataclass(frozen=True)
 class Baseline:
-    """The pinned simulation stack the twin's evidence is valid against."""
+    """The pinned simulation stack the twin's evidence is valid against.
+
+    ``profile`` names which host this instance was resolved for; the values
+    below are already resolved for it, so a report never has to ask again.
+    ``required_patch`` is ``None`` on a host that needs no patch, which is a
+    statement about the tree, not a missing field.
+    """
 
     version: str
+    profile: str
     px4_commit: str
     px4_describe: str
     gz_submodule_commit: str
     gazebo_sim_version: str
     baseline_world: str
-    required_patch: str
+    required_patch: str | None
     file_hashes: Mapping[str, str]
 
 
@@ -76,8 +92,13 @@ class BaselineReport:
         return not self.drift
 
 
-def load_baseline(path: Path = DEFAULT_BASELINE_PATH) -> Baseline:
-    """Read the pinned baseline, failing closed on anything it cannot trust."""
+def load_baseline(path: Path = DEFAULT_BASELINE_PATH, *, profile: str | None = None) -> Baseline:
+    """Read the pinned baseline for one host profile, failing closed on anything it cannot trust.
+
+    ``profile`` defaults to the baseline's own ``default_profile`` rather than to
+    whatever host happens to be running, so a library caller gets a stable answer
+    and only the CLI decides by host.
+    """
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as error:
@@ -90,22 +111,40 @@ def load_baseline(path: Path = DEFAULT_BASELINE_PATH) -> Baseline:
     px4 = _mapping(document, "px4")
     gazebo = _mapping(document, "gazebo")
     world = _mapping(document, "world")
-    files = _mapping(document, "files")
+    profiles = _mapping(document, "profiles")
+
+    selected = profile if profile is not None else _text(document, "default_profile")
+    if selected not in profiles:
+        known = ", ".join(sorted(str(name) for name in profiles)) or "none"
+        raise BaselineError(f"The baseline declares no profile '{selected}'; it knows: {known}.")
+    host = _mapping(profiles, selected)
+
+    # Shared hashes hold on every host; the profile adds only the files its
+    # build genuinely rewrites. A profile may not redefine a shared file --
+    # that would let a per-host entry mask real drift, which is the one thing
+    # this split must never allow.
+    shared_files = _digest_mapping(document, "files")
+    host_files = _digest_mapping(host, "files")
+    overlapping = sorted(set(shared_files) & set(host_files))
+    if overlapping:
+        raise BaselineError(
+            f"Profile '{selected}' redefines shared file hashes ({', '.join(overlapping)}); "
+            "a profile may add host-specific files, never override shared ones."
+        )
+    files = {**shared_files, **host_files}
     if not files:
         raise BaselineError("The baseline must pin at least one file; a version alone is not a baseline.")
-    for name, digest in files.items():
-        if not isinstance(name, str) or not _is_sha256(digest):
-            raise BaselineError(f"The baseline file entry '{name}' must map to a sha256 digest.")
 
     return Baseline(
         version=_text(document, "version"),
+        profile=selected,
         px4_commit=_text(px4, "commit"),
         px4_describe=_text(px4, "describe"),
         gz_submodule_commit=_text(px4, "gz_submodule_commit"),
-        gazebo_sim_version=_text(gazebo, "sim_version"),
+        gazebo_sim_version=_text(host, "gazebo_sim_version"),
         baseline_world=_text(world, "baseline"),
-        required_patch=_text(px4, "required_patch"),
-        file_hashes=dict(files),
+        required_patch=_optional_text(host, "required_patch"),
+        file_hashes=files,
     )
 
 
@@ -194,8 +233,40 @@ def _text(document: Mapping, key: str) -> str:
     return value.strip()
 
 
+def _optional_text(document: Mapping, key: str) -> str | None:
+    """Read a field that may be explicitly null, but never merely absent.
+
+    A missing key is a malformed baseline; an explicit ``null`` is a claim that
+    this host needs nothing here, and the difference matters for a patch.
+    """
+    if key not in document:
+        raise BaselineError(f"The baseline field '{key}' must be present, using null to mean 'none'.")
+    if document[key] is None:
+        return None
+    return _text(document, key)
+
+
+def _digest_mapping(document: Mapping, key: str) -> dict[str, str]:
+    files = _mapping(document, key)
+    for name, digest in files.items():
+        if not isinstance(name, str) or not _is_sha256(digest):
+            raise BaselineError(f"The baseline file entry '{name}' must map to a sha256 digest.")
+    return dict(files)
+
+
 def _is_sha256(value: object) -> bool:
     return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def host_profile() -> str:
+    """Name the profile this host builds under.
+
+    Kept deliberately dumb: the only host difference the baseline encodes is
+    Apple Silicon's build patch, so Darwin selects macos and everything else
+    selects linux. The choice is always printed, because a silently wrong
+    profile would turn real drift into a clean report.
+    """
+    return "macos" if platform.system() == "Darwin" else "linux"
 
 
 def main(arguments: tuple[str, ...] | None = None) -> int:
@@ -203,12 +274,20 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Verify the local PX4/Gazebo stack against the pinned baseline.")
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE_PATH)
     parser.add_argument("--px4-root", type=Path, default=DEFAULT_PX4_ROOT)
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="Host profile to check against. Defaults to this host (macos on Darwin, otherwise linux).",
+    )
     parsed = parser.parse_args(arguments)
 
-    baseline = load_baseline(parsed.baseline)
+    selected = parsed.profile if parsed.profile is not None else host_profile()
+    detected = " (detected)" if parsed.profile is None else ""
+    baseline = load_baseline(parsed.baseline, profile=selected)
     report = verify_baseline(baseline, px4_root=parsed.px4_root)
 
-    print(f"Baseline {baseline.version}: PX4 {baseline.px4_describe}, Gazebo {baseline.gazebo_sim_version}, "
+    print(f"Baseline {baseline.version}, profile '{baseline.profile}'{detected}: "
+          f"PX4 {baseline.px4_describe}, Gazebo {baseline.gazebo_sim_version}, "
           f"world '{baseline.baseline_world}'")
     for finding in report.findings:
         status = "ok  " if finding.matches else "DRIFT"
@@ -217,11 +296,12 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
             print(f"        expected {finding.expected}")
             print(f"        actual   {finding.actual}")
     if report.matches_baseline:
-        print("This environment matches the baseline.")
+        print(f"This environment matches the '{baseline.profile}' baseline.")
         return 0
-    print(f"\n{len(report.drift)} property/properties drifted from the baseline; evidence from this "
-          f"environment is not comparable with the committed reports.")
-    print(f"PX4 needs the recorded patch applied: {baseline.required_patch}")
+    print(f"\n{len(report.drift)} property/properties drifted from the '{baseline.profile}' baseline; "
+          f"evidence from this environment is not comparable with the committed reports.")
+    if baseline.required_patch is not None:
+        print(f"PX4 needs the recorded patch applied: {baseline.required_patch}")
     return 1
 
 

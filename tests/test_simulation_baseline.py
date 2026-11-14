@@ -8,12 +8,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import subprocess
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from simulation.baseline import (
     DEFAULT_BASELINE_PATH,
     Baseline,
     BaselineError,
+    host_profile,
     load_baseline,
     verify_baseline,
 )
@@ -26,7 +27,8 @@ _MODEL_DIGEST = "cfe92f98360967faa895b77aa8a6fff3fc9b290286e94e45297c4bdd7b62fbf
 
 def _baseline(**overrides: object) -> Baseline:
     defaults: dict[str, object] = {
-        "version": "v0.1",
+        "version": "v0.2",
+        "profile": "macos",
         "px4_commit": _PX4_COMMIT,
         "px4_describe": "v1.17.0",
         "gz_submodule_commit": _GZ_COMMIT,
@@ -36,6 +38,33 @@ def _baseline(**overrides: object) -> Baseline:
         "file_hashes": {},
     }
     return Baseline(**{**defaults, **overrides})
+
+
+def _document(
+    *,
+    shared_files: str = "",
+    profile_files: str = "",
+    required_patch: str = "p",
+    profiles: str | None = None,
+) -> str:
+    """Render a minimal but structurally valid baseline document."""
+    if profiles is None:
+        profiles = (
+            "profiles:\n"
+            "  macos:\n"
+            f"    required_patch: {required_patch}\n"
+            "    gazebo_sim_version: '8'\n"
+            "    files:\n" + (profile_files or "      {}\n")
+        )
+    return (
+        "version: v0.2\n"
+        "default_profile: macos\n"
+        f"{profiles}"
+        "px4:\n  describe: v1\n  commit: abc\n  gz_submodule_commit: def\n"
+        "gazebo:\n  distribution: harmonic\n"
+        "world:\n  baseline: default\n"
+        "files:\n" + (shared_files or "  {}\n")
+    )
 
 
 def _runner(px4_commit: str = _PX4_COMMIT, gz_commit: str = _GZ_COMMIT, gz_version: str = "8.12.0") -> Mock:
@@ -68,14 +97,101 @@ class LoadBaselineTests(unittest.TestCase):
         self.assertTrue(patch.is_file(), f"{baseline.required_patch} must be committed")
         self.assertIn("CMakeLists.txt", baseline.file_hashes)
 
-    def test_refuses_a_baseline_that_pins_nothing(self) -> None:
+    def test_the_linux_profile_needs_no_patch_and_says_so_explicitly(self) -> None:
+        """PX4 v1.17.0 builds natively on Linux; applying the macOS patch there would be wrong."""
+        baseline = load_baseline(DEFAULT_BASELINE_PATH, profile="linux")
+
+        self.assertIsNone(baseline.required_patch)
+        self.assertEqual(baseline.profile, "linux")
+
+    def test_the_two_profiles_differ_only_where_the_host_really_differs(self) -> None:
+        """A profile that diverged anywhere else would be excusing drift, not describing a host."""
+        macos = load_baseline(DEFAULT_BASELINE_PATH, profile="macos")
+        linux = load_baseline(DEFAULT_BASELINE_PATH, profile="linux")
+
+        self.assertEqual(macos.px4_commit, linux.px4_commit)
+        self.assertEqual(macos.gz_submodule_commit, linux.gz_submodule_commit)
+        self.assertEqual(macos.baseline_world, linux.baseline_world)
+        self.assertNotEqual(macos.gazebo_sim_version, linux.gazebo_sim_version)
+
+        differing = {
+            name
+            for name in macos.file_hashes.keys() | linux.file_hashes.keys()
+            if macos.file_hashes.get(name) != linux.file_hashes.get(name)
+        }
+        self.assertEqual(
+            differing,
+            {
+                "CMakeLists.txt",
+                "src/modules/simulation/gz_msgs/CMakeLists.txt",
+                "src/modules/simulation/gz_plugins/moving_platform_controller/MovingPlatformController.cpp",
+                "src/modules/simulation/gz_plugins/optical_flow/optical_flow.cmake",
+            },
+        )
+
+    def test_the_world_and_model_hashes_are_shared_by_every_profile(self) -> None:
+        """These carry the evidence's meaning, so no host may hold its own copy."""
+        shared = (
+            "Tools/simulation/gz/models/x500/model.sdf",
+            "Tools/simulation/gz/worlds/default.sdf",
+            "Tools/simulation/gz/worlds/windy.sdf",
+            "Tools/simulation/gz/server.config",
+        )
+        macos = load_baseline(DEFAULT_BASELINE_PATH, profile="macos")
+        linux = load_baseline(DEFAULT_BASELINE_PATH, profile="linux")
+
+        for name in shared:
+            with self.subTest(file=name):
+                self.assertEqual(macos.file_hashes[name], linux.file_hashes[name])
+
+    def test_refuses_a_profile_it_does_not_declare(self) -> None:
+        with self.assertRaisesRegex(BaselineError, "declares no profile 'freebsd'"):
+            load_baseline(DEFAULT_BASELINE_PATH, profile="freebsd")
+
+    def test_refuses_a_profile_that_overrides_a_shared_file_hash(self) -> None:
+        """Letting a host redefine a shared hash would turn real drift into a clean report."""
         with TemporaryDirectory() as directory:
             path = Path(directory) / "baseline.yaml"
             path.write_text(
-                "version: v0.1\npx4:\n  describe: v1\n  commit: abc\n  gz_submodule_commit: def\n"
-                "  required_patch: p\ngazebo:\n  sim_version: '8'\nworld:\n  baseline: default\nfiles: {}\n",
+                _document(
+                    shared_files=f"  model.sdf: {_MODEL_DIGEST}\n",
+                    profile_files=f"      model.sdf: {'f' * 64}\n",
+                ),
                 encoding="utf-8",
             )
+
+            with self.assertRaisesRegex(BaselineError, "redefines shared file hashes"):
+                load_baseline(path)
+
+    def test_requires_the_patch_field_to_be_present_even_when_it_is_null(self) -> None:
+        """An explicit null claims 'this host needs none'; a missing key claims nothing."""
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.yaml"
+            path.write_text(
+                _document(
+                    shared_files=f"  model.sdf: {_MODEL_DIGEST}\n",
+                    profiles=(
+                        "profiles:\n  macos:\n    gazebo_sim_version: '8'\n    files:\n      {}\n"
+                    ),
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(BaselineError, "must be present, using null"):
+                load_baseline(path)
+
+
+class HostProfileTests(unittest.TestCase):
+    def test_darwin_selects_macos_and_anything_else_selects_linux(self) -> None:
+        with patch("simulation.baseline.platform.system", return_value="Darwin"):
+            self.assertEqual(host_profile(), "macos")
+        with patch("simulation.baseline.platform.system", return_value="Linux"):
+            self.assertEqual(host_profile(), "linux")
+
+    def test_refuses_a_baseline_that_pins_nothing(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.yaml"
+            path.write_text(_document(), encoding="utf-8")
 
             with self.assertRaisesRegex(BaselineError, "a version alone is not a baseline"):
                 load_baseline(path)
@@ -83,12 +199,7 @@ class LoadBaselineTests(unittest.TestCase):
     def test_refuses_a_file_entry_that_is_not_a_digest(self) -> None:
         with TemporaryDirectory() as directory:
             path = Path(directory) / "baseline.yaml"
-            path.write_text(
-                "version: v0.1\npx4:\n  describe: v1\n  commit: abc\n  gz_submodule_commit: def\n"
-                "  required_patch: p\ngazebo:\n  sim_version: '8'\nworld:\n  baseline: default\n"
-                "files:\n  model.sdf: latest\n",
-                encoding="utf-8",
-            )
+            path.write_text(_document(shared_files="  model.sdf: latest\n"), encoding="utf-8")
 
             with self.assertRaisesRegex(BaselineError, "must map to a sha256 digest"):
                 load_baseline(path)
