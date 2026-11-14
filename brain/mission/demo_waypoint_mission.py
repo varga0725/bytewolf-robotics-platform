@@ -505,7 +505,7 @@ def consecutive_acceptance_summary(
         "runs": run_documents,
     }
     if visual_frame_paths:
-        summary["visual_review_frame_paths"] = visual_frame_paths
+        summary["visual_review_frame_paths"] = list(dict.fromkeys(visual_frame_paths))
         summary["visual_review_required"] = True
         summary["operator_note"] = (
             "Human frame review is required before visual evidence counts toward acceptance. "

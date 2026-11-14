@@ -300,6 +300,28 @@ class WindowCleanupSafetyTests(unittest.TestCase):
             Image.new("RGB", (64, 64), color=(0, 0, 0)).save(path)
             self.assertFalse(_png_has_non_uniform_content(path))
 
+    def test_screenshot_ffmpeg_hides_cursor(self) -> None:
+        from brain.mission.demo_visual_capture import DemoFlightScreenCapture, _CaptureSession
+
+        with TemporaryDirectory() as directory:
+            shot = Path(directory) / "mid.png"
+            capture = DemoFlightScreenCapture(Path(directory) / "clip.mp4", mode="xvfb")
+            gui = MagicMock(poll=MagicMock(return_value=None))
+            capture._session = _CaptureSession(
+                screenshot_path=shot,
+                launched_gz_process=gui,
+                grab_region=(640, 480, 0, 0),
+                grab_display=":199",
+            )
+            with patch("brain.mission.demo_visual_capture.shutil.which", return_value="/usr/bin/ffmpeg"):
+                with patch("brain.mission.demo_visual_capture.subprocess.run") as run:
+                    run.return_value = MagicMock(returncode=0)
+                    with patch("brain.mission.demo_visual_capture._png_has_non_uniform_content", return_value=True):
+                        capture._capture_screenshot_frame()
+                    argv = run.call_args.args[0]
+            self.assertIn("-draw_mouse", argv)
+            self.assertEqual(argv[argv.index("-draw_mouse") + 1], "0")
+
     def test_screenshot_skipped_when_gz_gui_not_alive(self) -> None:
         from brain.mission.demo_visual_capture import DemoFlightScreenCapture, _CaptureSession
 

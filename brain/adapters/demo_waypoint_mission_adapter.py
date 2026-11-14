@@ -23,6 +23,7 @@ async def execute_demo_waypoint_mission(
     *,
     action_timeout_s: float = 45.0,
     on_armed: "callable[[], object] | None" = None,
+    on_returning: "callable[[], object] | None" = None,
 ) -> MissionExecution:
     from mavsdk.mission import MissionItem, MissionPlan
 
@@ -79,6 +80,13 @@ async def execute_demo_waypoint_mission(
             mission_timeout_s=config.mission_timeout_s,
             progress_stall_timeout_s=config.progress_stall_timeout_s,
         )
+        if on_returning is not None:
+            try:
+                awaited = on_returning()
+                if asyncio.iscoroutine(awaited):
+                    await asyncio.wait_for(awaited, timeout=10.0)
+            except Exception:
+                logging.getLogger(__name__).warning("demo waypoint on_returning hook failed", exc_info=True)
         execution = adapter._record(execution, MissionPhase.RETURNING)
         await asyncio.wait_for(
             adapter.wait_until_landed(landing_timeout_s),

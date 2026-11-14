@@ -14,19 +14,26 @@ from brain.mission.demo_gz_scene import (
     BAYLANDS_DEMO_SPAWN_WORLD_X_M,
     BAYLANDS_DEMO_SPAWN_WORLD_Y_M,
     CameraFollowEvidence,
+    CameraSetupEvidence,
     DemoGzVisualDirector,
     GzCli,
     apply_camera_follow,
+    apply_overview_camera,
+    compute_auto_overview_pose,
     compute_frame_phase_epochs,
     default_demo_gui_config_path,
+    effective_demo_gz_camera_mode,
     extract_review_frames,
+    mission_overview_world_points,
     parse_follow_offset_env,
     place_waypoint_markers,
+    point_in_overview_frustum,
     resolve_follow_model_name,
     wait_for_service,
     waypoint_world_position,
+    _euler_to_quaternion,
 )
-from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig
+from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig, default_demo_waypoint_loop
 
 
 class WaypointWorldConversionTests(unittest.TestCase):
@@ -140,8 +147,62 @@ class DemoGuiConfigTests(unittest.TestCase):
         self.assertTrue(path.is_file())
         text = path.read_text(encoding="utf-8")
         self.assertIn("1920", text)
-        self.assertIn("197 155 5", text)
+        self.assertIn("194.541 144.541", text)
         self.assertNotIn("EntityTree", text)
+
+
+class OverviewCameraTests(unittest.TestCase):
+    def test_invalid_camera_mode_falls_back_with_error(self) -> None:
+        with patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "tracking"}, clear=False):
+            mode, err = effective_demo_gz_camera_mode()
+        self.assertEqual(mode, "overview")
+        self.assertIsNotNone(err)
+
+    def test_default_demo_plan_fits_overview_frustum(self) -> None:
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=default_demo_waypoint_loop(),
+            max_mission_items=12,
+        )
+        pose = compute_auto_overview_pose(config)
+        orientation = _euler_to_quaternion(pose.roll, pose.pitch, pose.yaw)
+        eye = (pose.x, pose.y, pose.z)
+        points = mission_overview_world_points(config)
+        for index, point in enumerate(points):
+            self.assertTrue(
+                point_in_overview_frustum(point, eye=eye, orientation=orientation),
+                msg=f"point {index} {point} outside overview frustum",
+            )
+
+    def test_overview_calls_move_to_pose_service(self) -> None:
+        calls: list[str] = []
+
+        def fake_run(argv, **_kwargs):  # type: ignore[no-untyped-def]
+            if "-i" in argv:
+                return MagicMock(
+                    stdout="Request: gz.msgs.GUICamera\nReply: gz.msgs.Boolean\n",
+                    stderr="",
+                    returncode=0,
+                )
+            if "-l" in argv:
+                return MagicMock(stdout="/gui/move_to/pose\n", returncode=0)
+            calls.append(argv[argv.index("--req") + 1])
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=default_demo_waypoint_loop(),
+            max_mission_items=12,
+        )
+        pose = compute_auto_overview_pose(config)
+        cli = GzCli(run=fake_run)
+        with patch("brain.mission.demo_gz_scene.gz_binary", return_value="/usr/bin/gz"):
+            with patch("brain.mission.demo_gz_scene.wait_for_service", return_value=True):
+                evidence = apply_overview_camera(cli, pose, pose_source="auto")
+        self.assertTrue(evidence.ok)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("pose:", calls[0])
+        self.assertIn("duration: 1", calls[0])
 
 
 class MarkerPlacementTests(unittest.TestCase):
@@ -167,6 +228,29 @@ class MarkerPlacementTests(unittest.TestCase):
 
 
 class VisualDirectorTests(unittest.TestCase):
+    def test_overview_mode_does_not_call_follow(self) -> None:
+        import asyncio
+
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=default_demo_waypoint_loop(),
+            max_mission_items=12,
+        )
+        director = DemoGzVisualDirector(config=config)
+        with patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "overview"}, clear=False):
+            with patch("brain.mission.demo_gz_scene.wait_for_model_spawned", return_value=True):
+                with patch("brain.mission.demo_gz_scene.apply_camera_follow") as follow:
+                    with patch("brain.mission.demo_gz_scene.apply_overview_camera") as overview:
+                        overview.return_value = CameraSetupEvidence(
+                            camera_mode="overview",
+                            ok=True,
+                            pose_source="auto",
+                        )
+                        asyncio.run(director.after_gui_recording_start())
+        follow.assert_not_called()
+        overview.assert_called_once()
+        self.assertEqual(director.camera_setup_history[-1]["camera_mode"], "overview")
+
     def test_director_records_offset_validation_error(self) -> None:
         import asyncio
 
@@ -176,10 +260,12 @@ class VisualDirectorTests(unittest.TestCase):
             max_mission_items=2,
         )
         director = DemoGzVisualDirector(config=config)
-        with unittest.mock.patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_FOLLOW_OFFSET": "bad"}, clear=False):
-            asyncio.run(director.after_gui_recording_start())
-        self.assertTrue(director.camera_follow_history)
-        self.assertIn("error", director.camera_follow_history[0])
+        env = {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow", "BYTEWOLF_DEMO_GZ_FOLLOW_OFFSET": "bad"}
+        with unittest.mock.patch.dict(os.environ, env, clear=False):
+            with patch("brain.mission.demo_gz_scene.wait_for_model_spawned", return_value=True):
+                asyncio.run(director.after_gui_recording_start())
+        self.assertTrue(director.camera_setup_history)
+        self.assertIn("error", director.camera_setup_history[0])
 
 
 if __name__ == "__main__":

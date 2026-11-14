@@ -375,6 +375,8 @@ class DemoFlightScreenCapture:
         command = [
             ffmpeg,
             "-y",
+            "-draw_mouse",
+            "0",
             "-f",
             "x11grab",
             "-video_size",

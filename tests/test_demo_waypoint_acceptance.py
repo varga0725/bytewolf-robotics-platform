@@ -199,6 +199,19 @@ class AcceptanceEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["overall_status"], "pending_review")
         self.assertEqual(summary["per_run_status"], ["pending_review"])
 
+    def test_summary_dedupes_visual_frame_paths(self) -> None:
+        frame = "frames/a.png"
+        runs = [
+            {
+                "overall_status": "passed",
+                "visual_review_frame_paths": [frame],
+                "screen_capture": {"visual_review_frame_paths": [frame]},
+            }
+        ]
+        summary = consecutive_acceptance_summary(runs, required_runs=1)
+        paths = summary.get("visual_review_frame_paths")
+        self.assertEqual(paths, [frame])
+
     def test_summary_requires_ulog_for_pass(self) -> None:
         runs = [
             {

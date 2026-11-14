@@ -201,9 +201,16 @@ async def run(arguments: argparse.Namespace) -> None:
         try:
             mission_started_epoch = time.time()
             on_armed = None
+            on_returning = None
             if gz_visual_director is not None:
                 on_armed = gz_visual_director.reaffirm_camera_follow_after_arm
-            execution = await execute_demo_waypoint_mission(adapter, config, on_armed=on_armed)
+                on_returning = gz_visual_director.reaffirm_camera_follow_at_rtl
+            execution = await execute_demo_waypoint_mission(
+                adapter,
+                config,
+                on_armed=on_armed,
+                on_returning=on_returning,
+            )
         finally:
             sampler_stop.set()
             await sampler_task
@@ -407,6 +414,12 @@ def _write_acceptance_evidence(
             document["screen_capture_screenshot_gui_alive"] = screen_capture_status.get("screenshot_gui_alive")
             document["screen_capture_screenshot_non_uniform"] = screen_capture_status.get("screenshot_non_uniform")
         for key in (
+            "camera_mode",
+            "camera_pose_used",
+            "pose_source",
+            "camera_setup_steps",
+            "camera_setup_error",
+            "mode_config_error",
             "camera_follow",
             "camera_follow_steps",
             "waypoint_markers",
