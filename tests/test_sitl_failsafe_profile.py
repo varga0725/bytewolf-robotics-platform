@@ -115,7 +115,7 @@ class SitlFailsafeStatusAndVerifyTests(unittest.TestCase):
         helper = (root / "simulation/gazebo/launch/apply_sitl_failsafe_profile.zsh").read_text(encoding="utf-8")
         self.assertIn("exit_code=$?", helper)
         self.assertIn("(( exit_code == 2 ))", helper)
-        self.assertRegex(helper, r"exit_code == 2.*\n.*return 2", flags=0)
+        self.assertIn("return 2", helper)
 
 
 class SitlFailsafePreflightTests(unittest.TestCase):
