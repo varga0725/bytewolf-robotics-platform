@@ -167,6 +167,7 @@ def run_pymavlink_relay(
     write_interval_s: float = 0.2,
     lease_poll_s: float = 0.5,
     link_lease: Path | None = None,
+    allow_link_lease_holder_pids: frozenset[int] | None = None,
     clock: Callable[[], datetime] | None = None,
     mavlink_factory: Callable[[str], object] | None = None,
     should_stop: Callable[[], bool] | None = None,
@@ -208,7 +209,7 @@ def run_pymavlink_relay(
         if now - last_lease_check < lease_poll_s:
             return False
         last_lease_check = now
-        return link_is_leased(link_lease)
+        return link_is_leased(link_lease, allow_holder_pids=allow_link_lease_holder_pids)
 
     def flush_snapshot() -> None:
         nonlocal last_write_monotonic, pending_core_write

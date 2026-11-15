@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import time
@@ -25,6 +26,8 @@ from brain.mission.acceptance_inflight_mavlink import (
 )
 from brain.mission.acceptance_inflight_relay_inspect import relay_uses_loopback_udp_only
 from brain.mission.acceptance_inflight_ports import mavlink_endpoint_for_gcs
+from brain.telemetry.link_lease import default_lease_path
+
 from brain.mission.acceptance_inflight_sitl import (
     COM_DL_LOSS_T_S,
     DATALINK_DLL_HOLD_S,
@@ -50,6 +53,7 @@ from brain.mission.acceptance_inflight_sitl import (
     evaluate_kill_in_air_machine,
     evaluate_low_battery_machine,
     evaluate_relay_inflight_machine,
+    _saw_landed_disarmed,
     profile_notes_for_scenario,
 )
 from brain.mission.commands import WaypointCommand
@@ -492,12 +496,14 @@ async def run_low_battery_scenario(
         recorder.home = home
         await recorder.start()
         await _takeoff_to_altitude(adapter, altitude_m=12.0, action_timeout_s=action_timeout_s)
+        takeoff_complete_s = recorder._elapsed()
+        timings["takeoff_complete_s"] = takeoff_complete_s
         deadline = time.monotonic() + LOW_BATTERY_TIMEOUT_S
         while time.monotonic() < deadline:
             await asyncio.sleep(2.0)
-            if _saw_landed_disarmed_from_transitions(recorder.transitions):
+            if _saw_landed_disarmed(recorder.transitions, after_s=takeoff_complete_s):
                 break
-        if not _saw_landed_disarmed_from_transitions(recorder.transitions):
+        if not _saw_landed_disarmed(recorder.transitions, after_s=takeoff_complete_s):
             await _wait_landed_disarmed(
                 adapter,
                 landing_timeout_s=LANDING_TIMEOUT_S,
@@ -515,14 +521,12 @@ async def run_low_battery_scenario(
     return recorder.transitions, timings, {}
 
 
-def _saw_landed_disarmed_from_transitions(transitions: list[VehicleTransition]) -> bool:
-    saw_not_in_air = False
-    for item in transitions:
-        if item.in_air is False:
-            saw_not_in_air = True
-        if saw_not_in_air and item.armed is False:
-            return True
-    return False
+def _saw_landed_disarmed_from_transitions(
+    transitions: list[VehicleTransition],
+    *,
+    after_s: float = 0.0,
+) -> bool:
+    return _saw_landed_disarmed(transitions, after_s=after_s)
 
 
 async def run_relay_inflight_scenario(
@@ -536,6 +540,7 @@ async def run_relay_inflight_scenario(
 ) -> tuple[list[VehicleTransition], dict[str, float], dict[str, Any], list[RelaySample]]:
     require_loopback_udpin_endpoint(mavlink_endpoint)
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    lease_path = default_lease_path()
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -547,6 +552,10 @@ async def run_relay_inflight_scenario(
             mavlink_endpoint,
             "--snapshot-file",
             str(snapshot_path),
+            "--link-lease",
+            str(lease_path),
+            "--allow-link-lease-holder-pid",
+            str(os.getpid()),
         ],
         cwd=Path(__file__).resolve().parents[2],
     )
@@ -557,7 +566,9 @@ async def run_relay_inflight_scenario(
     extra: dict[str, Any] = {"relay_max_age_s": relay_max_age_s}
     origin = time.monotonic()
     try:
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(0.5)
+        relay_samples.append(_read_relay_sample(snapshot_path, origin))
+        await asyncio.sleep(1.0)
         loopback_ok = relay_uses_loopback_udp_only(proc, ingest_port=ingest_port)
         extra["relay_loopback_udp_only"] = loopback_ok
         extra["relay_loopback_check_performed"] = True
@@ -566,6 +577,8 @@ async def run_relay_inflight_scenario(
         recorder.home = home
         await recorder.start()
         await _takeoff_to_altitude(adapter, altitude_m=10.0, action_timeout_s=action_timeout_s)
+        takeoff_complete_s = recorder._elapsed()
+        timings["takeoff_complete_s"] = takeoff_complete_s
         hover_deadline = time.monotonic() + 10.0
         while time.monotonic() < hover_deadline:
             relay_samples.append(_read_relay_sample(snapshot_path, origin))
@@ -575,7 +588,7 @@ async def run_relay_inflight_scenario(
         while time.monotonic() < origin + 25.0:
             relay_samples.append(_read_relay_sample(snapshot_path, origin))
             await asyncio.sleep(0.4)
-            if _saw_landed_disarmed_from_transitions(recorder.transitions):
+            if _saw_landed_disarmed_from_transitions(recorder.transitions, after_s=takeoff_complete_s):
                 break
         await _wait_landed_disarmed(adapter, landing_timeout_s=LANDING_TIMEOUT_S, action_timeout_s=action_timeout_s)
         timings["flight_complete_s"] = time.monotonic() - origin

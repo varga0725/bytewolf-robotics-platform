@@ -82,6 +82,7 @@ class ScenarioStateMachineTests(unittest.TestCase):
 
     def test_geofence_passes_with_breach_signal(self) -> None:
         transitions = [
+            VehicleTransition(0.1, False, False, "auto"),
             VehicleTransition(1.0, True, True, "auto", horizontal_distance_from_home_m=80.0, relative_altitude_m=15.0),
             VehicleTransition(8.0, True, True, "return_to_launch", horizontal_distance_from_home_m=105.0),
             VehicleTransition(50.0, False, False, "auto", horizontal_distance_from_home_m=2.0),
@@ -89,6 +90,15 @@ class ScenarioStateMachineTests(unittest.TestCase):
         ]
         ok, reason = evaluate_geofence_machine(transitions, geofence_breach_at_s=5.0)
         self.assertTrue(ok, reason)
+
+    def test_geofence_does_not_accept_preflight_ground_as_landing(self) -> None:
+        transitions = [
+            VehicleTransition(0.0, False, False, "auto"),
+            VehicleTransition(8.0, True, True, "return_to_launch", horizontal_distance_from_home_m=105.0),
+        ]
+        ok, reason = evaluate_geofence_machine(transitions, geofence_breach_at_s=5.0)
+        self.assertFalse(ok)
+        self.assertIn("land", reason or "")
 
     def test_geofence_fails_without_breach_signal(self) -> None:
         transitions = [
@@ -115,8 +125,21 @@ class ScenarioStateMachineTests(unittest.TestCase):
         ok, _ = evaluate_kill_in_air_machine(disarm_outcome="no_ack", kill_to_disarm_s=0.2)
         self.assertFalse(ok)
 
+    def test_low_battery_ignores_preflight_ground_for_landing(self) -> None:
+        transitions = [
+            VehicleTransition(0.0, False, False, "auto", battery_percent=80.0),
+            VehicleTransition(10.0, True, True, "auto", battery_percent=20.0),
+            VehicleTransition(40.0, True, True, "auto", battery_percent=14.0),
+            VehicleTransition(90.0, True, True, "return_to_launch", battery_percent=7.5),
+            VehicleTransition(120.0, True, True, "auto", battery_percent=4.5),
+        ]
+        ok, reason = evaluate_low_battery_machine(transitions)
+        self.assertFalse(ok)
+        self.assertIn("land", reason or "")
+
     def test_low_battery_passes_ordered(self) -> None:
         transitions = [
+            VehicleTransition(0.0, False, False, "auto", battery_percent=90.0),
             VehicleTransition(10.0, True, True, "auto", battery_percent=20.0),
             VehicleTransition(40.0, True, True, "auto", battery_percent=14.0),
             VehicleTransition(90.0, True, True, "return_to_launch", battery_percent=7.5),

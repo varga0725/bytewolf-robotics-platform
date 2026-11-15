@@ -214,10 +214,20 @@ def _saw_rtl(transitions: list[VehicleTransition], after_s: float = 0.0) -> bool
     return False
 
 
-def _saw_landed_disarmed(transitions: list[VehicleTransition], after_s: float = 0.0) -> bool:
+def _saw_landed_disarmed(
+    transitions: list[VehicleTransition],
+    after_s: float = 0.0,
+    *,
+    require_prior_airborne: bool = True,
+) -> bool:
+    saw_airborne = not require_prior_airborne
     saw_not_in_air = False
     for item in transitions:
         if item.monotonic_s < after_s:
+            continue
+        if require_prior_airborne and item.in_air is True:
+            saw_airborne = True
+        if not saw_airborne:
             continue
         if item.in_air is False:
             saw_not_in_air = True
@@ -276,10 +286,20 @@ def evaluate_datalink_loss_machine(
     return True, None
 
 
-def _first_landed_disarmed_at(transitions: list[VehicleTransition], *, after_s: float) -> float | None:
+def _first_landed_disarmed_at(
+    transitions: list[VehicleTransition],
+    *,
+    after_s: float,
+    require_prior_airborne: bool = True,
+) -> float | None:
+    saw_airborne = not require_prior_airborne
     saw_not_in_air = False
     for item in transitions:
         if item.monotonic_s < after_s:
+            continue
+        if require_prior_airborne and item.in_air is True:
+            saw_airborne = True
+        if not saw_airborne:
             continue
         if item.in_air is False:
             saw_not_in_air = True
@@ -324,7 +344,7 @@ def evaluate_geofence_machine(
             False,
             f"Relative altitude {peak_ver:.1f} m exceeded fence {gf_max_ver_m} m + {ver_tolerance_m} m tolerance.",
         )
-    if not _saw_landed_disarmed(transitions):
+    if not _saw_landed_disarmed(transitions, after_s=geofence_breach_at_s):
         return False, "Vehicle did not land and disarm after geofence RTL."
     return True, None
 
