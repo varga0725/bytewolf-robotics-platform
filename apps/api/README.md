@@ -27,6 +27,12 @@ a session-bound pending plan, and the browser must explicitly approve that
 exact plan before the existing safety-gated executor can connect to SITL. The
 public site has no telemetry, control, approval, or authentication surface.
 
+Telemetry ingest and SITL mission spawn accept only
+`udpin://127.0.0.1:<port>` or `udpout://127.0.0.1:<port>` (`connection_policy`).
+DNS names such as `localhost`, other 127.0.0.0/8 addresses, and bind-all
+`0.0.0.0` are rejected. `BYTEWOLF_PX4_ENDPOINT` is validated when the API
+starts (`create_app`); an invalid value fails closed before routes are served.
+
 ## API boundary
 
 - `GET /api/v1/telemetry` — read-only flight state.

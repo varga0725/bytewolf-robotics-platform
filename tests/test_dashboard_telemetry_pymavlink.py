@@ -20,8 +20,9 @@ class LoopbackEndpointTests(unittest.TestCase):
     def test_loopback_udpin_is_accepted(self) -> None:
         require_loopback_udpin_endpoint("udpin://127.0.0.1:14540")
 
-    def test_localhost_udpin_is_accepted(self) -> None:
-        require_loopback_udpin_endpoint("udpin://localhost:14540")
+    def test_localhost_udpin_is_rejected(self) -> None:
+        with self.assertRaises(LoopbackEndpointError):
+            require_loopback_udpin_endpoint("udpin://localhost:14540")
 
     def test_documentation_range_host_is_rejected(self) -> None:
         with self.assertRaises(LoopbackEndpointError):
