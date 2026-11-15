@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { CameraPage } from "./CameraPage";
 import { ChatPage } from "./ChatPage";
+import { ControlRoomModeBadge, type ControlRoomMode } from "./ControlRoomModeBadge";
+import { loadControlRoomCapabilities } from "./capabilities";
 import { AnalyticsPage } from "./AnalyticsPage";
 import { DeveloperPage } from "./DeveloperPage";
 import { EventsPage } from "./EventsPage";
@@ -55,12 +57,26 @@ export function App() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [quickNavOpen, setQuickNavOpen] = useState(false);
   const [quickNavQuery, setQuickNavQuery] = useState("");
+  const [controlRoomMode, setControlRoomMode] = useState<ControlRoomMode>("ground");
+  const [commandsEnabled, setCommandsEnabled] = useState(false);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const quickNavTriggerRef = useRef<HTMLButtonElement | null>(null);
   const quickNavSearchRef = useRef<HTMLInputElement | null>(null);
   const quickNavDialogRef = useRef<HTMLElement | null>(null);
   const quickNavReturnFocusRef = useRef<HTMLElement | null>(null);
   const restoreQuickNavFocusRef = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    void loadControlRoomCapabilities().then((capabilities) => {
+      if (!active) return;
+      setControlRoomMode(capabilities.mode);
+      setCommandsEnabled(capabilities.commands_enabled);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -127,8 +143,8 @@ export function App() {
     : activeView === "robots" ? <RobotsPage />
     : activeView === "camera" ? <CameraPage />
     : activeView === "perception" ? <PerceptionPage />
-    : activeView === "chat" ? <ChatPage />
-      : activeView === "mission" ? <MissionPage />
+    : activeView === "chat" ? <ChatPage commandsEnabled={commandsEnabled} />
+      : activeView === "mission" ? <MissionPage commandsEnabled={commandsEnabled} />
         : activeView === "memory" ? <MemoryPage />
           : activeView === "knowledge" ? <KnowledgePage />
           : activeView === "world" ? <WorldPage />
@@ -264,6 +280,7 @@ export function App() {
         <p className={`connection connection--${connection.state}`} aria-live="polite">
           {connection.label}
         </p>
+        <ControlRoomModeBadge mode={controlRoomMode} commandsEnabled={commandsEnabled} />
         <button
           ref={quickNavTriggerRef}
           type="button"

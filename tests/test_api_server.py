@@ -27,10 +27,18 @@ class ApiServerTests(unittest.TestCase):
             review=lambda _text: "plan-1",
             execute=lambda plan: self.executed.append(plan) or "submitted",
         )
+        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        self._commands_patch.start()
         self.client = TestClient(create_app(self.telemetry, gateway=gateway))
 
     def tearDown(self) -> None:
+        self._commands_patch.stop()
         self.directory.cleanup()
+
+    def test_capabilities_default_to_ground_control_room(self) -> None:
+        response = self.client.get("/api/v1/capabilities")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"mode": "ground", "commands_enabled": False})
 
     def test_public_root_and_telemetry_are_available(self) -> None:
         public_site = self.client.get("/")
@@ -104,9 +112,9 @@ class ApiServerTests(unittest.TestCase):
             review=lambda _text: (_ for _ in ()).throw(RuntimeError("review failed")),
             execute=lambda _plan: "submitted",
         )
-        client = TestClient(create_app(self.telemetry, gateway=gateway))
-
-        response = client.post("/api/v1/chat", headers={"X-ByteWolf-Session": SESSION}, json={"text": "repülj"})
+        with patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False):
+            client = TestClient(create_app(self.telemetry, gateway=gateway))
+            response = client.post("/api/v1/chat", headers={"X-ByteWolf-Session": SESSION}, json={"text": "repülj"})
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.json()["detail"], "review failed")
@@ -165,7 +173,11 @@ class ApiServerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "completed")
 
-    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"})
+    @patch.dict(
+        os.environ,
+        {"BYTEWOLF_COMMANDS_ENABLED": "true", "BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"},
+        clear=False,
+    )
     def test_chat_requires_approval_before_execution(self) -> None:
         headers = {"X-ByteWolf-Session": SESSION}
         proposed = self.client.post("/api/v1/chat", headers=headers, json={"text": "repülj"})

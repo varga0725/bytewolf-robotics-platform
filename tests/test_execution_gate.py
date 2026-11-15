@@ -53,20 +53,23 @@ class ExecutionGateUnitTests(unittest.TestCase):
 class ExecutionGateApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = TemporaryDirectory()
-        telemetry = Path(self.directory.name) / "telemetry.json"
-        telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
+        self.telemetry = Path(self.directory.name) / "telemetry.json"
+        self.telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
         self.executed: list[str] = []
         self.gateway = DashboardCommandGateway(
             converse=lambda _session, _text: AgentReply("Terv", True),
             review=lambda _text: "plan-quarantine",
             execute=lambda plan: self.executed.append(plan) or "submitted",
         )
-        self.client = TestClient(create_app(telemetry, gateway=self.gateway))
+        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        self._commands_patch.start()
+        self.client = TestClient(create_app(self.telemetry, gateway=self.gateway))
 
     def tearDown(self) -> None:
+        self._commands_patch.stop()
         self.directory.cleanup()
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
     def test_plan_approval_refuses_execution_when_quarantined(self) -> None:
         headers = {"X-ByteWolf-Session": SESSION}
         proposed = self.client.post("/api/v1/chat", headers=headers, json={"text": "repülj"})
@@ -103,7 +106,11 @@ class ExecutionGateApiTests(unittest.TestCase):
         self.assertTrue(response.json()["approval_required"])
         self.assertEqual(self.executed, [])
 
-    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"}, clear=False)
+    @patch.dict(
+        os.environ,
+        {"BYTEWOLF_COMMANDS_ENABLED": "true", "BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"},
+        clear=False,
+    )
     def test_plan_approval_executes_when_the_gate_is_open(self) -> None:
         headers = {"X-ByteWolf-Session": SESSION}
         plan_id = self.client.post("/api/v1/chat", headers=headers, json={"text": "repülj"}).json()["plan_id"]

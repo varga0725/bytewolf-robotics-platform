@@ -35,7 +35,11 @@ function isOccupancyCell(value: unknown): value is OccupancyCell {
 //: which is an envelope limit and not a place the simulated world extends to.
 const MAP_RANGES_M = [50, 200, 500] as const;
 
-export function MissionPage() {
+type MissionPageProps = {
+  commandsEnabled: boolean;
+};
+
+export function MissionPage({ commandsEnabled }: MissionPageProps) {
   const [envelope, setEnvelope] = useState<Envelope | null>(null);
   const [north, setNorth] = useState("5");
   const [east, setEast] = useState("0");
@@ -205,7 +209,11 @@ export function MissionPage() {
           <li>2. SafetyGate ellenőrizte</li>
           <li>3. Operátori jóváhagyás szükséges</li>
         </ol>
-        <p className="muted">A térképi kijelölés és a terv-ellenőrzés nem ad ki repülési parancsot. Csak az ellenőrzött tervhez tartozó, külön jóváhagyás kezdeményezhet indítást.</p>
+        <p className="muted">
+          {commandsEnabled
+            ? "A térképi kijelölés és a terv-ellenőrzés nem ad ki repülési parancsot. Csak az ellenőrzött tervhez tartozó, külön jóváhagyás kezdeményezhet indítást."
+            : "Ground Control Room mód: a tervkészítés és a jóváhagyás nem érhető el. A térkép és a korlátok csak megfigyelésre szolgálnak."}
+        </p>
       </section>
       {envelope && <p className="envelope">Aktív korlát: max. {envelope.max_altitude_m} m magasság · {envelope.max_radius_m} m sugár · indításhoz min. {envelope.minimum_battery_percent_to_start}% akkumulátor.</p>}
       <form className="mission-form" onSubmit={review}>
@@ -244,9 +252,11 @@ export function MissionPage() {
         <label>Magasság (m)<input type="number" min="0" step="0.1" value={altitude} onChange={(event) => setAltitude(event.target.value)} /></label>
         {kind === "survey" && <><label>Sugár (m)<input aria-label="Sugár (m)" type="number" min="2" value={radius} onChange={(event) => setRadius(event.target.value)} /></label><label>Vonal-köz (m)<input type="number" min="1" max="15" value={spacing} onChange={(event) => setSpacing(event.target.value)} /></label></>}
         <label className="wide">Cél<input value={goal} maxLength={240} onChange={(event) => setGoal(event.target.value)} /></label>
-        <button className="primary" disabled={busy || !envelope}>{busy ? "Ellenőrzés…" : "Terv ellenőrzése"}</button>
+        {commandsEnabled && (
+          <button className="primary" disabled={busy || !envelope}>{busy ? "Ellenőrzés…" : "Terv ellenőrzése"}</button>
+        )}
       </form>
-      {plan && <div className="approval-panel" aria-labelledby="approval-title"><p className="eyebrow">SAFETYGATE-BIZONYÍTÉK · JÓVÁHAGYÁSRA VÁR</p><strong id="approval-title">Ellenőrzött terv: {plan.summary}</strong><p>{plan.goal}</p>{plan.waypoints && <p className="muted">Útvonal-bizonyíték: {plan.waypoints.length} SafetyGate által összeállított waypoint.</p>}<h3>Tervezett lépések</h3><ol>{plan.steps.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol><p className="muted">Ez a terv még nem indult el. A jóváhagyás ehhez a tervazonosítóhoz kötött, és visszavonható az indítás előtt.</p><button className="primary" type="button" onClick={() => void decide("approve")} disabled={busy}>Kifejezett jóváhagyás és indítás</button><button type="button" onClick={() => void decide("cancel")} disabled={busy}>Terv visszavonása</button></div>}
+      {commandsEnabled && plan && <div className="approval-panel" aria-labelledby="approval-title"><p className="eyebrow">SAFETYGATE-BIZONYÍTÉK · JÓVÁHAGYÁSRA VÁR</p><strong id="approval-title">Ellenőrzött terv: {plan.summary}</strong><p>{plan.goal}</p>{plan.waypoints && <p className="muted">Útvonal-bizonyíték: {plan.waypoints.length} SafetyGate által összeállított waypoint.</p>}<h3>Tervezett lépések</h3><ol>{plan.steps.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol><p className="muted">Ez a terv még nem indult el. A jóváhagyás ehhez a tervazonosítóhoz kötött, és visszavonható az indítás előtt.</p><button className="primary" type="button" onClick={() => void decide("approve")} disabled={busy}>Kifejezett jóváhagyás és indítás</button><button type="button" onClick={() => void decide("cancel")} disabled={busy}>Terv visszavonása</button></div>}
       <p className="muted" role="status">{status}</p>
       <section className="mission-events" aria-labelledby="mission-events-title"><p className="eyebrow">HELYI OPERÁTORI NAPLÓ</p><h3 id="mission-events-title">Küldetési események</h3>{events.length === 0 ? <p className="muted">Még nincs esemény ebben a böngésző-sessionben.</p> : <ol>{events.map((event, index) => <li key={`${event}-${index}`}>{event}</li>)}</ol>}</section>
     </section>
