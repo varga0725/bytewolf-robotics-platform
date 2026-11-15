@@ -68,6 +68,9 @@ def apply_mavlink_message(
 
     if message_type == "SYS_STATUS":
         remaining = int(message.battery_remaining)
+        # Unknown/out-of-range PX4 values must not replace the last good read; the
+        # dashboard snapshot has no separate battery freshness field, so refreshing
+        # captured_at with a stale remaining_percent would lie to the API gateway.
         if remaining < 0 or remaining > 100:
             return state
         return state.with_event(
@@ -80,6 +83,7 @@ def apply_mavlink_message(
 
     if message_type == "BATTERY_STATUS":
         remaining = int(message.battery_remaining)
+        # Same contract rule as SYS_STATUS (see above).
         if remaining < 0 or remaining > 100:
             return state
         return state.with_event(
@@ -114,6 +118,20 @@ def apply_mavlink_message(
         return state.with_event(event)
 
     return state
+
+
+def core_message_pending_write(
+    message_type: str,
+    before: DashboardTelemetryState,
+    after: DashboardTelemetryState,
+) -> bool:
+    """Whether an inbound MAVLink message should schedule a throttled core snapshot write."""
+
+    if message_type not in _CORE_MESSAGE_TYPES:
+        return False
+    if message_type in ("SYS_STATUS", "BATTERY_STATUS"):
+        return before.battery is not after.battery
+    return True
 
 
 def core_snapshot_fingerprint(state: DashboardTelemetryState) -> tuple[float, ...] | None:
@@ -213,8 +231,9 @@ def run_pymavlink_relay(
             message = mavlink.recv_match(blocking=True, timeout=recv_timeout_s)
             now = monotonic()
             if message is not None:
+                before = state
                 state = apply_mavlink_message(state, message, observed_at=clock())
-                if message.get_type() in _CORE_MESSAGE_TYPES:
+                if core_message_pending_write(message.get_type(), before, state):
                     pending_core_write = True
                 flush_snapshot()
                 continue
@@ -229,6 +248,7 @@ def run_pymavlink_relay(
 
 __all__ = [
     "apply_mavlink_message",
+    "core_message_pending_write",
     "core_snapshot_fingerprint",
     "run_pymavlink_relay",
 ]
