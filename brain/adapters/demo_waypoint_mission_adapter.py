@@ -8,6 +8,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from brain.adapters.mavsdk_adapter import arm_from_ground
 from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig
 from brain.mission.execution import MissionExecution, MissionPhase
 from brain.mission.sitl_target import require_px4_sitl_indication
@@ -61,7 +62,7 @@ async def execute_demo_waypoint_mission(
         adapter._in_air_tracker_ready_before_arm = await adapter._wait_for_in_air_tracker_subscription(
             min(3.0, action_timeout_s)
         )
-        await asyncio.wait_for(adapter._drone.action.arm(), timeout=action_timeout_s)
+        await asyncio.wait_for(arm_from_ground(adapter._drone), timeout=action_timeout_s)
         armed = True
         adapter._demo_armed_at_epoch = time.time()
         if on_armed is not None:
