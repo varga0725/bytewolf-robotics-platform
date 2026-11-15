@@ -131,9 +131,12 @@ class PointMissionApiTests(unittest.TestCase):
             review=lambda _text: "chat-plan",
             execute=lambda plan: self.executed.append(plan) or "submitted",
         )
+        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        self._commands_patch.start()
         self.client = TestClient(create_app(self.root / "telemetry.json", gateway=self.gateway))
 
     def tearDown(self) -> None:
+        self._commands_patch.stop()
         self.directory.cleanup()
 
     def _pick(self, **overrides):
@@ -151,7 +154,11 @@ class PointMissionApiTests(unittest.TestCase):
         self.assertEqual(response.json()["steps"], ["TAKEOFF", "GOTO_LOCAL", "HOLD", "RTL"])
         self.assertEqual(self.executed, [], "reviewing is not executing")
 
-    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"})
+    @patch.dict(
+        os.environ,
+        {"BYTEWOLF_COMMANDS_ENABLED": "true", "BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"},
+        clear=False,
+    )
     def test_the_reviewed_point_can_then_be_approved_exactly_once(self) -> None:
         plan_id = self._pick().json()["plan_id"]
 

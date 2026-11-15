@@ -35,8 +35,9 @@ public site has no telemetry, control, approval, or authentication surface.
   and separate personal/world knowledge context. `/knowledge` is session-bound.
 - `GET /api/v1/missions/replays`, `/missions/replays/{run_id}` — validated,
   read-only mission audit replay; these endpoints never contact a vehicle.
-- `POST /api/v1/chat` — conversational request; may create a pending plan.
-- `POST /api/v1/plans/approve`, `/cancel` — operate only on that browser
+- `GET /api/v1/capabilities` — read-only Ground vs SITL Console mode (`commands_enabled`).
+- `POST /api/v1/chat` — conversational request; may create a pending plan only when `BYTEWOLF_COMMANDS_ENABLED` is exactly `true` (flight intent only).
+- `POST /api/v1/plans/approve`, `/cancel` — registered only when `BYTEWOLF_COMMANDS_ENABLED` is exactly `true`; operate only on that browser
   session's pending plan.
 
 Validate the Control Room with `npm run test`, `npm run test:e2e`, and

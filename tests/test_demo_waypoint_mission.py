@@ -77,9 +77,12 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
         self.directory = TemporaryDirectory()
         telemetry = Path(self.directory.name) / "telemetry.json"
         telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
+        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        self._commands_patch.start()
         self.client = TestClient(create_app(telemetry))
 
     def tearDown(self) -> None:
+        self._commands_patch.stop()
         self.directory.cleanup()
 
     def test_missing_session_header_is_rejected(self) -> None:
@@ -96,7 +99,11 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
         self.assertEqual(body["mission_type"], MISSION_TYPE)
         self.assertTrue(body["approval_required"])
 
-    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"}, clear=False)
+    @patch.dict(
+        os.environ,
+        {"BYTEWOLF_COMMANDS_ENABLED": "true", "BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"},
+        clear=False,
+    )
     @patch("apps.gateway.plan_execution.subprocess.Popen")
     @patch("apps.gateway.plan_execution.wait_for_free_link", return_value=True)
     @patch(

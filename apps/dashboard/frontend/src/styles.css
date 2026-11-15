@@ -228,6 +228,23 @@ h3 { color: var(--color-text-subtle); font-size: 1rem; font-weight: 650; line-he
 .connection--stale { border-color: var(--color-status-stale-border); color: var(--color-status-stale); background: var(--color-status-stale-surface); }
 .connection--unavailable { border-color: var(--color-status-danger-border); color: var(--color-status-danger); background: var(--color-status-danger-surface); }
 
+.control-room-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 8px 12px;
+  min-width: 12rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+.control-room-mode--ground { border-color: var(--color-status-stale-border); }
+.control-room-mode--sitl_console { border-color: var(--color-status-ready-border); }
+.control-room-mode .eyebrow { margin: 0; }
+.control-room-mode strong { font-size: .84rem; line-height: 1.2; }
+.control-room-mode span:last-child { color: var(--color-muted); font-size: .75rem; line-height: 1.3; }
+
 .operation-status-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

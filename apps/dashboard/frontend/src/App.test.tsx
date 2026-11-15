@@ -3,6 +3,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
+function controlRoomFetch(body: object) {
+  return vi.fn((input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
+    if (url.includes("/api/v1/capabilities")) {
+      return Promise.resolve(new Response(JSON.stringify({ mode: "ground", commands_enabled: false }), { status: 200 }));
+    }
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+  });
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -11,10 +21,11 @@ afterEach(() => {
 describe("App telemetry status", () => {
   it("accepts bounded browser/server clock skew", async () => {
     const capturedAt = new Date(Date.now() + 2_000).toISOString();
-    vi.stubGlobal("fetch", vi.fn(() =>         Promise.resolve(new Response(JSON.stringify({
+    vi.stubGlobal("fetch", controlRoomFetch({
       position: { latitude_deg: 47.4979, longitude_deg: 19.0402, absolute_altitude_m: 125.5, relative_altitude_m: 0 },
-      battery_percent: 100, in_air: false, heading_deg: 0, captured_at: capturedAt, target_class: "sitl_verified",
-    }), { status: 200 }))));
+      battery_percent: 100, in_air: false, heading_deg: 0, captured_at: capturedAt,
+      target_class: "sitl_verified",
+    }));
 
     render(<App />);
     expect(await screen.findByRole("region", { name: "Élő telemetria állapot" })).toHaveTextContent("Telemetria kapcsolódva");
@@ -22,29 +33,19 @@ describe("App telemetry status", () => {
 
   it("announces a fresh sample with its capture time and age", async () => {
     const capturedAt = new Date(Date.now() - 5_000).toISOString();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({
-              position: {
-                latitude_deg: 47.4979,
-                longitude_deg: 19.0402,
-                absolute_altitude_m: 125.5,
-                relative_altitude_m: 12.3,
-              },
-              battery_percent: 74,
-              in_air: false,
-              heading_deg: 271.4,
-              captured_at: capturedAt,
-              target_class: "sitl_verified",
-            }),
-            { status: 200 },
-          ),
-        ),
-      ),
-    );
+    vi.stubGlobal("fetch", controlRoomFetch({
+      position: {
+        latitude_deg: 47.4979,
+        longitude_deg: 19.0402,
+        absolute_altitude_m: 125.5,
+        relative_altitude_m: 12.3,
+      },
+      battery_percent: 74,
+      in_air: false,
+      heading_deg: 271.4,
+      captured_at: capturedAt,
+      target_class: "sitl_verified",
+    }));
 
     render(<App />);
 
