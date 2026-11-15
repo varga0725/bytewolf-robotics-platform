@@ -328,7 +328,18 @@ class _Home:
     absolute_altitude_m = 123.0
 
 
+async def _after_home(*values: object):
+    # Let the home stream run first, so home reaches disk only via a later core write.
+    for _ in range(5):
+        await asyncio.sleep(0)
+    for value in values:
+        yield value
+
+
 class _HomeTelemetry(Telemetry):
+    def position(self):
+        return _after_home(Position())
+
     def home(self):
         return samples(_Home())
 

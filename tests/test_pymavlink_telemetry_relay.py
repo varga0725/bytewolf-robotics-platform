@@ -72,7 +72,8 @@ class PymavlinkMappingTests(unittest.TestCase):
             observed_at=now,
         )
         self.assertIsNotNone(accepted.home)
-        self.assertTrue(core_message_pending_write("HOME_POSITION", locked, accepted))
+        # Home alone must not refresh captured_at; it is written with the next core message.
+        self.assertFalse(core_message_pending_write("HOME_POSITION", locked, accepted))
 
     def test_messages_build_the_dashboard_snapshot_contract(self) -> None:
         # sysid comes from the autopilot HEARTBEAT; HOME_POSITION is accepted only from it.

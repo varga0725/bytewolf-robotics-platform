@@ -39,7 +39,6 @@ _CORE_MESSAGE_TYPES = frozenset(
         "SYS_STATUS",
         "BATTERY_STATUS",
         "EXTENDED_SYS_STATE",
-        "HOME_POSITION",
     }
 )
 # MAV_COMP_ID_AUTOPILOT1 — vehicle heartbeat, not companion/GCS component heartbeats.
@@ -240,12 +239,12 @@ def core_message_pending_write(
 ) -> bool:
     """Whether an inbound MAVLink message should schedule a throttled core snapshot write."""
 
+    # HOME_POSITION is not core: writing on it would advance captured_at while
+    # position/battery/in-air are stale. Home rides along with the next core write.
     if message_type not in _CORE_MESSAGE_TYPES:
         return False
     if message_type in ("SYS_STATUS", "BATTERY_STATUS"):
         return before.battery is not after.battery
-    if message_type == "HOME_POSITION":
-        return before.home is not after.home
     return True
 
 

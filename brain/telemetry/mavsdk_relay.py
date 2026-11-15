@@ -314,17 +314,12 @@ class MavsdkTelemetryRelay:
                 continue
             if not (isfinite(altitude) and -90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0):
                 continue
-            previous = self._state.home
+            # No write here: a home-only write would advance captured_at while core
+            # telemetry is stale. The next core write carries home to disk.
             self._state = replace(
                 self._state,
                 home=DashboardHomePosition(latitude, longitude, altitude, observed_at=self._clock()),
             )
-            unchanged = previous is not None and (
-                previous.latitude_deg, previous.longitude_deg, previous.absolute_altitude_m
-            ) == (latitude, longitude, altitude)
-            if self._state.complete and not unchanged:
-                document = self._state.as_dashboard_document(self._clock())
-                await asyncio.to_thread(write_atomic_json, self._destination, document)
 
     def _stream_tasks(self) -> tuple[tuple[str, asyncio.Task[None], bool], ...]:
         streams: list[tuple[str, AsyncIterator[object], bool]] = [
