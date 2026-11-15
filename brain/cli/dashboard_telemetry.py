@@ -18,15 +18,20 @@ import argparse
 import asyncio
 from collections.abc import Sequence
 from pathlib import Path
+import sys
 import time
 
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
 from brain.safety.deployment import add_deployment_arguments, authorize_readonly_connection
 from brain.telemetry.link_lease import default_lease_path, link_is_leased
+from brain.telemetry.loopback_endpoint import LoopbackEndpointError, require_loopback_udpin_endpoint
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
+from brain.telemetry.pymavlink_relay import run_pymavlink_relay
 
 
 DEFAULT_SNAPSHOT_PATH = Path("simulation/artifacts/dashboard/live-telemetry.json")
+DEFAULT_BACKEND = "pymavlink"
+BACKEND_CHOICES = ("pymavlink", "mavsdk")
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -34,8 +39,29 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         description="Stream PX4 telemetry into the dashboard snapshot. Reads only; commands nothing.",
     )
     parser.add_argument("--endpoint", default="udpin://127.0.0.1:14540")
+    parser.add_argument(
+        "--backend",
+        choices=BACKEND_CHOICES,
+        default=DEFAULT_BACKEND,
+        help=(
+            "Telemetry transport. pymavlink (default) is passive UDP ingest on loopback only. "
+            "mavsdk spawns mavsdk_server, which always exposes an insecure gRPC API on 0.0.0.0 "
+            "(see docs/mavsdk-server-grpc-listen-address.md)."
+        ),
+    )
+    parser.add_argument(
+        "--write-interval",
+        type=float,
+        default=0.2,
+        help="Minimum seconds between snapshot disk writes for core telemetry (default 0.2).",
+    )
     parser.add_argument("--connection-timeout", type=float, default=30.0)
-    parser.add_argument("--mavsdk-server-port", type=int, default=50051)
+    parser.add_argument(
+        "--mavsdk-server-port",
+        type=int,
+        default=50051,
+        help="gRPC port when --backend mavsdk (server still listens on all interfaces).",
+    )
     parser.add_argument("--snapshot-file", type=Path, default=DEFAULT_SNAPSHOT_PATH)
     parser.add_argument(
         "--link-lease", type=Path, default=default_lease_path(),
@@ -51,15 +77,71 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     return parser.parse_args(arguments)
 
 
-async def run(arguments: argparse.Namespace) -> None:
-    """Stream telemetry until stopped, standing aside while a mission flies.
+def main(arguments: Sequence[str] | None = None) -> None:
+    parsed = parse_arguments(arguments)
+    try:
+        if parsed.backend == "pymavlink":
+            require_loopback_udpin_endpoint(parsed.endpoint)
+        authorize_readonly_connection(parsed.deployment_mode, parsed.endpoint)
+        if parsed.backend == "pymavlink":
+            run_pymavlink_bridge(parsed)
+            return
+        asyncio.run(run_mavsdk(parsed))
+    except LoopbackEndpointError as error:
+        print(f"{error}", file=sys.stderr)
+        sys.exit(2)
+    except KeyboardInterrupt:  # pragma: no cover - interrupt path
+        print("Telemetry bridge stopped.")
 
-    Only one MAVSDK server can bind the PX4 endpoint. Rather than race a
-    mission for it — which the mission loses, silently — this waits out any
-    live lease and reconnects afterwards. The flying CLI writes the same
-    snapshot in the meantime, so the dashboard never goes dark.
-    """
-    authorize_readonly_connection(arguments.deployment_mode, arguments.endpoint)
+
+def run_pymavlink_bridge(arguments: argparse.Namespace) -> None:
+    """Passive pymavlink relay with the same lease yield semantics as MAVSDK."""
+
+    deadline = None if arguments.seconds is None else time.monotonic() + arguments.seconds
+    announced_wait = False
+    while True:
+        if link_is_leased(arguments.link_lease):
+            if not announced_wait:
+                print("A mission holds the PX4 link; the bridge is standing by.")
+                announced_wait = True
+            if deadline is not None and time.monotonic() >= deadline:
+                return
+            time.sleep(1.0)
+            continue
+        announced_wait = False
+        remaining = None if deadline is None else max(deadline - time.monotonic(), 0.0)
+        if remaining == 0.0:
+            return
+        try:
+            print(f"Connecting to PX4 at {arguments.endpoint} (pymavlink, read-only)...")
+            print(f"Streaming telemetry into {arguments.snapshot_file}. Press Ctrl-C to stop.")
+            _stream_pymavlink_once(arguments, remaining)
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"PX4 link unavailable: {type(error).__name__}: {error}")
+        if deadline is None:
+            time.sleep(1.0)
+            continue
+        if time.monotonic() >= deadline:
+            return
+
+
+def _stream_pymavlink_once(arguments: argparse.Namespace, seconds: float | None) -> None:
+    deadline = None if seconds is None else time.monotonic() + seconds
+
+    def should_stop() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
+
+    run_pymavlink_relay(
+        arguments.endpoint,
+        arguments.snapshot_file,
+        write_interval_s=arguments.write_interval,
+        link_lease=arguments.link_lease,
+        should_stop=should_stop,
+    )
+
+
+async def run_mavsdk(arguments: argparse.Namespace) -> None:
+    """Stream telemetry until stopped, standing aside while a mission flies."""
     deadline = None if arguments.seconds is None else time.monotonic() + arguments.seconds
     announced_wait = False
     while True:
@@ -75,17 +157,15 @@ async def run(arguments: argparse.Namespace) -> None:
         remaining = None if deadline is None else max(deadline - time.monotonic(), 0.0)
         if remaining == 0.0:
             return
-        await _stream_once(arguments, remaining)
+        await _stream_mavsdk_once(arguments, remaining)
         if deadline is None:
-            # A relay that ended without a lease taking over is a dropped link.
-            # Reconnecting is what keeps the dashboard live across a PX4 restart.
             await asyncio.sleep(1.0)
             continue
         if time.monotonic() >= deadline:
             return
 
 
-async def _stream_once(arguments: argparse.Namespace, seconds: float | None) -> None:
+async def _stream_mavsdk_once(arguments: argparse.Namespace, seconds: float | None) -> None:
     try:
         from mavsdk import System
     except ModuleNotFoundError as error:  # pragma: no cover - environment guard
@@ -97,19 +177,14 @@ async def _stream_once(arguments: argparse.Namespace, seconds: float | None) -> 
     stop = asyncio.Event()
     relay_task: asyncio.Task[None] | None = None
     try:
-        print(f"Connecting to PX4 at {arguments.endpoint}...")
+        print(f"Connecting to PX4 at {arguments.endpoint} (mavsdk; gRPC on 0.0.0.0:{arguments.mavsdk_server_port})...")
         await asyncio.wait_for(system.connect(system_address=arguments.endpoint), timeout=arguments.connection_timeout)
-        # The relay writes only once it has position, battery and flight state,
-        # so an incomplete link leaves the previous snapshot alone rather than
-        # publishing a half-known vehicle.
         relay_task = asyncio.create_task(MavsdkTelemetryRelay(system, arguments.snapshot_file).run(stop))
         print(f"Streaming telemetry into {arguments.snapshot_file}. Press Ctrl-C to stop.")
         await _relay_until_lease_or_deadline(relay_task, arguments.link_lease, seconds)
     except asyncio.CancelledError:  # pragma: no cover - interrupt path
         pass
     except (OSError, RuntimeError, TimeoutError, asyncio.TimeoutError) as error:
-        # A link this process could not take is a wait, not a crash: the usual
-        # reason is a mission that claimed it a moment ago.
         print(f"PX4 link unavailable: {type(error).__name__}: {error}")
     finally:
         stop.set()
@@ -126,12 +201,7 @@ async def _stream_once(arguments: argparse.Namespace, seconds: float | None) -> 
 async def _relay_until_lease_or_deadline(
     relay_task: asyncio.Task[None], lease_path: Path, seconds: float | None
 ) -> None:
-    """Run the relay until a mission wants the link, or the run time is up.
-
-    Checked once a second rather than waited on: the lease is a file another
-    process writes, and a bridge that only noticed it on reconnect would keep
-    the socket for the whole flight it was meant to yield.
-    """
+    """Run the relay until a mission wants the link, or the run time is up."""
     deadline = None if seconds is None else time.monotonic() + seconds
     while not relay_task.done():
         if link_is_leased(lease_path):
@@ -141,13 +211,8 @@ async def _relay_until_lease_or_deadline(
         await asyncio.wait({relay_task}, timeout=1.0)
 
 
-def main(arguments: Sequence[str] | None = None) -> None:
-    parsed = parse_arguments(arguments)
+if __name__ == "__main__":
     try:
-        asyncio.run(run(parsed))
+        main()
     except KeyboardInterrupt:  # pragma: no cover - interrupt path
         print("Telemetry bridge stopped.")
-
-
-if __name__ == "__main__":
-    main()

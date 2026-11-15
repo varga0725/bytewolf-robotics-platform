@@ -61,6 +61,7 @@ class BridgeArgumentTests(unittest.TestCase):
 
         self.assertEqual(parsed.snapshot_file, dashboard_telemetry.DEFAULT_SNAPSHOT_PATH)
         self.assertEqual(parsed.endpoint, "udpin://127.0.0.1:14540")
+        self.assertEqual(parsed.backend, "pymavlink")
         self.assertIsNone(parsed.seconds, "without a limit it runs until interrupted")
 
     def test_the_endpoint_and_destination_can_be_moved(self) -> None:

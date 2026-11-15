@@ -60,7 +60,17 @@ scope for this ticket). Remediation options belong in a follow-up (upstream
 feature, MAVSDK pin with a bind-host flag, or an architecture change explicitly
 approved outside BYT-46).
 
-The dashboard telemetry relay (`brain.cli.dashboard_telemetry`) therefore
-remains on the embedded-server path until one of those exists.
+## BYT-49 default (pymavlink backend)
 
-Follow-up: BYT-49 (read-only pymavlink backend, approved 2026-11-14).
+The dashboard telemetry relay (`brain.cli.dashboard_telemetry`) now defaults to
+`--backend pymavlink`: passive MAVLink ingest on `udpin://127.0.0.1:14540` with
+**no** TCP or gRPC listener. The previous MAVSDK path remains available:
+
+```bash
+.venv/bin/python -m brain.cli.dashboard_telemetry
+.venv/bin/python -m brain.cli.dashboard_telemetry --backend mavsdk
+```
+
+`--backend mavsdk` still spawns `mavsdk_server` with gRPC on `0.0.0.0` as
+documented above. The pymavlink backend sends no GCS heartbeat; PX4 may warn
+about a missing GCS link in SITL while the dashboard relay is passive-only.
