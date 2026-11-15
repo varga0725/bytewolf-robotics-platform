@@ -11,6 +11,7 @@ type Envelope = {
 
 type Mission = {
   plan_id: string;
+  plan_hash?: string | null;
   summary: string;
   goal: string;
   steps: string[];
@@ -18,6 +19,7 @@ type Mission = {
 };
 
 type GatewayReply = { text: string; plan_id: string | null };
+type ApprovalTokenReply = { approval_token: string; plan_hash: string; expires_in_s: number };
 type OccupancyCell = { north_m: number; east_m: number; cell_size_m: number; disputed?: boolean };
 type OccupancyDocument = { occupancy_only?: unknown; cells?: unknown };
 type MapBackground = { metres_per_pixel: number; width: number; height: number; centre_north_m: number; centre_east_m: number; captured_at?: string };
@@ -49,6 +51,8 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
   const [spacing, setSpacing] = useState("3");
   const [goal, setGoal] = useState("Biztonságos pontküldetés a szimulációban");
   const [plan, setPlan] = useState<Mission | null>(null);
+  const [approvalToken, setApprovalToken] = useState<string | null>(null);
+  const [confirmStep, setConfirmStep] = useState<0 | 1>(0);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("A biztonsági korlátok betöltése…");
   const [occupancyCells, setOccupancyCells] = useState<OccupancyCell[]>([]);
@@ -156,6 +160,8 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
           : { north_m, east_m, altitude_m, goal: goal.trim() },
       );
       setPlan(nextPlan);
+      setApprovalToken(null);
+      setConfirmStep(0);
       setStatus("A terv ellenőrzött; a küldetés még nem indult el.");
       logEvent(`Terv jóváhagyásra vár: ${nextPlan.summary}`);
     } catch (error) {
@@ -164,16 +170,54 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
     } finally { setBusy(false); }
   }
 
-  async function decide(action: "approve" | "cancel") {
+  async function prepareConfirmation() {
     if (!plan || busy) return;
     setBusy(true);
     try {
-      const reply = await post<GatewayReply>(`/api/v1/plans/${action}`, { plan_id: plan.plan_id });
+      const payload = await post<ApprovalTokenReply>("/api/v1/plans/approval-token", { plan_id: plan.plan_id });
+      if (plan.plan_hash && payload.plan_hash !== plan.plan_hash) {
+        throw new Error("A terv megváltozott a javaslat óta; ellenőrizd újra.");
+      }
+      if (!plan.plan_hash) {
+        setPlan({ ...plan, plan_hash: payload.plan_hash });
+      }
+      setApprovalToken(payload.approval_token);
+      setConfirmStep(1);
+      setStatus("Ellenőrizd a terv-hash értéket, majd erősítsd meg a jóváhagyást.");
+    } catch (error) {
+      setConfirmStep(0);
+      setApprovalToken(null);
+      setStatus(`A jóváhagyási token nem kérhető: ${error instanceof Error ? error.message : "ismeretlen hiba"}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function decide(action: "approve" | "cancel") {
+    if (!plan || busy) return;
+    if (action === "approve" && confirmStep === 0) {
+      await prepareConfirmation();
+      return;
+    }
+    setBusy(true);
+    try {
+      const reply = await post<GatewayReply>(
+        `/api/v1/plans/${action}`,
+        action === "approve"
+          ? { plan_id: plan.plan_id, approval_token: approvalToken ?? "" }
+          : { plan_id: plan.plan_id },
+      );
       setStatus(reply.text);
       setPlan(null);
+      setApprovalToken(null);
+      setConfirmStep(0);
       logEvent(action === "approve" ? `Küldetés jóváhagyva: ${reply.plan_id ?? "ismeretlen terv"}` : "A jóváhagyásra váró terv visszavonva.");
       if (action === "approve" && reply.plan_id) monitor(reply.plan_id);
     } catch (error) {
+      if (action === "approve") {
+        setConfirmStep(0);
+        setApprovalToken(null);
+      }
       setStatus(`Hiba: ${error instanceof Error ? error.message : "ismeretlen hiba"}`);
     } finally { setBusy(false); }
   }
@@ -258,7 +302,26 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
       ) : (
         <p className="muted" role="note">A térképi tervezés SITL konzol módban érhető el, ha a szerveren a parancsút szándékosan engedélyezett.</p>
       )}
-      {commandsEnabled && plan && <div className="approval-panel" aria-labelledby="approval-title"><p className="eyebrow">SAFETYGATE-BIZONYÍTÉK · JÓVÁHAGYÁSRA VÁR</p><strong id="approval-title">Ellenőrzött terv: {plan.summary}</strong><p>{plan.goal}</p>{plan.waypoints && <p className="muted">Útvonal-bizonyíték: {plan.waypoints.length} SafetyGate által összeállított waypoint.</p>}<h3>Tervezett lépések</h3><ol>{plan.steps.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol><p className="muted">Ez a terv még nem indult el. A jóváhagyás ehhez a tervazonosítóhoz kötött, és visszavonható az indítás előtt.</p><button className="primary" type="button" onClick={() => void decide("approve")} disabled={busy}>Kifejezett jóváhagyás és indítás</button><button type="button" onClick={() => void decide("cancel")} disabled={busy}>Terv visszavonása</button></div>}
+      {commandsEnabled && plan && (
+        <div className="approval-panel" aria-labelledby="approval-title">
+          <p className="eyebrow">SAFETYGATE-BIZONYÍTÉK · JÓVÁHAGYÁSRA VÁR</p>
+          <strong id="approval-title">{confirmStep === 0 ? `Ellenőrzött terv: ${plan.summary}` : "Terv-hash megerősítése"}</strong>
+          <p>{plan.goal}</p>
+          {plan.plan_hash && <p><strong>Terv SHA-256:</strong> <code>{plan.plan_hash}</code></p>}
+          {plan.waypoints && <p className="muted">Útvonal-bizonyíték: {plan.waypoints.length} SafetyGate által összeállított waypoint.</p>}
+          <h3>Tervezett lépések</h3>
+          <ol>{plan.steps.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol>
+          <p className="muted">
+            {confirmStep === 0
+              ? "Ez a terv még nem indult el. A következő lépésben a szerver rövid élettartamú jóváhagyási tokent ad ki."
+              : "A jóváhagyás csak a fenti hash megerősítése után indul."}
+          </p>
+          <button className="primary" type="button" onClick={() => void decide("approve")} disabled={busy}>
+            {confirmStep === 0 ? "Tovább a terv-hash megerősítéséhez" : "Kifejezett jóváhagyás és indítás"}
+          </button>
+          <button type="button" onClick={() => void decide("cancel")} disabled={busy}>Terv visszavonása</button>
+        </div>
+      )}
       <p className="muted" role="status">{status}</p>
       <section className="mission-events" aria-labelledby="mission-events-title"><p className="eyebrow">HELYI OPERÁTORI NAPLÓ</p><h3 id="mission-events-title">Küldetési események</h3>{events.length === 0 ? <p className="muted">Még nincs esemény ebben a böngésző-sessionben.</p> : <ol>{events.map((event, index) => <li key={`${event}-${index}`}>{event}</li>)}</ol>}</section>
     </section>

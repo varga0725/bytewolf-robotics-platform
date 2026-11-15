@@ -42,8 +42,8 @@ class DashboardCommandGatewayTests(unittest.TestCase):
         self.gateway.chat("browser-1", "repülj")
 
         with self.assertRaisesRegex(PermissionError, "No pending"):
-            self.gateway.approve("browser-2", "plan-1")
-        reply = self.gateway.approve("browser-1", "plan-1")
+            self.gateway.approve("browser-2", "plan-1", approved_by="local")
+        reply = self.gateway.approve("browser-1", "plan-1", approved_by="local")
 
         self.assertEqual(self.executed, ["plan-1"])
         self.assertEqual(reply.status, "submitted")
@@ -53,7 +53,7 @@ class DashboardCommandGatewayTests(unittest.TestCase):
         self.gateway.chat("browser-1", "repülj")
 
         with self.assertRaises(MissionExecutionQuarantinedError):
-            self.gateway.approve("browser-1", "plan-1")
+            self.gateway.approve("browser-1", "plan-1", approved_by="local")
 
         self.assertEqual(self.executed, [])
 
@@ -63,7 +63,7 @@ class DashboardCommandGatewayTests(unittest.TestCase):
         self.gateway.cancel("browser-1", "plan-1")
 
         with self.assertRaisesRegex(PermissionError, "No pending"):
-            self.gateway.approve("browser-1", "plan-1")
+            self.gateway.approve("browser-1", "plan-1", approved_by="local")
 
 
 class PendingPlanReplacementTests(unittest.TestCase):
@@ -98,7 +98,7 @@ class PendingPlanReplacementTests(unittest.TestCase):
         gateway.propose("session", "plan-b", "Második terv.")
 
         with self.assertRaisesRegex(PermissionError, "newer mission replaced it"):
-            gateway.approve("session", "plan-a")
+            gateway.approve("session", "plan-a", approved_by="local")
 
         self.assertEqual(self.executed, [], "only the pending plan can ever fly")
 
@@ -114,7 +114,7 @@ class PendingPlanReplacementTests(unittest.TestCase):
         gateway = self._gateway()
 
         with self.assertRaisesRegex(PermissionError, "No pending plan"):
-            gateway.approve("session", "plan-a")
+            gateway.approve("session", "plan-a", approved_by="local")
 
     @patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
     def test_replacing_across_surfaces_keeps_one_slot(self) -> None:

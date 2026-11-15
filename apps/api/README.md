@@ -43,7 +43,7 @@ starts (`create_app`); an invalid value fails closed before routes are served.
   read-only mission audit replay; these endpoints never contact a vehicle.
 - `GET /api/v1/capabilities` — read-only Ground vs SITL Console mode (`commands_enabled`).
 - `POST /api/v1/chat` — conversational request; may create a pending plan only when `BYTEWOLF_COMMANDS_ENABLED` is exactly `true` (flight intent only).
-- `POST /api/v1/plans/approve`, `/cancel` — registered only when `BYTEWOLF_COMMANDS_ENABLED` is exactly `true`; operate only on that browser
+- `POST /api/v1/plans/approval-token`, `/approve`, `/cancel` — registered only when `BYTEWOLF_COMMANDS_ENABLED` is exactly `true`. Approve requires a short-lived server token bound to operator and plan hash; operate only on that browser session's pending plan.
   session's pending plan.
 
 Validate the Control Room with `npm run test`, `npm run test:e2e`, and
@@ -53,8 +53,16 @@ suite mocks only read APIs and does not approve or execute a mission.
 
 Pi persists the conversation and explicitly admitted, non-sensitive user facts
 under the Git-ignored `var/pi-agent/` directory, keyed by the browser-generated
-local session UUID. That UUID is correlation state, not authentication. The
-server is local-only on `127.0.0.1`; the installer exposes it to the tailnet
+local session UUID. That UUID is correlation state, not authentication.
+
+Loopback requests with an allowed `Host` header are attributed to operator
+`local`, which means any process on the same machine may call the API — not only
+a human at the browser. The HTTP approval-token path is the supported operator
+boundary; the CLI demo (`brain/cli/chat_mission_demo.py`) and Telegram gateway
+still approve through in-process gateway calls and are documented follow-ups for
+the same token discipline.
+
+The server is local-only on `127.0.0.1`; the installer exposes it to the tailnet
 only through authenticated Tailscale HTTPS. The gateway pins executable
 missions to `--deployment-mode simulation`; physical actuation remains disabled.
 See [`docs/pi-agent-v0_1.md`](../../docs/pi-agent-v0_1.md) for the tool and
