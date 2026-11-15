@@ -96,8 +96,22 @@ def read_lease(path: Path | None = None) -> dict[str, object] | None:
     return document
 
 
-def link_is_leased(path: Path | None = None) -> bool:
-    return read_lease(path) is not None
+def link_is_leased(
+    path: Path | None = None,
+    *,
+    allow_holder_pids: frozenset[int] | None = None,
+) -> bool:
+    lease = read_lease(path)
+    if lease is None:
+        return False
+    pid = lease.get("pid")
+    if (
+        allow_holder_pids
+        and isinstance(pid, int)
+        and pid in allow_holder_pids
+    ):
+        return False
+    return True
 
 
 def claim_link(owner: str, *, pid: int | None = None, path: Path | None = None) -> Path:

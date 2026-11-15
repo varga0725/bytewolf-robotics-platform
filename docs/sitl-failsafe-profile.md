@@ -23,9 +23,9 @@ The apply path refuses a physical FC that does not match.
 | `COM_DL_LOSS_T` | `10` | 10 s datalink-loss timeout (within preflight rule max). |
 | `COM_LOW_BAT_ACT` | `3` | v1.17: Return at critical, Land at emergency (`commander_params.c`). |
 | `BAT_LOW_THR` | `0.15` | 15 % warning (`battery` module). |
-| `BAT_CRIT_THR` | `0.07` | 7 % critical → RTL path with `COM_LOW_BAT_ACT=3`. |
+| `BAT_CRIT_THR` | `0.10` | 10 % critical → RTL path with `COM_LOW_BAT_ACT=3` (wider gap before emergency). |
 | `BAT_EMERGEN_THR` | `0.05` | 5 % emergency → Land. |
-| `SIM_BAT_DRAIN` | `180` | Seconds for a full 100→0 % sim discharge while armed (~3 min to critical in flight). |
+| `SIM_BAT_DRAIN` | `300` | Seconds for a full 100→0 % sim discharge while armed; slower drain keeps critical→RTL observable before emergency land. |
 | `SIM_BAT_MIN_PCT` | `0` | Allow the sim battery to reach emergency threshold during tests. |
 
 ## How it is applied
@@ -73,4 +73,54 @@ Manual apply (with SITL already running):
 ```bash
 .venv/bin/python -m simulation.px4.apply_sitl_failsafe_profile \
   --px4-build-directory PX4-Autopilot/build/px4_sitl_default
+```
+
+## In-flight acceptance harness (BYT-66)
+
+After headless or GUI SITL is running with the profile **applied**, run the
+selectable scenario harness:
+
+Set `PX4_RUN_DIR` to the disposable run directory that contains
+`sitl-failsafe-profile.status`. Only enable mission execution for the one harness
+invocation (do not `export` it into the shell — a forgotten global would weaken
+the execution gate for later commands in the same terminal):
+
+```bash
+PX4_RUN_DIR=/path/to/px4-sitl-run \
+BYTEWOLF_MISSION_EXECUTION_ENABLED=true \
+.venv/bin/python -m brain.cli.acceptance_inflight_sitl --scenario all
+```
+
+Scenarios (`--scenario` is repeatable; default is `all`):
+
+| Scenario | What it checks |
+|----------|----------------|
+| `datalink-loss` | ~20 m takeoff, GCS heartbeat stop, RTL after `COM_DL_LOSS_T`, land + disarm |
+| `geofence` | Goto beyond `GF_MAX_HOR_DIST`, RTL within fence + documented SITL tolerance |
+| `kill-in-air` | Normal disarm rejected in air; QGC-style emergency kill disarms within 1 s (**SITL only**) |
+| `low-battery` | Sim drain from profile: warning, RTL at critical, land at emergency (bounded timeout) |
+| `relay-inflight` | pymavlink relay on **14550** (MAVSDK stays on **14540**): `captured_at` age &lt; **3 s** default (`--relay-max-capture-age-s`), `in_air` false→true→false, loopback UDP only |
+
+Evidence JSON per scenario is written under `simulation/artifacts/acceptance-inflight-sitl/`
+(`<scenario>.json` plus `summary.json`). Each file records `outcome` (`PASS`/`FAIL`),
+`profile_check`, `timings`, `transitions` (flight mode / armed / in_air samples), and
+`failure_reason` when present. Exit code is non-zero if any selected scenario fails.
+
+**Precondition (mandatory):** the harness reads `PX4_RUN_DIR/sitl-failsafe-profile.status`
+(first line `applied`) and read-backs every profile parameter (same checks as
+`apply_sitl_failsafe_profile --verify`). If either step fails, it writes `FAIL` evidence and
+never arms.
+
+Unit tests (no network):
+
+```bash
+.venv/bin/python -m unittest tests.test_acceptance_inflight_sitl -v
+```
+
+Opt-in live relay scenario (requires SITL URL and applied profile):
+
+```bash
+BYTEWOLF_SITL_CONNECTION=udpin://127.0.0.1:14540 \
+BYTEWOLF_MISSION_EXECUTION_ENABLED=true \
+.venv/bin/python -m unittest tests.test_acceptance_inflight_sitl.AcceptanceInflightSitlLiveTests -v
 ```
