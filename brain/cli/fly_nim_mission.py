@@ -21,6 +21,7 @@ from brain.cli.artifacts import (
     write_run_artifact,
 )
 from brain.cli.mavsdk_lifecycle import acquire_px4_link, stop_owned_mavsdk_server
+from brain.cli.sitl_arm_guard import require_sitl_before_arm
 from brain.memory.recorder import DEFAULT_WORLD_MEMORY_PATH, WorldMemoryRecorder
 from brain.mission.execution import MissionExecution
 from brain.mission_spec.orchestrator import execute_compiled_mission, require_executable_mission
@@ -184,6 +185,7 @@ async def run(arguments: argparse.Namespace) -> None:
         # Take the endpoint before MAVSDK binds it; the bridge yields to this.
         acquire_px4_link("agent-mission")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
+        await require_sitl_before_arm(system, timeout_s=min(10.0, arguments.connection_timeout))
         relay_stop = asyncio.Event()
         # The same relay the hand-written CLIs use, with the same history sink.
         # It was missing here, so the most convenient way to start a flight —

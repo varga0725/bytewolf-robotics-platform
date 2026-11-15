@@ -18,6 +18,8 @@ from apps.gateway.telegram_mission_gateway import (
     _release_link_when_finished,
 )
 from brain.mission.demo_reviewed_plan import require_matching_demo_approval
+from brain.mission.sitl_target import TargetClassifier
+from brain.safety.deployment import authorize_readonly_connection
 from brain.telemetry.link_lease import claim_link, default_lease_path, release_link, wait_for_free_link
 from shared.safety.execution_gate import MissionExecutionQuarantinedError, require_mission_execution_enabled
 
@@ -34,6 +36,14 @@ def execute_reviewed_plan(plan_name: str) -> str:
     with _execution_lock:
         if _active_execution is not None and _active_execution.poll() is None:
             raise RuntimeError("A SITL mission is already running.")
+        endpoint = os.environ.get("BYTEWOLF_PX4_ENDPOINT", "udpin://127.0.0.1:14540")
+        authorize_readonly_connection("simulation", endpoint)
+        classification = TargetClassifier.require_sitl_verified(endpoint)
+        if classification.verdict != "sitl_verified":
+            raise RuntimeError(
+                "Refusing mission spawn: PX4 target is "
+                f"{classification.verdict} ({classification.reason})."
+            )
         lease_path = default_lease_path()
         lease_path.parent.mkdir(parents=True, exist_ok=True)
         claim_link("mission", pid=os.getpid(), path=lease_path)

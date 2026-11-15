@@ -29,6 +29,14 @@ CLI_CASES = (
     (fly_return_to_home, "authorize_takeoff_return_to_home", "execute_return_to_home_mission"),
 )
 
+FLIGHT_CLI_MODULES = (
+    fly_takeoff_hover_land,
+    fly_waypoint_land,
+    fly_return_to_home,
+    fly_waypoint_square_land,
+    fly_controlled_interruption,
+)
+
 
 def _mission() -> SimpleNamespace:
     return SimpleNamespace(
@@ -80,6 +88,14 @@ class CliMissionArtifactTests(unittest.TestCase):
         free_link = patch("brain.cli.mavsdk_lifecycle.wait_for_free_link", return_value=True)
         free_link.start()
         self.addCleanup(free_link.stop)
+        for module in FLIGHT_CLI_MODULES:
+            sitl_pass = patch.object(
+                module,
+                "require_sitl_before_arm",
+                AsyncMock(return_value={"status": "verified"}),
+            )
+            sitl_pass.start()
+            self.addCleanup(sitl_pass.stop)
 
     def test_takeoff_cli_enables_the_local_live_dashboard_by_default(self) -> None:
         arguments = fly_takeoff_hover_land.parse_arguments(())

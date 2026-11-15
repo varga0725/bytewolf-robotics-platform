@@ -1,0 +1,7 @@
+# QGroundControl export (Vehicle-Id, Component-Id, Name, Value, Type).
+1	1	NAV_DLL_ACT	2	6
+1	1	COM_DL_LOSS_T	10	6
+1	1	COM_LOW_BAT_ACT	3	6
+1	1	GF_ACTION	2	6
+1	1	GF_MAX_HOR_DIST	150	9
+1	1	GF_MAX_VER_DIST	25	9

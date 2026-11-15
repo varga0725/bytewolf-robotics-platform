@@ -83,8 +83,14 @@ class DemoPointRtlApiTests(unittest.TestCase):
 
     @patch("apps.gateway.plan_execution.subprocess.Popen")
     @patch("apps.gateway.plan_execution.wait_for_free_link", return_value=True)
+    @patch(
+        "apps.gateway.plan_execution.TargetClassifier.require_sitl_verified",
+        return_value=__import__(
+            "brain.mission.sitl_target", fromlist=["TargetClassification"]
+        ).TargetClassification("sitl_verified", "ok"),
+    )
     @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"}, clear=False)
-    def test_approve_executes_after_review(self, _wait, popen) -> None:
+    def test_approve_executes_after_review(self, _sitl, _wait, popen) -> None:
         plan_id = self.client.post(
             "/api/v1/missions/demo-point-rtl",
             headers={"X-ByteWolf-Session": SESSION},

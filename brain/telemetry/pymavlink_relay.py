@@ -8,7 +8,7 @@ from pathlib import Path
 import time
 from typing import Callable
 
-from brain.preflight_params.mavlink import normalize_connection_url
+from brain.preflight_params.mavlink import resolve_mavlink_connection
 from brain.telemetry.domain import (
     BatteryTelemetryEvent,
     FlightStateTelemetryEvent,
@@ -180,7 +180,6 @@ def run_pymavlink_relay(
         raise ValueError("write_interval_s must be positive.")
 
     clock = clock or (lambda: datetime.now(timezone.utc))
-    url = normalize_connection_url(connection)
     if mavlink_factory is None:
         try:
             from pymavlink import mavutil
@@ -190,9 +189,10 @@ def run_pymavlink_relay(
             ) from error
 
         def mavlink_factory(resolved: str) -> object:
-            return mavutil.mavlink_connection(resolved)
+            target = resolve_mavlink_connection(resolved)
+            return mavutil.mavlink_connection(target.device, **target.kwargs)
 
-    mavlink = mavlink_factory(url)
+    mavlink = mavlink_factory(connection)
     close = getattr(mavlink, "close", None)
     state = DashboardTelemetryState()
     last_write_monotonic: float | None = None

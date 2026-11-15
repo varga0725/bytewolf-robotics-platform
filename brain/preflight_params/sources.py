@@ -8,9 +8,11 @@ from pathlib import Path
 from brain.preflight_params.mavlink import MavlinkReadError, fetch_params_over_mavlink
 from brain.preflight_params.param_value import ParamValue, param_value_from_qgc_export
 
-# QGC / PX4 .params lines: optional vehicle/component columns, then name and value.
+# QGC / PX4 .params lines: optional vehicle/component columns, name, value, optional MAV type.
 _PARAM_LINE = re.compile(
-    r"^\s*(?:\d+\s+\d+\s+)?(?P<name>[A-Z0-9_]+)\s+(?P<value>-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*(?:#.*)?$"
+    r"^\s*(?:\d+\s+\d+\s+)?(?P<name>[A-Z0-9_]+)\s+"
+    r"(?P<value>-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
+    r"(?:\s+\d+)?\s*(?:#.*)?$"
 )
 
 
