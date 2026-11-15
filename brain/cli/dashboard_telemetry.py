@@ -50,15 +50,6 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         ),
     )
     parser.add_argument(
-        "--stale-timeout",
-        type=float,
-        default=10.0,
-        help=(
-            "Documented dashboard staleness window (default 10). The relay does not write on "
-            "silence; consumers derive stale from captured_at age."
-        ),
-    )
-    parser.add_argument(
         "--write-interval",
         type=float,
         default=0.2,

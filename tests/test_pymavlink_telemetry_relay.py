@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -158,9 +158,70 @@ class PymavlinkWriteThrottleTests(unittest.TestCase):
                     should_stop=should_stop,
                 )
 
-        self.assertEqual(len(writes), 2)
+        self.assertEqual(len(writes), 1)
         self.assertNotIn("heading_deg", writes[0])
-        self.assertIn("heading_deg", writes[1])
+
+    def test_identical_core_stream_keeps_advancing_captured_at(self) -> None:
+        timeline = {"t": 0.0}
+        position = _Message(
+            "GLOBAL_POSITION_INT",
+            lat=474000000,
+            lon=190500000,
+            alt=120500,
+            relative_alt=2500,
+        )
+        messages = [
+            *_complete_core_messages(),
+            *([position] * 200),
+        ]
+        message_index = 0
+        base = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+
+        class FakeMavlink:
+            def recv_match(self, *, blocking: bool, timeout: float) -> object | None:
+                nonlocal message_index
+                if message_index >= len(messages):
+                    timeline["t"] = 10.0
+                    return None
+                message = messages[message_index]
+                message_index += 1
+                timeline["t"] = 0.05 * message_index
+                return message
+
+            def close(self) -> None:
+                return None
+
+        def monotonic() -> float:
+            return timeline["t"]
+
+        def clock() -> datetime:
+            return base + timedelta(seconds=timeline["t"])
+
+        writes: list[str] = []
+
+        def recording_write(destination: Path, document: dict[str, object]) -> None:
+            writes.append(str(document["captured_at"]))
+
+        def should_stop() -> bool:
+            return timeline["t"] >= 10.0
+
+        with TemporaryDirectory() as directory:
+            destination = Path(directory) / "live-telemetry.json"
+            with mock.patch("brain.telemetry.pymavlink_relay.write_atomic_json", recording_write):
+                run_pymavlink_relay(
+                    "udpin://127.0.0.1:14540",
+                    destination,
+                    write_interval_s=0.2,
+                    mavlink_factory=lambda _url: FakeMavlink(),
+                    clock=clock,
+                    should_stop=should_stop,
+                    monotonic=monotonic,
+                )
+
+        timestamps = [datetime.fromisoformat(value.replace("Z", "+00:00")) for value in writes]
+        self.assertGreater(len(timestamps), 10)
+        for earlier, later in zip(timestamps, timestamps[1:]):
+            self.assertLess(earlier, later)
 
 
 class PymavlinkStaleBehaviorTests(unittest.TestCase):
@@ -205,9 +266,62 @@ class PymavlinkStaleBehaviorTests(unittest.TestCase):
                     should_stop=should_stop,
                 )
 
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0], "2026-07-22T09:00:00Z")
+
+    def test_shutdown_after_silence_does_not_write_a_fresh_captured_at(self) -> None:
+        timeline = {"t": 0.0}
+        base = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+        messages = [*_complete_core_messages()]
+        message_index = 0
+
+        class FakeMavlink:
+            def recv_match(self, *, blocking: bool, timeout: float) -> object | None:
+                nonlocal message_index
+                if message_index < len(messages):
+                    message = messages[message_index]
+                    message_index += 1
+                    timeline["t"] = 0.05 * message_index
+                    return message
+                timeline["t"] = 10.0
+                return None
+
+            def close(self) -> None:
+                return None
+
+        def monotonic() -> float:
+            return timeline["t"]
+
+        def clock() -> datetime:
+            return base + timedelta(seconds=timeline["t"])
+
+        writes: list[str] = []
+
+        def recording_write(destination: Path, document: dict[str, object]) -> None:
+            writes.append(str(document["captured_at"]))
+
+        stop_after = [0]
+
+        def should_stop() -> bool:
+            stop_after[0] += 1
+            return stop_after[0] > 25
+
+        with TemporaryDirectory() as directory:
+            destination = Path(directory) / "live-telemetry.json"
+            with mock.patch("brain.telemetry.pymavlink_relay.write_atomic_json", recording_write):
+                run_pymavlink_relay(
+                    "udpin://127.0.0.1:14540",
+                    destination,
+                    write_interval_s=0.2,
+                    mavlink_factory=lambda _url: FakeMavlink(),
+                    clock=clock,
+                    should_stop=should_stop,
+                    monotonic=monotonic,
+                )
+
+        captured_values = {item for item in writes}
+        self.assertEqual(len(captured_values), 1)
         self.assertGreaterEqual(len(writes), 1)
-        self.assertLessEqual(len(writes), 2)
-        self.assertTrue(all(item == "2026-07-22T09:00:00Z" for item in writes))
 
 
 if __name__ == "__main__":

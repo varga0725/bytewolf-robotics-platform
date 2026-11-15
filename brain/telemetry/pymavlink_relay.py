@@ -26,6 +26,14 @@ _TOPIC_ATTITUDE = "telemetry/history/attitude_euler"
 
 # PX4 EXTENDED_SYS_STATE landed_state values (MAV_LANDED_STATE_*).
 _LANDED_IN_AIR = frozenset({2, 3, 4})
+_CORE_MESSAGE_TYPES = frozenset(
+    {
+        "GLOBAL_POSITION_INT",
+        "SYS_STATUS",
+        "BATTERY_STATUS",
+        "EXTENDED_SYS_STATE",
+    }
+)
 
 
 def apply_mavlink_message(
@@ -168,7 +176,6 @@ def run_pymavlink_relay(
     mavlink = mavlink_factory(url)
     close = getattr(mavlink, "close", None)
     state = DashboardTelemetryState()
-    last_core_fingerprint: tuple[float, ...] | None = None
     last_write_monotonic: float | None = None
     pending_core_write = False
     last_lease_check = 0.0
@@ -185,24 +192,19 @@ def run_pymavlink_relay(
         last_lease_check = now
         return link_is_leased(link_lease)
 
-    def flush_snapshot(*, force: bool) -> None:
-        nonlocal last_write_monotonic, pending_core_write, last_core_fingerprint
+    def flush_snapshot() -> None:
+        nonlocal last_write_monotonic, pending_core_write
         if not state.complete:
             return
-        now = monotonic()
-        fingerprint = core_snapshot_fingerprint(state)
-        if fingerprint is None:
+        if not pending_core_write:
             return
-        if not force:
-            if not pending_core_write:
-                return
-            if last_write_monotonic is not None and now - last_write_monotonic < write_interval_s:
-                return
+        now = monotonic()
+        if last_write_monotonic is not None and now - last_write_monotonic < write_interval_s:
+            return
         captured_at = clock()
         write_atomic_json(destination, state.as_dashboard_document(captured_at))
         last_write_monotonic = now
         pending_core_write = False
-        last_core_fingerprint = fingerprint
 
     try:
         while True:
@@ -211,19 +213,16 @@ def run_pymavlink_relay(
             message = mavlink.recv_match(blocking=True, timeout=recv_timeout_s)
             now = monotonic()
             if message is not None:
-                previous = state
                 state = apply_mavlink_message(state, message, observed_at=clock())
-                if state != previous:
-                    fingerprint = core_snapshot_fingerprint(state)
-                    if fingerprint is not None and fingerprint != last_core_fingerprint:
-                        pending_core_write = True
-                    flush_snapshot(force=False)
+                if message.get_type() in _CORE_MESSAGE_TYPES:
+                    pending_core_write = True
+                flush_snapshot()
                 continue
 
             if pending_core_write:
-                flush_snapshot(force=False)
+                flush_snapshot()
     finally:
-        flush_snapshot(force=True)
+        flush_snapshot()
         if callable(close):
             close()
 

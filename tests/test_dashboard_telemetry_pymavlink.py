@@ -67,7 +67,6 @@ class DashboardTelemetryBackendTests(unittest.TestCase):
     def test_pymavlink_is_the_default_backend(self) -> None:
         parsed = dashboard_telemetry.parse_arguments([])
         self.assertEqual(parsed.backend, "pymavlink")
-        self.assertEqual(parsed.stale_timeout, 10.0)
         self.assertEqual(parsed.write_interval, 0.2)
 
 
