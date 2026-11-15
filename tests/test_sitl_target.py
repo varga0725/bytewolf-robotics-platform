@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from brain.mission.demo_point_rtl import DemoPointRtlError
-from brain.mission.sitl_target import require_px4_sitl_indication
+from brain.mission.sitl_target import TargetClassifier, require_px4_sitl_indication
 
 
 def _drone_with_identity(
@@ -98,7 +98,51 @@ class SitlTargetTests(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(DemoPointRtlError) as context:
             await require_px4_sitl_indication(drone, timeout_s=1.0)
-        self.assertIn("DEV", str(context.exception))
+        self.assertIn("simulator-specific", str(context.exception))
+
+    async def test_gz_autostart_without_sim_gz_en_is_refused(self) -> None:
+        drone = _drone_with_identity(
+            product_name="PX4 SITL",
+            release_name="RELEASE",
+            sys_autostart=4001,
+            sim_gz_en=0,
+        )
+        with self.assertRaises(DemoPointRtlError) as context:
+            await require_px4_sitl_indication(drone, timeout_s=1.0)
+        self.assertIn("simulator-specific", str(context.exception))
+
+    async def test_identity_markers_without_simulator_param_are_refused(self) -> None:
+        drone = _drone_with_identity(
+            product_name="PX4 Gazebo SITL",
+            release_name="DEV",
+            sys_autostart=0,
+            sim_gz_en=None,
+        )
+        with self.assertRaises(DemoPointRtlError):
+            await require_px4_sitl_indication(drone, timeout_s=1.0)
+
+
+class TargetClassifierTests(unittest.IsolatedAsyncioTestCase):
+    async def test_classify_returns_sitl_verified_for_stock_gazebo(self) -> None:
+        result = await TargetClassifier.classify(_drone_with_identity(), timeout_s=1.0)
+        self.assertEqual(result.verdict, "sitl_verified")
+        self.assertIsNotNone(result.proof)
+
+    async def test_classify_marks_pixhawk_like_as_real_suspected(self) -> None:
+        drone = _drone_with_identity(
+            product_name="PX4 Pixhawk 6X",
+            vendor_name="Holybro",
+            sys_autostart=0,
+            sim_gz_en=None,
+        )
+        result = await TargetClassifier.classify(drone, timeout_s=1.0)
+        self.assertEqual(result.verdict, "real_suspected")
+
+    async def test_classify_marks_param_failure_as_unknown(self) -> None:
+        drone = _drone_with_identity(param_timeout="SYS_AUTOSTART")
+        result = await TargetClassifier.classify(drone, timeout_s=0.05)
+        self.assertEqual(result.verdict, "unknown")
+        self.assertIn("SYS_AUTOSTART", result.reason)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,8 @@ from apps.gateway.telegram_mission_gateway import (
     _release_link_when_finished,
 )
 from brain.mission.demo_reviewed_plan import require_matching_demo_approval
+from brain.mission.sitl_target import TargetClassifier
+from brain.safety.deployment import authorize_readonly_connection
 from brain.telemetry.link_lease import claim_link, default_lease_path, release_link, wait_for_free_link
 from shared.safety.execution_gate import MissionExecutionQuarantinedError, require_mission_execution_enabled
 
@@ -29,6 +31,14 @@ def execute_reviewed_plan(plan_name: str) -> str:
     if not _PLAN_NAME.fullmatch(plan_name) or not plan_path.is_file():
         raise RuntimeError("Reviewed plan does not exist.")
     _validate_plan_before_spawn(plan_path)
+    endpoint = os.environ.get("BYTEWOLF_PX4_ENDPOINT", "udpin://127.0.0.1:14540")
+    authorize_readonly_connection("simulation", endpoint)
+    classification = TargetClassifier.require_sitl_verified(endpoint)
+    if classification.verdict != "sitl_verified":
+        raise RuntimeError(
+            "Refusing mission spawn: PX4 target is "
+            f"{classification.verdict} ({classification.reason})."
+        )
 
     global _active_execution
     with _execution_lock:

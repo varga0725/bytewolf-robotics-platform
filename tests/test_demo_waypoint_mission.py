@@ -99,7 +99,13 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
     @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"}, clear=False)
     @patch("apps.gateway.plan_execution.subprocess.Popen")
     @patch("apps.gateway.plan_execution.wait_for_free_link", return_value=True)
-    def test_approve_spawns_waypoint_mission_cli(self, _wait, popen) -> None:
+    @patch(
+        "apps.gateway.plan_execution.TargetClassifier.require_sitl_verified",
+        return_value=__import__(
+            "brain.mission.sitl_target", fromlist=["TargetClassification"]
+        ).TargetClassification("sitl_verified", "ok"),
+    )
+    def test_approve_spawns_waypoint_mission_cli(self, _sitl, _wait, popen) -> None:
         plan_id = self.client.post(
             "/api/v1/missions/demo-waypoint-mission",
             headers={"X-ByteWolf-Session": SESSION},
