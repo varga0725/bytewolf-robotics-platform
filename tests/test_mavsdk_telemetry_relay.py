@@ -59,14 +59,17 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 json.loads(destination.read_text(encoding="utf-8")),
                 {
+                    "source": "mavsdk",
                     "position": {
                         "latitude_deg": 47.4979,
                         "longitude_deg": 19.0402,
                         "absolute_altitude_m": 125.5,
                         "relative_altitude_m": 2.0,
                     },
-                    "battery": {"remaining_percent": 78.0},
+                    "position_observed_at": "2026-07-16T12:00:00Z",
+                    "battery": {"remaining_percent": 78.0, "observed_at": "2026-07-16T12:00:00Z"},
                     "in_air": True,
+                    "in_air_observed_at": "2026-07-16T12:00:00Z",
                     "captured_at": "2026-07-16T12:00:00Z",
                 },
             )
@@ -106,7 +109,8 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
             await relay.run_until_streams_complete()
 
             document = json.loads(destination.read_text(encoding="utf-8"))
-            self.assertEqual(document["battery"], {"remaining_percent": 1.0})
+            self.assertEqual(document["battery"]["remaining_percent"], 1.0)
+            self.assertEqual(document["source"], "mavsdk")
 
     async def test_does_not_invent_battery_diagnostics_for_legacy_charge_only_samples(self) -> None:
         captured = []
@@ -178,7 +182,7 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
 
             document = json.loads(destination.read_text(encoding="utf-8"))
 
-        self.assertEqual(document["battery"], {"remaining_percent": 78.0})
+        self.assertEqual(document["battery"]["remaining_percent"], 78.0)
         diagnostics = [
             event
             for event in captured

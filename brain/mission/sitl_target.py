@@ -422,3 +422,61 @@ async def _read_identity_and_param_signals(
         )
     )
     return product_name, vendor_name, release_name, sys_autostart, list(dict.fromkeys(matched))
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _read_vehicle_identity(document: dict[str, object]) -> dict[str, object] | None:
+    nested = document.get("vehicle_identity")
+    if isinstance(nested, dict):
+        return nested
+    return document
+
+
+def classify_telemetry_document(document: dict[str, object]) -> TargetVerdict:
+    """Fail-closed target_class for passive dashboard telemetry (no MAVSDK param reads)."""
+    identity = _read_vehicle_identity(document)
+    if identity is None:
+        return "unknown"
+
+    product_name = str(identity.get("product_name", "")).strip()
+    vendor_name = str(identity.get("vendor_name", "")).strip()
+    release_name = str(identity.get("flight_sw_version_type", "")).strip().upper()
+    sys_autostart = _coerce_optional_int(identity.get("sys_autostart"))
+    sim_gz_en = _coerce_optional_int(identity.get("sim_gz_en"))
+    sih_vehicle_type = _coerce_optional_int(identity.get("sih_vehicle_type"))
+
+    matched: list[str] = []
+    if product_name or vendor_name or release_name:
+        matched.extend(
+            _collect_identity_signals(
+                product_name=product_name,
+                vendor_name=vendor_name,
+                release_name=release_name,
+            )
+        )
+    if sys_autostart is not None:
+        matched.extend(
+            collect_param_based_sitl_signals(
+                sys_autostart=sys_autostart,
+                sim_gz_en=sim_gz_en,
+                sih_vehicle_type=sih_vehicle_type,
+            )
+        )
+    unique = list(dict.fromkeys(matched))
+    if unique and sitl_verification_passes(unique):
+        return "sitl_verified"
+    if product_name or vendor_name or sys_autostart is not None:
+        if _suspects_real_flight_controller(
+            product_name=product_name,
+            vendor_name=vendor_name,
+            release_name=release_name,
+            sys_autostart=sys_autostart or 0,
+            matched_signals=unique,
+        ):
+            return "real_suspected"
+    return "unknown"

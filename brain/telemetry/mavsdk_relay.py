@@ -15,7 +15,9 @@ from math import isfinite
 import os
 from pathlib import Path
 import tempfile
-from typing import AsyncIterator, Callable, Protocol
+from typing import AsyncIterator, Callable, Literal, Protocol
+
+RelaySource = Literal["pymavlink", "mavsdk"]
 
 from brain.telemetry.domain import (
     BatteryTelemetryEvent,
@@ -76,6 +78,15 @@ class DashboardTelemetryState:
     # published when known and simply absent when not, because a missing yaw
     # read as zero would point every body-frame observation at north.
     heading_deg: float | None = None
+    relay_source: RelaySource | None = None
+    armed: bool | None = None
+    armed_observed_at: datetime | None = None
+    flight_mode: str | None = None
+    flight_mode_observed_at: datetime | None = None
+    sysid: int | None = None
+    sysid_observed_at: datetime | None = None
+    autopilot: str | None = None
+    autopilot_observed_at: datetime | None = None
 
     @property
     def complete(self) -> bool:
@@ -88,11 +99,50 @@ class DashboardTelemetryState:
             return replace(self, battery=event)
         if isinstance(event, FlightStateTelemetryEvent):
             return replace(self, flight_state=event)
-        if isinstance(event, SupplementalTelemetryEvent) and event.source.endswith("attitude_euler"):
-            heading = dict(event.payload).get("yaw_deg")
-            if isinstance(heading, (int, float)) and not isinstance(heading, bool):
-                return replace(self, heading_deg=float(heading))
+        if isinstance(event, SupplementalTelemetryEvent):
+            payload = dict(event.payload)
+            if event.source.endswith("attitude_euler"):
+                heading = payload.get("yaw_deg")
+                if isinstance(heading, (int, float)) and not isinstance(heading, bool):
+                    return replace(self, heading_deg=float(heading))
+            if event.source.endswith(".armed"):
+                armed = payload.get("value")
+                if isinstance(armed, bool):
+                    return replace(
+                        self,
+                        armed=armed,
+                        armed_observed_at=event.observed_at,
+                    )
+            if event.source.endswith(".flight_mode"):
+                mode = payload.get("value")
+                if isinstance(mode, str) and mode:
+                    return replace(
+                        self,
+                        flight_mode=mode,
+                        flight_mode_observed_at=event.observed_at,
+                    )
         return self
+
+    def with_vehicle_heartbeat(
+        self,
+        *,
+        armed: bool,
+        flight_mode: str,
+        sysid: int,
+        autopilot: str,
+        observed_at: datetime,
+    ) -> DashboardTelemetryState:
+        return replace(
+            self,
+            armed=armed,
+            armed_observed_at=observed_at,
+            flight_mode=flight_mode,
+            flight_mode_observed_at=observed_at,
+            sysid=sysid,
+            sysid_observed_at=observed_at,
+            autopilot=autopilot,
+            autopilot_observed_at=observed_at,
+        )
 
     def as_dashboard_document(self, captured_at: datetime) -> dict[str, object]:
         if not self.complete:
@@ -100,18 +150,54 @@ class DashboardTelemetryState:
         assert self.position is not None
         assert self.battery is not None
         assert self.flight_state is not None
-        return {
+        document: dict[str, object] = {
             "position": {
                 "latitude_deg": self.position.latitude_deg,
                 "longitude_deg": self.position.longitude_deg,
                 "absolute_altitude_m": self.position.absolute_altitude_m,
                 "relative_altitude_m": self.position.relative_altitude_m,
             },
-            "battery": {"remaining_percent": self.battery.remaining_percent},
+            "position_observed_at": _format_timestamp(self.position.observed_at),
+            "battery": {
+                "remaining_percent": self.battery.remaining_percent,
+                "observed_at": _format_timestamp(self.battery.observed_at),
+            },
             "in_air": self.flight_state.in_air,
+            "in_air_observed_at": _format_timestamp(self.flight_state.observed_at),
             "captured_at": _format_timestamp(captured_at),
-            **({} if self.heading_deg is None else {"heading_deg": self.heading_deg}),
         }
+        if self.relay_source is not None:
+            document["source"] = self.relay_source
+        if self.heading_deg is not None:
+            document["heading_deg"] = self.heading_deg
+        if self.armed is not None:
+            document["armed"] = self.armed
+            if self.armed_observed_at is not None:
+                document["armed_observed_at"] = _format_timestamp(self.armed_observed_at)
+        if self.flight_mode is not None:
+            document["flight_mode"] = self.flight_mode
+            if self.flight_mode_observed_at is not None:
+                document["flight_mode_observed_at"] = _format_timestamp(self.flight_mode_observed_at)
+        if self.sysid is not None:
+            document["sysid"] = self.sysid
+            if self.sysid_observed_at is not None:
+                document["sysid_observed_at"] = _format_timestamp(self.sysid_observed_at)
+        if self.autopilot is not None:
+            document["autopilot"] = self.autopilot
+            if self.autopilot_observed_at is not None:
+                document["autopilot_observed_at"] = _format_timestamp(self.autopilot_observed_at)
+        return document
+
+
+def dashboard_snapshot_should_write(state: DashboardTelemetryState, event: TelemetryEvent) -> bool:
+    """Whether a telemetry event should refresh the on-disk dashboard snapshot."""
+    if not state.complete:
+        return False
+    if not isinstance(event, SupplementalTelemetryEvent):
+        return True
+    if event.source.endswith("attitude_euler"):
+        return False
+    return event.source.endswith(".armed") or event.source.endswith(".flight_mode")
 
 
 class MavsdkTelemetryRelay:
@@ -129,7 +215,7 @@ class MavsdkTelemetryRelay:
         self._destination = destination
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._on_event = on_event
-        self._state = DashboardTelemetryState()
+        self._state = DashboardTelemetryState(relay_source="mavsdk")
 
     async def run_until_streams_complete(self) -> None:
         """Relay finite streams; useful for deterministic replay and smoke tests."""
@@ -190,7 +276,7 @@ class MavsdkTelemetryRelay:
         self._state = self._state.with_event(event)
         if self._on_event is not None:
             await asyncio.to_thread(self._on_event, event)
-        if not isinstance(event, SupplementalTelemetryEvent) and self._state.complete:
+        if self._state.complete and dashboard_snapshot_should_write(self._state, event):
             document = self._state.as_dashboard_document(self._clock())
             await asyncio.to_thread(write_atomic_json, self._destination, document)
 

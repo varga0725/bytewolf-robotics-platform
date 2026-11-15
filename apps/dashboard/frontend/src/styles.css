@@ -182,6 +182,33 @@ h3 { color: var(--color-text-subtle); font-size: 1rem; font-weight: 650; line-he
 .topbar, .section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
 .topbar { position: relative; padding-bottom: 25px; border-bottom: 1px solid var(--color-line-strong); }
 .topbar::after { position: absolute; bottom: -1px; left: 0; width: min(11rem, 30%); height: 1px; content: ""; background: var(--color-accent); box-shadow: 0 0 14px var(--color-accent-glow); }
+.target-class-badge {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 12px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.target-class-badge--sitl_verified {
+  border-color: var(--color-status-ready-border);
+  background: var(--color-status-ready-inset);
+  color: var(--color-status-ready);
+}
+.target-class-badge--unknown, .target-class-badge--real_suspected {
+  border-color: var(--color-status-danger-border);
+  background: var(--color-surface-danger);
+  color: var(--color-status-danger);
+}
+.target-class-danger-banner {
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--color-status-danger-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-danger);
+}
+.target-class-danger-banner strong { color: var(--color-status-danger); }
 .connection {
   display: inline-flex;
   align-items: center;
