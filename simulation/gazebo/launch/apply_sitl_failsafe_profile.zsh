@@ -22,8 +22,8 @@ apply_bytewolf_sitl_failsafe_profile() {
   local attempt=0
   local exit_code=0
   while (( attempt < 90 )); do
-    "$python_bin" -m simulation.px4.apply_sitl_failsafe_profile \
-      --px4-build-directory "$px4_build_dir" "${status_args[@]}"
+    ( cd "$project_root" && "$python_bin" -m simulation.px4.apply_sitl_failsafe_profile \
+        --px4-build-directory "$px4_build_dir" "${status_args[@]}" )
     exit_code=$?
     if (( exit_code == 0 )); then
       return 0
