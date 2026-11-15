@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
-
-from brain.safety.connection_policy import ConnectionPolicyError, require_local_sitl_udp_endpoint
+from brain.safety.connection_policy import (
+    ConnectionPolicyError,
+    ConnectionPolicySchemeError,
+    require_local_sitl_udp_endpoint,
+)
 
 
 class LoopbackEndpointError(ConnectionPolicyError):
@@ -16,13 +18,12 @@ def require_loopback_udpin_endpoint(endpoint: str) -> None:
 
     try:
         require_local_sitl_udp_endpoint(endpoint, schemes=frozenset({"udpin"}))
+    except ConnectionPolicySchemeError as error:
+        raise LoopbackEndpointError(
+            "The pymavlink telemetry backend accepts udpin:// on loopback only; "
+            f"got scheme {error.wrong_scheme!r}."
+        ) from error
     except ConnectionPolicyError as error:
-        if error.args and "scheme must be" in str(error.args[0]):
-            scheme = urlparse(endpoint.strip()).scheme or "<missing>"
-            raise LoopbackEndpointError(
-                "The pymavlink telemetry backend accepts udpin:// on loopback only; "
-                f"got scheme {scheme!r}."
-            ) from error
         raise LoopbackEndpointError(str(error)) from error
 
 

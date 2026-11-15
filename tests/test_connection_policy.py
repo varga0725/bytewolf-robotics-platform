@@ -4,15 +4,25 @@ from __future__ import annotations
 
 import unittest
 
-from brain.safety.connection_policy import ConnectionPolicyError, require_local_sitl_udp_endpoint
+from brain.safety.connection_policy import (
+    ConnectionPolicyError,
+    validate_local_sitl_udp_endpoint,
+    require_local_sitl_udp_endpoint,
+)
 
 
 class ConnectionPolicyAcceptanceTests(unittest.TestCase):
     def test_udpin_loopback_is_accepted(self) -> None:
-        require_local_sitl_udp_endpoint("udpin://127.0.0.1:14540")
+        self.assertEqual(
+            validate_local_sitl_udp_endpoint("udpin://127.0.0.1:14540"),
+            "udpin://127.0.0.1:14540",
+        )
 
     def test_udpout_loopback_is_accepted(self) -> None:
-        require_local_sitl_udp_endpoint("udpout://127.0.0.1:14550")
+        self.assertEqual(
+            validate_local_sitl_udp_endpoint("udpout://127.0.0.1:14550"),
+            "udpout://127.0.0.1:14550",
+        )
 
 
 class ConnectionPolicyRejectionTests(unittest.TestCase):
@@ -24,9 +34,37 @@ class ConnectionPolicyRejectionTests(unittest.TestCase):
         with self.assertRaises(ConnectionPolicyError):
             require_local_sitl_udp_endpoint("   ")
 
+    def test_leading_whitespace_is_rejected(self) -> None:
+        with self.assertRaises(ConnectionPolicyError):
+            require_local_sitl_udp_endpoint(" udpin://127.0.0.1:14540")
+
+    def test_trailing_whitespace_is_rejected(self) -> None:
+        with self.assertRaises(ConnectionPolicyError):
+            require_local_sitl_udp_endpoint("udpin://127.0.0.1:14540 ")
+
+    def test_control_character_is_rejected(self) -> None:
+        with self.assertRaises(ConnectionPolicyError):
+            require_local_sitl_udp_endpoint("udpin://127.0.0.1:14540\x00")
+
+    def test_query_string_is_rejected(self) -> None:
+        with self.assertRaises(ConnectionPolicyError):
+            require_local_sitl_udp_endpoint("udpin://127.0.0.1:14540?trace=1")
+
+    def test_fragment_is_rejected(self) -> None:
+        with self.assertRaises(ConnectionPolicyError):
+            require_local_sitl_udp_endpoint("udpin://127.0.0.1:14540#x")
+
+    def test_uppercase_scheme_is_rejected(self) -> None:
+        with self.assertRaises(ConnectionPolicyError):
+            require_local_sitl_udp_endpoint("UDPIN://127.0.0.1:14540")
+
     def test_bind_all_host_is_rejected(self) -> None:
         with self.assertRaises(ConnectionPolicyError):
             require_local_sitl_udp_endpoint("udpin://0.0.0.0:14540")
+
+    def test_loopback_adjacent_host_is_rejected(self) -> None:
+        with self.assertRaises(ConnectionPolicyError):
+            require_local_sitl_udp_endpoint("udpin://127.0.0.2:14540")
 
     def test_localhost_name_is_rejected(self) -> None:
         with self.assertRaises(ConnectionPolicyError):
@@ -72,9 +110,25 @@ class ConnectionPolicyRejectionTests(unittest.TestCase):
         with self.assertRaises(ConnectionPolicyError):
             require_local_sitl_udp_endpoint("udpin://:14540")
 
+    def test_non_numeric_port_is_rejected(self) -> None:
+        with self.assertRaises(ConnectionPolicyError):
+            require_local_sitl_udp_endpoint("udpin://127.0.0.1:abc")
+
+    def test_signed_port_token_is_rejected(self) -> None:
+        with self.assertRaises(ConnectionPolicyError):
+            require_local_sitl_udp_endpoint("udpin://127.0.0.1:+14540")
+
+    def test_port_above_range_is_rejected(self) -> None:
+        with self.assertRaises(ConnectionPolicyError):
+            require_local_sitl_udp_endpoint("udpin://127.0.0.1:99999")
+
     def test_port_zero_is_rejected(self) -> None:
         with self.assertRaises(ConnectionPolicyError):
             require_local_sitl_udp_endpoint("udpin://127.0.0.1:0")
+
+    def test_leading_zero_port_is_rejected(self) -> None:
+        with self.assertRaises(ConnectionPolicyError):
+            require_local_sitl_udp_endpoint("udpin://127.0.0.1:014540")
 
     def test_udpin_only_subset_rejects_udpout(self) -> None:
         with self.assertRaises(ConnectionPolicyError):
