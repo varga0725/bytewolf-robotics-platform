@@ -10,6 +10,23 @@ afterEach(() => {
 });
 
 describe("MissionPage", () => {
+  it("hides mission approval controls in ground control room mode", async () => {
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/v1/safety-envelope"
+        ? { max_altitude_m: 20, max_radius_m: 50, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] }
+        : path === "/api/v1/world-map"
+          ? { cells: [] }
+          : {},
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MissionPage commandsEnabled={false} />);
+    await screen.findByText(/Ground Control Room mód/);
+    expect(screen.queryByRole("button", { name: "Terv ellenőrzése" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("form")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("/api/v1/missions/"), expect.anything());
+  });
+
   it("reviews a point mission before it exposes the explicit start control", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
       path === "/api/v1/safety-envelope"
@@ -20,7 +37,7 @@ describe("MissionPage", () => {
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<MissionPage />);
+    render(<MissionPage commandsEnabled />);
     await screen.findByText(/Aktív korlát/);
     fireEvent.click(screen.getByRole("button", { name: "Terv ellenőrzése" }));
 
@@ -48,7 +65,7 @@ describe("MissionPage", () => {
     ), { status: path === "/api/v1/missions/point" ? 422 : 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<MissionPage />);
+    render(<MissionPage commandsEnabled />);
     await screen.findByText(/Aktív korlát/);
     fireEvent.click(screen.getByRole("button", { name: "Terv ellenőrzése" }));
 
@@ -66,7 +83,7 @@ describe("MissionPage", () => {
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<MissionPage />);
+    render(<MissionPage commandsEnabled />);
     await screen.findByText(/Aktív korlát/);
     fireEvent.click(screen.getByRole("radio", { name: "Terület felderítése" }));
     fireEvent.change(screen.getByLabelText("Sugár (m)"), { target: { value: "8" } });
@@ -81,7 +98,7 @@ describe("MissionPage", () => {
   it("turns a map click into local north/east mission coordinates", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(path === "/api/v1/world-map" ? { cells: [] } : { max_altitude_m: 20, max_radius_m: 50, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] }), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
-    render(<MissionPage />);
+    render(<MissionPage commandsEnabled />);
     await screen.findByText(/Aktív korlát/);
     const map = screen.getByRole("img", { name: "Küldetési térkép" });
     vi.spyOn(map, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, width: 400, height: 400, top: 0, right: 400, bottom: 400, left: 0, toJSON: () => ({}) });
@@ -96,7 +113,7 @@ describe("MissionPage", () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path === "/api/v1/safety-envelope"
       ? new Promise<Response>(() => undefined)
       : Promise.resolve(new Response(JSON.stringify({ cells: [] }), { status: 200 }))));
-    render(<MissionPage />);
+    render(<MissionPage commandsEnabled />);
     const map = screen.getByRole("img", { name: "Küldetési térkép" });
     vi.spyOn(map, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, width: 400, height: 400, top: 0, right: 400, bottom: 400, left: 0, toJSON: () => ({}) });
 
@@ -115,7 +132,7 @@ describe("MissionPage", () => {
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<MissionPage />);
+    render(<MissionPage commandsEnabled />);
     await screen.findByText(/Aktív korlát/);
 
     await waitFor(() => expect(screen.getByLabelText("Mért akadálybizonyíték: É 2 m, K 3 m")).toBeInTheDocument());
@@ -133,7 +150,7 @@ describe("MissionPage", () => {
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<MissionPage />);
+    render(<MissionPage commandsEnabled />);
     await screen.findByText(/Aktív korlát/);
 
     const near = screen.getByLabelText("50 m") as HTMLInputElement;

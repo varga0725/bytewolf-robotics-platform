@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from typing import Callable
 
+from brain.mission.acceptance_inflight_px4_mode import px4_flight_mode_from_custom_mode
 from brain.preflight_params.mavlink import resolve_mavlink_connection
 from brain.telemetry.domain import (
     BatteryTelemetryEvent,
@@ -34,6 +35,24 @@ _CORE_MESSAGE_TYPES = frozenset(
         "EXTENDED_SYS_STATE",
     }
 )
+# MAV_COMP_ID_AUTOPILOT1 — vehicle heartbeat, not companion/GCS component heartbeats.
+_MAV_COMP_ID_AUTOPILOT1 = 1
+_MAV_TYPE_GCS = 6
+
+
+def mavlink_autopilot_label(autopilot_id: int) -> str:
+    """Lower-case MAV_AUTOPILOT label for dashboard snapshots."""
+    try:
+        from pymavlink import mavutil
+    except ModuleNotFoundError:
+        return f"autopilot_{autopilot_id}"
+    for attribute in dir(mavutil.mavlink):
+        if not attribute.startswith("MAV_AUTOPILOT_"):
+            continue
+        value = getattr(mavutil.mavlink, attribute, None)
+        if value == autopilot_id:
+            return attribute.removeprefix("MAV_AUTOPILOT_").lower()
+    return f"autopilot_{autopilot_id}"
 
 
 def apply_mavlink_message(
@@ -117,7 +136,61 @@ def apply_mavlink_message(
         )
         return state.with_event(event)
 
+    if message_type == "HEARTBEAT":
+        return _apply_vehicle_heartbeat(state, message, timestamp)
+
     return state
+
+
+def _apply_vehicle_heartbeat(
+    state: DashboardTelemetryState,
+    message: object,
+    timestamp: datetime,
+) -> DashboardTelemetryState:
+    try:
+        from pymavlink import mavutil
+    except ModuleNotFoundError:
+        return state
+
+    vehicle_type = int(message.type)
+    if vehicle_type == _MAV_TYPE_GCS:
+        return state
+    component = int(getattr(message, "get_srcComponent", lambda: 0)())
+    if component not in (0, _MAV_COMP_ID_AUTOPILOT1):
+        return state
+    autopilot_id = int(message.autopilot)
+    if autopilot_id != mavutil.mavlink.MAV_AUTOPILOT_PX4:
+        return state
+    custom_mode = int(message.custom_mode)
+    armed = bool(int(message.base_mode) & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+    flight_mode = px4_flight_mode_from_custom_mode(custom_mode)
+    sysid = int(getattr(message, "get_srcSystem", lambda: 0)())
+    if sysid <= 0 or sysid > 255:
+        return state
+    return state.with_vehicle_heartbeat(
+        armed=armed,
+        flight_mode=flight_mode,
+        sysid=sysid,
+        autopilot=mavlink_autopilot_label(autopilot_id),
+        observed_at=timestamp,
+    )
+
+
+def heartbeat_pending_write(before: DashboardTelemetryState, after: DashboardTelemetryState) -> bool:
+    """Whether a HEARTBEAT should schedule a snapshot write (armed/mode/sysid changed)."""
+    vehicle_fields = (
+        before.armed,
+        before.flight_mode,
+        before.sysid,
+        before.autopilot,
+    )
+    after_fields = (
+        after.armed,
+        after.flight_mode,
+        after.sysid,
+        after.autopilot,
+    )
+    return vehicle_fields != after_fields
 
 
 def core_message_pending_write(
@@ -194,7 +267,7 @@ def run_pymavlink_relay(
 
     mavlink = mavlink_factory(connection)
     close = getattr(mavlink, "close", None)
-    state = DashboardTelemetryState()
+    state = DashboardTelemetryState(relay_source="pymavlink")
     last_write_monotonic: float | None = None
     pending_core_write = False
     last_lease_check = 0.0
@@ -251,5 +324,7 @@ __all__ = [
     "apply_mavlink_message",
     "core_message_pending_write",
     "core_snapshot_fingerprint",
+    "heartbeat_pending_write",
+    "mavlink_autopilot_label",
     "run_pymavlink_relay",
 ]

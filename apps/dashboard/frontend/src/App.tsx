@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { CameraPage } from "./CameraPage";
 import { ChatPage } from "./ChatPage";
+import { ControlRoomModeBadge, type ControlRoomMode } from "./ControlRoomModeBadge";
+import { loadControlRoomCapabilities } from "./capabilities";
 import { AnalyticsPage } from "./AnalyticsPage";
 import { DeveloperPage } from "./DeveloperPage";
 import { EventsPage } from "./EventsPage";
@@ -15,12 +17,17 @@ import { RobotsPage } from "./RobotsPage";
 import { CognitiveRuntimePage } from "./CognitiveRuntimePage";
 import { SettingsPage } from "./SettingsPage";
 import { formatTelemetry, telemetryConnection, type TelemetrySnapshot } from "./telemetry";
+import { TargetClassBadge, TargetClassDangerBanner } from "./TargetClassBadge";
+import { effectiveTargetClassForConnection, parseTargetClass, type TargetClass } from "./targetClass";
 import { WorldPage } from "./WorldPage";
 
 type LoadState = "loading" | "ready" | "unavailable";
 type View = "state" | "operations" | "robots" | "camera" | "perception" | "chat" | "mission" | "memory" | "knowledge" | "world" | "cognitive" | "events" | "analytics" | "replay" | "developer" | "settings";
 type ConnectionState = "loading" | "ready" | "stale" | "unavailable";
-type OperatorTelemetry = TelemetrySnapshot & { heading_deg: number | null };
+type OperatorTelemetry = TelemetrySnapshot & {
+  heading_deg: number | null;
+  target_class: TargetClass | null;
+};
 
 const views: ReadonlyArray<{ id: View; label: string }> = [
   { id: "state", label: "Állapot" },
@@ -47,6 +54,7 @@ const emptyTelemetry: OperatorTelemetry = {
   in_air: null,
   captured_at: null,
   heading_deg: null,
+  target_class: null,
 };
 
 export function App() {
@@ -55,12 +63,26 @@ export function App() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [quickNavOpen, setQuickNavOpen] = useState(false);
   const [quickNavQuery, setQuickNavQuery] = useState("");
+  const [controlRoomMode, setControlRoomMode] = useState<ControlRoomMode>("ground");
+  const [commandsEnabled, setCommandsEnabled] = useState(false);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const quickNavTriggerRef = useRef<HTMLButtonElement | null>(null);
   const quickNavSearchRef = useRef<HTMLInputElement | null>(null);
   const quickNavDialogRef = useRef<HTMLElement | null>(null);
   const quickNavReturnFocusRef = useRef<HTMLElement | null>(null);
   const restoreQuickNavFocusRef = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    void loadControlRoomCapabilities().then((capabilities) => {
+      if (!active) return;
+      setControlRoomMode(capabilities.mode);
+      setCommandsEnabled(capabilities.commands_enabled);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -127,8 +149,8 @@ export function App() {
     : activeView === "robots" ? <RobotsPage />
     : activeView === "camera" ? <CameraPage />
     : activeView === "perception" ? <PerceptionPage />
-    : activeView === "chat" ? <ChatPage />
-      : activeView === "mission" ? <MissionPage />
+    : activeView === "chat" ? <ChatPage commandsEnabled={commandsEnabled} />
+      : activeView === "mission" ? <MissionPage commandsEnabled={commandsEnabled} />
         : activeView === "memory" ? <MemoryPage />
           : activeView === "knowledge" ? <KnowledgePage />
           : activeView === "world" ? <WorldPage />
@@ -143,7 +165,10 @@ export function App() {
                 <p className="eyebrow">OPERÁTORI KONTEXTUS</p>
                 <h2 id="operating-context-heading">Működési kontextus</h2>
                 <p>Telemetria: {status.title}. {status.message}</p>
-                <p>A felület csak olvasható: nincs közvetlen vezérlés. Szimulációs küldetés csak külön jóváhagyással indulhat.</p>
+                <p>
+                  Állapotot mutat és küldetést tervez; közvetlen PX4-, MAVSDK- vagy aktuátorvezérlés nincs.
+                  Szimulációs küldetés csak külön jóváhagyással indulhat.
+                </p>
               </section>
 
               <section aria-labelledby="telemetry-heading">
@@ -254,6 +279,8 @@ export function App() {
     selectView(views[nextIndex].id, true);
   }
 
+  const targetClass = effectiveTargetClassForConnection(connection.state, displayTelemetry.target_class);
+
   return (
     <main className="control-room">
       <header className="topbar">
@@ -261,9 +288,11 @@ export function App() {
           <p className="eyebrow">BYTEWOLF ROBOTICS</p>
           <h1>Control Room</h1>
         </div>
+        <TargetClassBadge targetClass={targetClass} />
         <p className={`connection connection--${connection.state}`} aria-live="polite">
           {connection.label}
         </p>
+        <ControlRoomModeBadge mode={controlRoomMode} commandsEnabled={commandsEnabled} />
         <button
           ref={quickNavTriggerRef}
           type="button"
@@ -277,6 +306,8 @@ export function App() {
         </button>
       </header>
 
+      <TargetClassDangerBanner targetClass={targetClass} />
+
       <section className={`operation-status-strip operation-status-strip--${connection.state}`} role="region" aria-label="Operátori rendszerállapot">
         <div>
           <p className="eyebrow">PLATFORM ÁLLAPOT</p>
@@ -288,16 +319,7 @@ export function App() {
           <strong>Jóváhagyás-köteles</strong>
           <span>Nincs közvetlen vezérlés</span>
         </div>
-        <div>
-          <p className="eyebrow">KÖRNYEZET</p>
-          <strong>Szimuláció</strong>
-          <span>Operátori megfigyelés</span>
-        </div>
-        <div>
-          <p className="eyebrow">KAPCSOLÓDÓ BODY</p>
-          <strong>1 SZIMULÁLT TEST</strong>
-          <span>Az egyetlen konfigurált szimulációs body</span>
-        </div>
+        <TargetClassBadge targetClass={targetClass} variant="strip" />
         <div>
           <p className="eyebrow">AKTÍV KÜLDETÉS</p>
           <strong>NEM ELLENŐRIZHETŐ</strong>
@@ -477,6 +499,10 @@ function sanitizeTelemetry(value: unknown): OperatorTelemetry {
     in_air: typeof value.in_air === "boolean" ? value.in_air : null,
     captured_at: capturedAt,
     heading_deg: heading,
+    target_class: parseTargetClass(value.target_class),
+    source: typeof value.source === "string" ? value.source : null,
+    armed: typeof value.armed === "boolean" ? value.armed : null,
+    flight_mode: typeof value.flight_mode === "string" ? value.flight_mode : null,
   };
 }
 

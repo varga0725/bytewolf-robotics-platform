@@ -1,3 +1,5 @@
+import type { TargetClass } from "./targetClass";
+
 export type TelemetrySnapshot = {
   position: {
     latitude_deg: number;
@@ -8,6 +10,10 @@ export type TelemetrySnapshot = {
   battery_percent: number | null;
   in_air: boolean | null;
   captured_at: string | null;
+  target_class?: TargetClass | null;
+  source?: string | null;
+  armed?: boolean | null;
+  flight_mode?: string | null;
 };
 
 export type DisplayTelemetry = {

@@ -42,9 +42,12 @@ class DemoPointRtlApiTests(unittest.TestCase):
         self.directory = TemporaryDirectory()
         telemetry = Path(self.directory.name) / "telemetry.json"
         telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
+        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        self._commands_patch.start()
         self.client = TestClient(create_app(telemetry))
 
     def tearDown(self) -> None:
+        self._commands_patch.stop()
         self.directory.cleanup()
 
     def test_missing_session_header_is_rejected(self) -> None:
@@ -89,7 +92,11 @@ class DemoPointRtlApiTests(unittest.TestCase):
             "brain.mission.sitl_target", fromlist=["TargetClassification"]
         ).TargetClassification("sitl_verified", "ok"),
     )
-    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"}, clear=False)
+    @patch.dict(
+        os.environ,
+        {"BYTEWOLF_COMMANDS_ENABLED": "true", "BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"},
+        clear=False,
+    )
     def test_approve_executes_after_review(self, _sitl, _wait, popen) -> None:
         plan_id = self.client.post(
             "/api/v1/missions/demo-point-rtl",

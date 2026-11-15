@@ -6,6 +6,7 @@ const staleTelemetry = {
   in_air: false,
   heading_deg: 180,
   captured_at: "2020-01-01T00:00:00.000Z",
+  target_class: "unknown",
 };
 
 const knowledge = {
@@ -62,6 +63,11 @@ test.beforeEach(async ({ page }) => {
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(knowledge) });
   });
   await page.goto("/");
+});
+
+test("unknown target class shows operator danger banner", async ({ page }) => {
+  await expect(page.getByRole("alert", { name: "PX4 cél figyelmeztetés" })).toBeVisible();
+  await expect(page.getByText("ISMERETLEN CÉL")).toBeVisible();
 });
 
 test("stale telemetry is visibly labelled as non-current", async ({ page }) => {

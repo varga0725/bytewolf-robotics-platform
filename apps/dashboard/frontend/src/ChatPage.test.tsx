@@ -21,7 +21,7 @@ describe("ChatPage", () => {
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ChatPage />);
+    render(<ChatPage commandsEnabled />);
     fireEvent.change(screen.getByLabelText("Küldetési kérés"), { target: { value: "Nézd meg a kaput" } });
     fireEvent.click(screen.getByRole("button", { name: "Terv készítése" }));
 
@@ -60,7 +60,7 @@ describe("ChatPage", () => {
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ChatPage />);
+    render(<ChatPage commandsEnabled />);
     fireEvent.change(screen.getByLabelText("Küldetési kérés"), { target: { value: "Ellenőrizd a területet" } });
     fireEvent.click(screen.getByRole("button", { name: "Terv készítése" }));
     await screen.findByText("Jóváhagyásra vár");
@@ -75,6 +75,27 @@ describe("ChatPage", () => {
     expect(fetchMock.mock.calls.some(([path]) => String(path).includes("approve"))).toBe(false);
   });
 
+  it("keeps non-flight chat available but hides flight approval in ground mode", async () => {
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/v1/chat"
+        ? { text: "Szia!", status: "conversation", plan_id: null, approval_required: false }
+        : {},
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ChatPage commandsEnabled={false} />);
+    expect(screen.getByLabelText("Üzenet")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Küldetési kérés")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Kifejezett jóváhagyás és indítás" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Üzenet"), { target: { value: "Mi a státusz?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Küldés" }));
+    await screen.findByText("Szia!");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/chat",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ text: "Mi a státusz?" }) }),
+    );
+  });
+
   it("surfaces an unverifiable execution status instead of leaving a submitted plan optimistic", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
       path === "/api/v1/chat"
@@ -85,7 +106,7 @@ describe("ChatPage", () => {
     ), { status: path.includes("/status") ? 503 : 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ChatPage />);
+    render(<ChatPage commandsEnabled />);
     fireEvent.change(screen.getByLabelText("Küldetési kérés"), { target: { value: "Ellenőrizd a területet" } });
     fireEvent.click(screen.getByRole("button", { name: "Terv készítése" }));
     await screen.findByText("Jóváhagyásra vár");

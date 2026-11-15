@@ -10,9 +10,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import json
 from math import hypot
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -210,11 +212,14 @@ class SurveyApiTests(unittest.TestCase):
             review=lambda _text: "chat-plan",
             execute=lambda plan: self.executed.append(plan) or "submitted",
         )
+        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        self._commands_patch.start()
         self.client = TestClient(
             create_app(Path(self.directory.name) / "telemetry.json", gateway=gateway)
         )
 
     def tearDown(self) -> None:
+        self._commands_patch.stop()
         self.directory.cleanup()
 
     def _request(self, **overrides):

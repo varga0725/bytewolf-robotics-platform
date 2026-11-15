@@ -11,8 +11,10 @@ text.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -41,6 +43,7 @@ class PiMemoryHookGatewayTests(unittest.TestCase):
         self.assertEqual(reply.text, "Rendben.")
         self.assertEqual(reply.memory_update, "unavailable")
 
+    @patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
     def test_a_failed_hook_does_not_change_the_flight_approval_boundary(self) -> None:
         reply = self._gateway("unavailable", requests_flight=True).chat(SESSION, "repülj a piros jelhez")
 

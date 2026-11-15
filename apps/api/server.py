@@ -41,6 +41,7 @@ from brain.telemetry.domain import (
 from brain.telemetry.persistence import ObservationHistoryEvent, TelemetryHistoryEvent
 from apps.gateway.plan_execution import execute_reviewed_plan, validate_px4_endpoint_for_server
 from apps.gateway.telegram_mission_gateway import _review_with_cli
+from shared.safety.commands_gate import capabilities_document, commands_enabled
 
 
 class ChatRequest(BaseModel):
@@ -125,6 +126,11 @@ def create_app(
     @app.get("/api/v1/auth/session")
     def auth_session(request: Request) -> dict[str, object]:
         return {"authenticated": True, "operator": request.state.operator}
+
+    @app.get("/api/v1/capabilities")
+    def operator_capabilities() -> dict[str, object]:
+        """Report Ground vs SITL Console mode without probing a flight target."""
+        return capabilities_document()
     # The conversational turn runs on the Python Cognitive Runtime: NIM directly,
     # the read-only plugins as tools, the reserved draft-flight path, and the
     # cognitive-hooks memory pipeline. The Node runner is no longer on the live
@@ -306,102 +312,104 @@ def create_app(
     def chat(request: ChatRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
         return _handle_gateway(lambda: command_gateway.chat(_session(x_bytewolf_session), request.text))
 
-    @app.post("/api/v1/plans/approve")
-    def approve(request: PlanRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
-        return _handle_gateway(lambda: command_gateway.approve(_session(x_bytewolf_session), request.plan_id))
+    if commands_enabled():
 
-    @app.post("/api/v1/plans/cancel")
-    def cancel(request: PlanRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
-        return _handle_gateway(lambda: command_gateway.cancel(_session(x_bytewolf_session), request.plan_id))
+        @app.post("/api/v1/plans/approve")
+        def approve(request: PlanRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
+            return _handle_gateway(lambda: command_gateway.approve(_session(x_bytewolf_session), request.plan_id))
 
-    @app.post("/api/v1/missions/demo-point-rtl")
-    def demo_point_rtl(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
-        """Review the Monday demo and offer it for explicit approval (no flight)."""
-        session = _session(x_bytewolf_session)
-        try:
-            mission = review_demo_point_rtl()
-        except DemoPointRtlError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        reply = _handle_gateway(
-            lambda: command_gateway.propose(
-                session, mission.plan_id, f"{mission.summary} Indítsam?"
+        @app.post("/api/v1/plans/cancel")
+        def cancel(request: PlanRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
+            return _handle_gateway(lambda: command_gateway.cancel(_session(x_bytewolf_session), request.plan_id))
+
+        @app.post("/api/v1/missions/demo-point-rtl")
+        def demo_point_rtl(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
+            """Review the Monday demo and offer it for explicit approval (no flight)."""
+            session = _session(x_bytewolf_session)
+            try:
+                mission = review_demo_point_rtl()
+            except DemoPointRtlError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            reply = _handle_gateway(
+                lambda: command_gateway.propose(
+                    session, mission.plan_id, f"{mission.summary} Indítsam?"
+                )
             )
-        )
-        return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
+            return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
 
-    @app.post("/api/v1/missions/demo-waypoint-mission")
-    def demo_waypoint_mission(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
-        """Review the multi-waypoint Monday demo and offer it for explicit approval (no flight)."""
-        session = _session(x_bytewolf_session)
-        try:
-            mission = review_demo_waypoint_mission()
-        except DemoWaypointMissionError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        reply = _handle_gateway(
-            lambda: command_gateway.propose(
-                session, mission.plan_id, f"{mission.summary} Indítsam?"
+        @app.post("/api/v1/missions/demo-waypoint-mission")
+        def demo_waypoint_mission(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
+            """Review the multi-waypoint Monday demo and offer it for explicit approval (no flight)."""
+            session = _session(x_bytewolf_session)
+            try:
+                mission = review_demo_waypoint_mission()
+            except DemoWaypointMissionError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            reply = _handle_gateway(
+                lambda: command_gateway.propose(
+                    session, mission.plan_id, f"{mission.summary} Indítsam?"
+                )
             )
-        )
-        return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
+            return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
 
-    @app.post("/api/v1/missions/point")
-    def point_mission(
-        request: PointMissionRequest, x_bytewolf_session: str = Header(max_length=128)
-    ) -> dict[str, object]:
-        """Review a point picked on the map, and offer it for approval.
+        @app.post("/api/v1/missions/point")
+        def point_mission(
+            request: PointMissionRequest, x_bytewolf_session: str = Header(max_length=128)
+        ) -> dict[str, object]:
+            """Review a point picked on the map, and offer it for approval.
 
-        This never starts a flight. It validates through the same MissionSpec
-        compiler and SafetyGate as every other path, writes the reviewed plan
-        with its approval proof, and hands the plan to the session's single
-        pending slot — where only an explicit approval can move it further.
-        """
-        session = _session(x_bytewolf_session)
-        try:
-            mission = review_point_mission(
-                north_m=request.north_m,
-                east_m=request.east_m,
-                altitude_m=request.altitude_m,
-                goal=request.goal,
-                profile=load_mission_safety_profile(safety_profile_path),
+            This never starts a flight. It validates through the same MissionSpec
+            compiler and SafetyGate as every other path, writes the reviewed plan
+            with its approval proof, and hands the plan to the session's single
+            pending slot — where only an explicit approval can move it further.
+            """
+            session = _session(x_bytewolf_session)
+            try:
+                mission = review_point_mission(
+                    north_m=request.north_m,
+                    east_m=request.east_m,
+                    altitude_m=request.altitude_m,
+                    goal=request.goal,
+                    profile=load_mission_safety_profile(safety_profile_path),
+                )
+            except PointMissionError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            reply = _handle_gateway(
+                lambda: command_gateway.propose(
+                    session, mission.plan_id, f"Terv kész: {mission.summary} Indítsam?"
+                )
             )
-        except PointMissionError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        reply = _handle_gateway(
-            lambda: command_gateway.propose(
-                session, mission.plan_id, f"Terv kész: {mission.summary} Indítsam?"
-            )
-        )
-        return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
+            return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
 
-    @app.post("/api/v1/missions/survey")
-    def survey_mission(
-        request: SurveyMissionRequest, x_bytewolf_session: str = Header(max_length=128)
-    ) -> dict[str, object]:
-        """Review a requested area sweep, and offer it for approval.
+        @app.post("/api/v1/missions/survey")
+        def survey_mission(
+            request: SurveyMissionRequest, x_bytewolf_session: str = Header(max_length=128)
+        ) -> dict[str, object]:
+            """Review a requested area sweep, and offer it for approval.
 
-        The area is one step in the document and many gate-checked waypoints in
-        the compiler. Nothing flies here either: the plan lands in the same
-        pending slot that only an explicit approval empties.
-        """
-        session = _session(x_bytewolf_session)
-        try:
-            mission = review_survey_mission(
-                centre_north_m=request.centre_north_m,
-                centre_east_m=request.centre_east_m,
-                radius_m=request.radius_m,
-                spacing_m=request.spacing_m,
-                altitude_m=request.altitude_m,
-                goal=request.goal,
-                profile=load_mission_safety_profile(safety_profile_path),
+            The area is one step in the document and many gate-checked waypoints in
+            the compiler. Nothing flies here either: the plan lands in the same
+            pending slot that only an explicit approval empties.
+            """
+            session = _session(x_bytewolf_session)
+            try:
+                mission = review_survey_mission(
+                    centre_north_m=request.centre_north_m,
+                    centre_east_m=request.centre_east_m,
+                    radius_m=request.radius_m,
+                    spacing_m=request.spacing_m,
+                    altitude_m=request.altitude_m,
+                    goal=request.goal,
+                    profile=load_mission_safety_profile(safety_profile_path),
+                )
+            except PointMissionError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            reply = _handle_gateway(
+                lambda: command_gateway.propose(
+                    session, mission.plan_id, f"Felderítési terv kész: {mission.summary} Indítsam?"
+                )
             )
-        except PointMissionError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        reply = _handle_gateway(
-            lambda: command_gateway.propose(
-                session, mission.plan_id, f"Felderítési terv kész: {mission.summary} Indítsam?"
-            )
-        )
-        return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
+            return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
 
     @app.get("/api/v1/memory")
     def memory(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
@@ -787,10 +795,13 @@ def _execution_status(artifact_dir: Path, mission_id: str) -> dict[str, str]:
 
 
 def _handle_gateway(call: object) -> DashboardReply:
+    from shared.safety.commands_gate import CommandsRouteUnavailableError
     from shared.safety.execution_gate import MissionExecutionQuarantinedError
 
     try:
         return call()  # type: ignore[operator]
+    except CommandsRouteUnavailableError as error:
+        raise HTTPException(status_code=404, detail="Not Found") from error
     except MissionExecutionQuarantinedError as error:
         raise HTTPException(status_code=403, detail=error.refusal.as_detail()) from error
     except PermissionError as error:
