@@ -30,7 +30,8 @@ import time
 
 
 # PX4's parameter client talks to the daemon over its working directory.
-PX4_BUILD_DIRECTORY = Path("PX4-Autopilot/build/px4_sitl_default")
+_PLATFORM_ROOT = Path(__file__).resolve().parents[2]
+PX4_BUILD_DIRECTORY = _PLATFORM_ROOT / "PX4-Autopilot/build/px4_sitl_default"
 
 # PX4 prefixes each parameter with any of its status symbols -- 'x' used,
 # '+' saved, '*' unsaved -- and a freshly set one carries two of them
