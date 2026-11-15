@@ -18,8 +18,13 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from apps.api.approval_tokens import ApprovalTokenError, ApprovalTokenStore, default_token_ttl_seconds
+from apps.api.command_audit import CommandAuditLog, plan_sha256
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway, DashboardReply
+from apps.api.operator_identity import OperatorIdentityError, resolve_operator
+from apps.api.plan_registry import resolve_plan_path
 from apps.api.telemetry import TelemetryFormatError, load_telemetry_snapshot
+from apps.gateway.telegram_mission_gateway import _DEFAULT_PLAN_DIRECTORY
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.api.demo_point_mission import DemoPointRtlError, review_demo_point_rtl
 from apps.api.demo_waypoint_mission import (
@@ -46,7 +51,7 @@ from brain.telemetry.domain import (
     SupplementalTelemetryEvent,
 )
 from brain.telemetry.persistence import ObservationHistoryEvent, TelemetryHistoryEvent
-from apps.gateway.plan_execution import execute_reviewed_plan
+from apps.gateway.plan_execution import execute_reviewed_plan, validate_px4_endpoint_for_server
 from apps.gateway.telegram_mission_gateway import _review_with_cli
 from shared.safety.commands_gate import capabilities_document, commands_enabled
 
@@ -57,6 +62,17 @@ class ChatRequest(BaseModel):
 
 class PlanRequest(BaseModel):
     plan_id: str
+
+
+class PlanApproveRequest(BaseModel):
+    plan_id: str
+    approval_token: str = Field(min_length=16, max_length=256)
+
+
+class ApprovalTokenResponse(BaseModel):
+    approval_token: str
+    plan_hash: str
+    expires_in_s: int
 
 
 class SurveyMissionRequest(BaseModel):
@@ -96,35 +112,24 @@ def create_app(
     memory_dir: Path = Path("var/pi-agent/memory"),
     world_memory_path: Path = Path("var/world-memory/claims.jsonl"),
     safety_profile_path: Path = DEFAULT_SAFETY_PROFILE_PATH,
+    plan_directory: Path = _DEFAULT_PLAN_DIRECTORY,
+    command_audit_path: Path | None = None,
+    approval_token_store: ApprovalTokenStore | None = None,
     gateway: DashboardCommandGateway | None = None,
 ) -> FastAPI:
+    validate_px4_endpoint_for_server()
     app = FastAPI(title="ByteWolf Command Gateway", version="0.1")
+    command_audit = CommandAuditLog(command_audit_path)
+    approval_tokens = approval_token_store or ApprovalTokenStore()
 
     @app.middleware("http")
     async def tailscale_identity_boundary(request: Request, call_next):
-        """Trust identity only when Tailscale Serve has injected it.
-
-        Direct development/test traffic remains loopback-only. Any request for
-        the tailnet hostname must carry a Serve identity and the login must be
-        explicitly authorized; this applies to camera reads as well as flight
-        mutations so the dashboard is never anonymously exposed.
-        """
-        hostname = request.url.hostname or ""
-        is_local = hostname in {"127.0.0.1", "localhost", "testserver"}
-        if not is_local:
-            login = request.headers.get("Tailscale-User-Login", "").strip().lower()
-            allowed = {
-                item.strip().lower()
-                for item in os.environ.get("BYTEWOLF_TAILSCALE_OPERATORS", "").split(",")
-                if item.strip()
-            }
-            if not hostname.endswith(".ts.net") or not login:
-                return Response("Tailscale Serve identity required", status_code=401)
-            if login not in allowed:
-                return Response("Tailnet user is not an authorized operator", status_code=403)
-            request.state.operator = login
-        else:
-            request.state.operator = "local"
+        """Trust identity from loopback peer, allowed Host, and Serve headers."""
+        try:
+            request.state.operator = resolve_operator(request)
+        except OperatorIdentityError as error:
+            status_code = 401 if "required" in str(error).lower() else 403
+            return Response(str(error), status_code=status_code)
         response = await call_next(request)
         response.headers["X-ByteWolf-Operator"] = request.state.operator
         return response
@@ -314,22 +319,259 @@ def create_app(
             raise HTTPException(status_code=503, detail="Mission replay is unavailable or invalid.") from error
         return _replay_document(replay)
 
+    def _target_class() -> str:
+        try:
+            return load_telemetry_snapshot(telemetry_path).target_class
+        except TelemetryFormatError:
+            return "unknown"
+
+    def _record_audit(
+        *,
+        event: str,
+        operator: str,
+        plan_hash: str | None,
+        gate_results: dict[str, object],
+        approved_by: str | None = None,
+    ) -> None:
+        command_audit.append(
+            event=event,
+            operator=operator,
+            plan_hash=plan_hash,
+            target_class=_target_class(),
+            gate_results=gate_results,
+            approved_by=approved_by,
+        )
+
+    def _plan_hash(plan_id: str) -> str:
+        return plan_sha256(resolve_plan_path(plan_id, plan_directory))
+
+    def _finalize_proposal(
+        reply: DashboardReply,
+        *,
+        operator: str,
+        session_id: str,
+    ) -> DashboardReply:
+        if not reply.approval_required or not reply.plan_id:
+            return reply
+        approval_tokens.invalidate_for_session(session_id)
+        try:
+            hashed = _plan_hash(reply.plan_id)
+        except (OSError, ValueError, FileNotFoundError):
+            return reply
+        command_gateway.attach_plan_hash(session_id, reply.plan_id, hashed)
+        _record_audit(
+            event="propose",
+            operator=operator,
+            plan_hash=hashed,
+            gate_results={"commands_enabled": True, "session_pending_slot": True},
+        )
+        return DashboardReply(
+            reply.text,
+            reply.status,
+            plan_id=reply.plan_id,
+            plan_hash=hashed,
+            approval_required=reply.approval_required,
+            memory_update=reply.memory_update,
+        )
+
     @app.post("/api/v1/chat")
-    def chat(request: ChatRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
-        return _handle_gateway(lambda: command_gateway.chat(_session(x_bytewolf_session), request.text))
+    def chat(
+        body: ChatRequest,
+        http_request: Request,
+        x_bytewolf_session: str = Header(max_length=128),
+    ) -> DashboardReply:
+        session = _session(x_bytewolf_session)
+        reply = _handle_gateway(
+            lambda: command_gateway.chat(session, body.text),
+            operator=http_request.state.operator,
+            audit=_record_audit,
+        )
+        return _finalize_proposal(reply, operator=http_request.state.operator, session_id=session)
 
     if commands_enabled():
 
+        @app.post("/api/v1/plans/approval-token", response_model=ApprovalTokenResponse)
+        def issue_approval_token(
+            body: PlanRequest,
+            http_request: Request,
+            x_bytewolf_session: str = Header(max_length=128),
+        ) -> ApprovalTokenResponse:
+            session = _session(x_bytewolf_session)
+            operator = http_request.state.operator
+            try:
+                stored_hash = command_gateway.ensure_pending_plan_hash(session, body.plan_id)
+                live_hash = _plan_hash(body.plan_id)
+                if live_hash != stored_hash:
+                    _record_audit(
+                        event="refusal",
+                        operator=operator,
+                        plan_hash=stored_hash,
+                        gate_results={
+                            "reason": "plan_changed_after_propose",
+                            "detail": "Plan file hash differs from the hash recorded at proposal.",
+                        },
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Plan changed after proposal; review it again.",
+                    ) from None
+                hashed = stored_hash
+            except PermissionError as error:
+                _record_audit(
+                    event="refusal",
+                    operator=operator,
+                    plan_hash=None,
+                    gate_results={"reason": "no_pending_plan", "detail": str(error)},
+                )
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            except (OSError, ValueError, FileNotFoundError) as error:
+                _record_audit(
+                    event="refusal",
+                    operator=operator,
+                    plan_hash=None,
+                    gate_results={"reason": "plan_integrity", "detail": str(error)},
+                )
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            ttl = default_token_ttl_seconds()
+            token = approval_tokens.issue(
+                operator=operator,
+                session_id=session,
+                plan_id=body.plan_id,
+                plan_hash=hashed,
+                ttl_seconds=ttl,
+            )
+            return ApprovalTokenResponse(approval_token=token, plan_hash=hashed, expires_in_s=ttl)
+
         @app.post("/api/v1/plans/approve")
-        def approve(request: PlanRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
-            return _handle_gateway(lambda: command_gateway.approve(_session(x_bytewolf_session), request.plan_id))
+        def approve(
+            body: PlanApproveRequest,
+            http_request: Request,
+            x_bytewolf_session: str = Header(max_length=128),
+        ) -> DashboardReply:
+            session = _session(x_bytewolf_session)
+            operator = http_request.state.operator
+            try:
+                live_hash = _plan_hash(body.plan_id)
+                stored_hash = command_gateway.pending_plan_hash(session)
+                validate_hash = stored_hash or live_hash
+                approved_by = approval_tokens.validate(
+                    body.approval_token,
+                    operator=operator,
+                    session_id=session,
+                    plan_id=body.plan_id,
+                    plan_hash=validate_hash,
+                )
+                if stored_hash is None:
+                    raise PermissionError("No pending plan belongs to this session.")
+                command_gateway.ensure_pending(session, body.plan_id)
+                if live_hash != stored_hash:
+                    _record_audit(
+                        event="refusal",
+                        operator=operator,
+                        plan_hash=stored_hash,
+                        gate_results={
+                            "reason": "plan_changed_after_propose",
+                            "detail": "Plan file hash differs from the hash recorded at proposal.",
+                        },
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Plan changed after proposal; review it again.",
+                    ) from None
+                hashed = stored_hash
+            except ApprovalTokenError as error:
+                _record_audit(
+                    event="refusal",
+                    operator=operator,
+                    plan_hash=None,
+                    gate_results={"reason": "approval_token", "detail": str(error)},
+                )
+                raise HTTPException(status_code=403, detail=str(error)) from error
+            except PermissionError as error:
+                _record_audit(
+                    event="refusal",
+                    operator=operator,
+                    plan_hash=None,
+                    gate_results={"reason": "no_pending_plan", "detail": str(error)},
+                )
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            except (OSError, ValueError, FileNotFoundError) as error:
+                _record_audit(
+                    event="refusal",
+                    operator=operator,
+                    plan_hash=None,
+                    gate_results={"reason": "plan_integrity", "detail": str(error)},
+                )
+                raise HTTPException(status_code=422, detail=str(error)) from error
+
+            try:
+                _record_audit(
+                    event="approve",
+                    operator=operator,
+                    plan_hash=hashed,
+                    gate_results={"mission_execution": "pending"},
+                    approved_by=approved_by,
+                )
+            except ValueError as error:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Command audit is unavailable; mission was not started.",
+                ) from error
+
+            try:
+                reply = _handle_gateway(
+                    lambda: command_gateway.approve(session, body.plan_id, approved_by=approved_by),
+                    operator=operator,
+                    audit=_record_audit,
+                    plan_hash=hashed,
+                )
+            except HTTPException as error:
+                if error.status_code == 403:
+                    from shared.safety.execution_gate import execution_refusal_payload
+
+                    _record_audit(
+                        event="refusal",
+                        operator=operator,
+                        plan_hash=hashed,
+                        gate_results=execution_refusal_payload(),
+                    )
+                raise
+            approval_tokens.consume(body.approval_token)
+            return reply
 
         @app.post("/api/v1/plans/cancel")
-        def cancel(request: PlanRequest, x_bytewolf_session: str = Header(max_length=128)) -> DashboardReply:
-            return _handle_gateway(lambda: command_gateway.cancel(_session(x_bytewolf_session), request.plan_id))
+        def cancel(
+            body: PlanRequest,
+            http_request: Request,
+            x_bytewolf_session: str = Header(max_length=128),
+        ) -> DashboardReply:
+            session = _session(x_bytewolf_session)
+            operator = http_request.state.operator
+            plan_hash: str | None
+            try:
+                plan_hash = _plan_hash(body.plan_id)
+            except (OSError, ValueError, FileNotFoundError):
+                plan_hash = None
+            reply = _handle_gateway(
+                lambda: command_gateway.cancel(session, body.plan_id),
+                operator=operator,
+                audit=_record_audit,
+                plan_hash=plan_hash,
+            )
+            _record_audit(
+                event="deny",
+                operator=operator,
+                plan_hash=plan_hash,
+                gate_results={"cancelled_by_operator": True},
+            )
+            approval_tokens.invalidate_for_session(session)
+            return reply
 
         @app.post("/api/v1/missions/demo-point-rtl")
-        def demo_point_rtl(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
+        def demo_point_rtl(
+            http_request: Request,
+            x_bytewolf_session: str = Header(max_length=128),
+        ) -> dict[str, object]:
             """Review the Monday demo and offer it for explicit approval (no flight)."""
             session = _session(x_bytewolf_session)
             try:
@@ -341,10 +583,17 @@ def create_app(
                     session, mission.plan_id, f"{mission.summary} Indítsam?"
                 )
             )
-            return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
+            reply = _finalize_proposal(reply, operator=http_request.state.operator, session_id=session)
+            return {
+                **mission.as_dict(),
+                "plan_id": reply.plan_id,
+                "plan_hash": reply.plan_hash,
+                "approval_required": True,
+            }
 
         @app.post("/api/v1/missions/demo-waypoint-mission")
         def demo_waypoint_mission(
+            http_request: Request,
             request: dict[str, Any] | None = Body(default=None),
             x_bytewolf_session: str = Header(max_length=128),
         ) -> dict[str, object]:
@@ -365,11 +614,19 @@ def create_app(
                     session, mission.plan_id, f"{mission.summary} Indítsam?"
                 )
             )
-            return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
+            reply = _finalize_proposal(reply, operator=http_request.state.operator, session_id=session)
+            return {
+                **mission.as_dict(),
+                "plan_id": reply.plan_id,
+                "plan_hash": reply.plan_hash,
+                "approval_required": True,
+            }
 
         @app.post("/api/v1/missions/point")
         def point_mission(
-            request: PointMissionRequest, x_bytewolf_session: str = Header(max_length=128)
+            request: PointMissionRequest,
+            http_request: Request,
+            x_bytewolf_session: str = Header(max_length=128),
         ) -> dict[str, object]:
             """Review a point picked on the map, and offer it for approval.
 
@@ -394,11 +651,19 @@ def create_app(
                     session, mission.plan_id, f"Terv kész: {mission.summary} Indítsam?"
                 )
             )
-            return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
+            reply = _finalize_proposal(reply, operator=http_request.state.operator, session_id=session)
+            return {
+                **mission.as_dict(),
+                "plan_id": reply.plan_id,
+                "plan_hash": reply.plan_hash,
+                "approval_required": True,
+            }
 
         @app.post("/api/v1/missions/survey")
         def survey_mission(
-            request: SurveyMissionRequest, x_bytewolf_session: str = Header(max_length=128)
+            request: SurveyMissionRequest,
+            http_request: Request,
+            x_bytewolf_session: str = Header(max_length=128),
         ) -> dict[str, object]:
             """Review a requested area sweep, and offer it for approval.
 
@@ -424,7 +689,13 @@ def create_app(
                     session, mission.plan_id, f"Felderítési terv kész: {mission.summary} Indítsam?"
                 )
             )
-            return {**mission.as_dict(), "plan_id": reply.plan_id, "approval_required": True}
+            reply = _finalize_proposal(reply, operator=http_request.state.operator, session_id=session)
+            return {
+                **mission.as_dict(),
+                "plan_id": reply.plan_id,
+                "plan_hash": reply.plan_hash,
+                "approval_required": True,
+            }
 
     @app.get("/api/v1/memory")
     def memory(x_bytewolf_session: str = Header(max_length=128)) -> dict[str, object]:
@@ -809,7 +1080,13 @@ def _execution_status(artifact_dir: Path, mission_id: str) -> dict[str, str]:
     return {"status": "failed", "message": "A küldetés hibával zárult; a drón nem kapott további parancsot."}
 
 
-def _handle_gateway(call: object) -> DashboardReply:
+def _handle_gateway(
+    call: object,
+    *,
+    operator: str | None = None,
+    audit: object | None = None,
+    plan_hash: str | None = None,
+) -> DashboardReply:
     from shared.safety.commands_gate import CommandsRouteUnavailableError
     from shared.safety.execution_gate import MissionExecutionQuarantinedError
 
@@ -820,6 +1097,13 @@ def _handle_gateway(call: object) -> DashboardReply:
     except MissionExecutionQuarantinedError as error:
         raise HTTPException(status_code=403, detail=error.refusal.as_detail()) from error
     except PermissionError as error:
+        if audit is not None and operator is not None:
+            audit(
+                event="refusal",
+                operator=operator,
+                plan_hash=plan_hash,
+                gate_results={"reason": "permission", "detail": str(error)},
+            )
         raise HTTPException(status_code=409, detail=str(error)) from error
     except (RuntimeError, ValueError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

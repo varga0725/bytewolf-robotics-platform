@@ -6,7 +6,14 @@ type ChatReply = {
   text: string;
   status: string;
   plan_id: string | null;
+  plan_hash?: string | null;
   approval_required: boolean;
+};
+
+type ApprovalTokenReply = {
+  approval_token: string;
+  plan_hash: string;
+  expires_in_s: number;
 };
 
 type Message = { role: "operator" | "assistant"; text: string };
@@ -35,6 +42,9 @@ export function ChatPage({ commandsEnabled }: ChatPageProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [pendingPlan, setPendingPlan] = useState<string | null>(null);
+  const [planHash, setPlanHash] = useState<string | null>(null);
+  const [approvalToken, setApprovalToken] = useState<string | null>(null);
+  const [confirmStep, setConfirmStep] = useState<0 | 1>(0);
   const [trackedPlan, setTrackedPlan] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [lifecycle, setLifecycle] = useState<Lifecycle>("ready");
@@ -64,6 +74,9 @@ export function ChatPage({ commandsEnabled }: ChatPageProps) {
       appendAssistant(reply.text);
       if (reply.approval_required && reply.plan_id) {
         setPendingPlan(reply.plan_id);
+        setPlanHash(reply.plan_hash ?? null);
+        setApprovalToken(null);
+        setConfirmStep(0);
         setTrackedPlan(reply.plan_id);
         setLifecycle("approval");
         setStatus("A terv csak a kifejezett jóváhagyásodra küldhető el a szimulációba.");
@@ -79,15 +92,52 @@ export function ChatPage({ commandsEnabled }: ChatPageProps) {
     }
   }
 
+  async function prepareConfirmation() {
+    if (!pendingPlan || busy) return;
+    setBusy(true);
+    setStatus("Szerver jóváhagyási token igénylése…");
+    try {
+      const payload = await post<ApprovalTokenReply>("/api/v1/plans/approval-token", { plan_id: pendingPlan });
+      if (planHash && payload.plan_hash !== planHash) {
+        throw new Error("A terv megváltozott a javaslat óta; ellenőrizd újra.");
+      }
+      if (!planHash) {
+        setPlanHash(payload.plan_hash);
+      }
+      setApprovalToken(payload.approval_token);
+      setConfirmStep(1);
+      setStatus("Ellenőrizd a terv-hash értéket, majd erősítsd meg a jóváhagyást.");
+    } catch (error) {
+      setConfirmStep(0);
+      setApprovalToken(null);
+      setLifecycle("error");
+      setStatus(`A jóváhagyási token nem kérhető: ${errorMessage(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function decide(action: "approve" | "cancel") {
     if (!pendingPlan || busy) return;
     const planId = pendingPlan;
+    if (action === "approve" && confirmStep === 0) {
+      await prepareConfirmation();
+      return;
+    }
     setBusy(true);
     setStatus(action === "approve" ? "A jóváhagyás elküldése folyamatban van." : "A terv visszavonása folyamatban van.");
     try {
-      const reply = await post<ChatReply>(`/api/v1/plans/${action}`, { plan_id: planId });
+      const reply = await post<ChatReply>(
+        `/api/v1/plans/${action}`,
+        action === "approve"
+          ? { plan_id: planId, approval_token: approvalToken ?? "" }
+          : { plan_id: planId },
+      );
       appendAssistant(reply.text);
       setPendingPlan(null);
+      setPlanHash(null);
+      setApprovalToken(null);
+      setConfirmStep(0);
       if (action === "cancel") {
         setLifecycle("cancelled");
         setStatus("A tervet kifejezetten visszavontad; küldetés nem indult.");
@@ -98,6 +148,10 @@ export function ChatPage({ commandsEnabled }: ChatPageProps) {
       setStatus("A jóváhagyott küldetés elküldve; a terminális visszajelzésre várunk.");
       monitor(planId);
     } catch (error) {
+      if (action === "approve") {
+        setConfirmStep(0);
+        setApprovalToken(null);
+      }
       setLifecycle("error");
       setStatus(`A ${action === "approve" ? "jóváhagyás" : "visszavonás"} nem sikerült: ${errorMessage(error)}`);
     } finally {
@@ -152,7 +206,23 @@ export function ChatPage({ commandsEnabled }: ChatPageProps) {
           </p>
         ) : messages.map((message, index) => <p className={`message message--${message.role}`} key={`${message.role}-${index}`} aria-label={message.role === "operator" ? "Operátor üzenete" : "Asszisztens üzenete"}>{message.text}</p>)}
       </div>
-      {commandsEnabled && pendingPlan && <div className="approval-panel" aria-labelledby="approval-title" aria-describedby="approval-boundary approval-id"><strong id="approval-title">Jóváhagyásra vár</strong><p id="approval-id">Tervazonosító: {pendingPlan}</p><p id="approval-boundary">Ellenőrzési határ: az asszisztens csak javaslatot készített.</p><p>Ez a terv csak ebben a böngésző-sessionben érvényes. Az indítás kizárólag a kifejezett jóváhagyás után történhet.</p><button type="button" className="primary" onClick={() => void decide("approve")} disabled={busy}>Kifejezett jóváhagyás és indítás</button><button type="button" onClick={() => void decide("cancel")} disabled={busy}>Terv visszavonása</button></div>}
+      {commandsEnabled && pendingPlan && (
+        <div className="approval-panel" aria-labelledby="approval-title" aria-describedby="approval-boundary approval-id approval-hash">
+          <strong id="approval-title">{confirmStep === 0 ? "Jóváhagyásra vár" : "Terv-hash megerősítése"}</strong>
+          <p id="approval-id">Tervazonosító: {pendingPlan}</p>
+          {planHash && <p id="approval-hash"><strong>Terv SHA-256:</strong> <code>{planHash}</code></p>}
+          <p id="approval-boundary">Ellenőrzési határ: az asszisztens csak javaslatot készített.</p>
+          <p>
+            {confirmStep === 0
+              ? "Ez a terv csak ebben a böngésző-sessionben érvényes. A következő lépésben a szerver rövid élettartamú jóváhagyási tokent ad ki."
+              : "A jóváhagyás csak akkor indítható, ha a fenti hash megegyezik a szerver által kiadott tokennel összekötött tervvel."}
+          </p>
+          <button type="button" className="primary" onClick={() => void decide("approve")} disabled={busy}>
+            {confirmStep === 0 ? "Tovább a terv-hash megerősítéséhez" : "Kifejezett jóváhagyás és indítás"}
+          </button>
+          <button type="button" onClick={() => void decide("cancel")} disabled={busy}>Terv visszavonása</button>
+        </div>
+      )}
       <form className="composer" onSubmit={submit}>
         <label htmlFor="chat-prompt">{commandsEnabled ? "Küldetési kérés" : "Üzenet"}</label>
         <textarea id="chat-prompt" aria-describedby="chat-guidance" value={text} onChange={(event) => setText(event.target.value)} maxLength={2000} rows={3} disabled={inputLocked} />

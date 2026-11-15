@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from apps.api.server import create_app
+from tests.command_approval_helpers import IDENTITY_TEST_ENV, issue_and_approve
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.mission.demo_point_rtl import (
     MISSION_TYPE,
@@ -42,7 +43,13 @@ class DemoPointRtlApiTests(unittest.TestCase):
         self.directory = TemporaryDirectory()
         telemetry = Path(self.directory.name) / "telemetry.json"
         telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
-        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        from tests.command_approval_helpers import IDENTITY_TEST_ENV
+
+        self._commands_patch = patch.dict(
+            os.environ,
+            {**IDENTITY_TEST_ENV, "BYTEWOLF_COMMANDS_ENABLED": "true"},
+            clear=False,
+        )
         self._commands_patch.start()
         self.client = TestClient(create_app(telemetry))
 
@@ -61,7 +68,11 @@ class DemoPointRtlApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(
+        os.environ,
+        {**IDENTITY_TEST_ENV, "BYTEWOLF_COMMANDS_ENABLED": "true"},
+        clear=True,
+    )
     def test_review_registers_a_plan_without_executing(self) -> None:
         response = self.client.post(
             "/api/v1/missions/demo-point-rtl",
@@ -70,15 +81,24 @@ class DemoPointRtlApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["approval_required"])
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(
+        os.environ,
+        {**IDENTITY_TEST_ENV, "BYTEWOLF_COMMANDS_ENABLED": "true"},
+        clear=True,
+    )
     def test_approve_refuses_execution_when_quarantined(self) -> None:
         plan_id = self.client.post(
             "/api/v1/missions/demo-point-rtl",
             headers={"X-ByteWolf-Session": SESSION},
         ).json()["plan_id"]
+        token_response = self.client.post(
+            "/api/v1/plans/approval-token",
+            json={"plan_id": plan_id},
+            headers={"X-ByteWolf-Session": SESSION},
+        )
         response = self.client.post(
             "/api/v1/plans/approve",
-            json={"plan_id": plan_id},
+            json={"plan_id": plan_id, "approval_token": token_response.json()["approval_token"]},
             headers={"X-ByteWolf-Session": SESSION},
         )
         self.assertEqual(response.status_code, 403)
@@ -104,11 +124,7 @@ class DemoPointRtlApiTests(unittest.TestCase):
         ).json()["plan_id"]
         process = MagicMock(pid=99, poll=MagicMock(return_value=None))
         popen.return_value = process
-        approved = self.client.post(
-            "/api/v1/plans/approve",
-            json={"plan_id": plan_id},
-            headers={"X-ByteWolf-Session": SESSION},
-        )
+        _, approved = issue_and_approve(self.client, SESSION, plan_id)
         self.assertEqual(approved.status_code, 200)
         command = popen.call_args.args[0]
         self.assertIn("brain.cli.fly_demo_point_rtl", command)

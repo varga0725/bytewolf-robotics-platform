@@ -20,9 +20,21 @@ from apps.gateway.telegram_mission_gateway import (
 from apps.api.map_mission_home import validate_plan_home_at_execution
 from brain.mission.demo_reviewed_plan import require_matching_demo_approval
 from brain.mission.sitl_target import TargetClassifier
+from brain.safety.connection_policy import validate_local_sitl_udp_endpoint
 from brain.safety.deployment import authorize_readonly_connection
 from brain.telemetry.link_lease import claim_link, default_lease_path, release_link, wait_for_free_link
 from shared.safety.execution_gate import MissionExecutionQuarantinedError, require_mission_execution_enabled
+
+
+def px4_endpoint_from_environment() -> str:
+    return validate_local_sitl_udp_endpoint(
+        os.environ.get("BYTEWOLF_PX4_ENDPOINT", "udpin://127.0.0.1:14540")
+    )
+
+
+def validate_px4_endpoint_for_server() -> None:
+    """Refuse Control Room startup when BYTEWOLF_PX4_ENDPOINT violates loopback policy."""
+    px4_endpoint_from_environment()
 
 
 def execute_reviewed_plan(plan_name: str) -> str:
@@ -37,7 +49,7 @@ def execute_reviewed_plan(plan_name: str) -> str:
     with _execution_lock:
         if _active_execution is not None and _active_execution.poll() is None:
             raise RuntimeError("A SITL mission is already running.")
-        endpoint = os.environ.get("BYTEWOLF_PX4_ENDPOINT", "udpin://127.0.0.1:14540")
+        endpoint = px4_endpoint_from_environment()
         authorize_readonly_connection("simulation", endpoint)
         classification = TargetClassifier.require_sitl_verified(endpoint)
         if classification.verdict != "sitl_verified":
@@ -97,7 +109,7 @@ def _validate_plan_before_spawn(plan_path: Path) -> None:
 
 
 def _execution_command(plan_path: Path) -> list[str]:
-    endpoint = os.environ.get("BYTEWOLF_PX4_ENDPOINT", "udpin://127.0.0.1:14540")
+    endpoint = px4_endpoint_from_environment()
     if plan_path.name.endswith(".demo-point-rtl.json"):
         return [
             sys.executable,

@@ -60,6 +60,36 @@ scope for this ticket). Remediation options belong in a follow-up (upstream
 feature, MAVSDK pin with a bind-host flag, or an architecture change explicitly
 approved outside BYT-46).
 
+## BYT-73 firewall containment
+
+Evidence from this repo (wheel help and upstream `grpc_server.cpp`, sections
+above) shows no supported gRPC bind-host flag. **Option (a) is unavailable** on
+the pinned stack.
+
+The Ubuntu stack therefore enables **`bytewolf-mavsdk-grpc-containment.service`**
+(a oneshot unit) which runs `deploy/systemd/apply-mavsdk-grpc-containment.sh` at
+boot and after install. The unit runs **as root** (no `User=`; bounded
+`CAP_NET_ADMIN` / `CAP_NET_RAW`, `ProtectHome=read-only`, `NoNewPrivileges=yes`)
+because `iptables` requires those capabilities and the host has no NOPASSWD
+sudoers for the `bytewolf` user. The same script uses **`sudo` only when**
+invoked interactively by a non-root user.
+
+The script applies **narrow, idempotent iptables/ip6tables INPUT DROP rules** for
+**NEW** inbound TCP only (`-m conntrack --ctstate NEW`, `! -i lo`) on MAVSDK gRPC
+ports `50051`, `50055`, and `51000–60999`. Rules carry comment
+`bytewolf-mavsdk-grpc-loopback`, use `iptables -C` (with `sudo` when non-root)
+before `-I`, and do not flush or rewrite unrelated policy.
+
+`deploy/systemd/verify-stack.sh` requires the containment rules to be present and
+fails closed when a `mavsdk_server` listener uses a port outside that set, when
+`ss` rows are unparseable, or when a wide bind (`0.0.0.0`) exists **without** the
+firewall rules. With rules in place, a `0.0.0.0` bind is tolerated because remote
+reachability is denied at the host.
+
+The always-on dashboard relay defaults to **pymavlink** and does not spawn
+`mavsdk_server`. Missions and `--backend mavsdk` still do; containment limits who
+can reach those listeners while upstream lacks a true loopback bind.
+
 ## BYT-49 default (pymavlink backend)
 
 The dashboard telemetry relay (`brain.cli.dashboard_telemetry`) now defaults to

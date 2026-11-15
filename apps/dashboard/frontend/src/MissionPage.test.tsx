@@ -105,10 +105,18 @@ describe("MissionPage", () => {
   it("reviews a point mission before it exposes the explicit start control", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
       path === "/api/v1/missions/point"
-        ? { plan_id: "plan-1", summary: "Rövid út", goal: "Teszt", steps: ["TAKEOFF"], waypoints: [] }
+        ? {
+          plan_id: "plan-1",
+          plan_hash: "hash-1",
+          summary: "Rövid út",
+          goal: "Teszt",
+          steps: ["TAKEOFF"],
+          waypoints: [],
+          approval_required: true,
+        }
         : path === "/api/v1/plans/approval-token"
-          ? { approval_token: "token-1", plan_hash: "hash-1", expires_in_s: 30 }
-          : missionPayload(path),
+          ? { approval_token: "token-1", plan_hash: "hash-1", expires_in_s: 60 }
+        : missionPayload(path),
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -117,6 +125,7 @@ describe("MissionPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Terv ellenőrzése" }));
 
     await waitFor(() => expect(screen.getByText(/küldetés még nem indult el/i)).toBeInTheDocument());
+    expect(await screen.findByRole("button", { name: /Tovább a terv-hash megerősítéséhez/ })).toBeInTheDocument();
     expect(screen.getByText("1. Javaslat elküldve")).toBeInTheDocument();
     expect(screen.getByText("2. SafetyGate ellenőrizte")).toBeInTheDocument();
     expect(screen.getByText("3. Operátori jóváhagyás szükséges")).toBeInTheDocument();

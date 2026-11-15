@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"\napproving {reply.plan_id} and executing…")
             approved = True
-            outcome = gateway.approve(session_id, reply.plan_id)
+            outcome = gateway.approve(session_id, reply.plan_id, approved_by="local")
             print(f"agent> {outcome.text}")
             execution_status = outcome.status
             executed = outcome.status not in {"rejected", "error"}

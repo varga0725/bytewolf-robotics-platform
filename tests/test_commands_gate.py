@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway
 from apps.api.server import create_app
 from shared.safety.commands_gate import commands_enabled, capabilities_document
+from tests.command_approval_helpers import IDENTITY_TEST_ENV
 
 
 SESSION = "b3b9c777-4860-4b6d-bf59-1a4a98c31ea3"
@@ -56,17 +57,24 @@ class CommandsGateUnitTests(unittest.TestCase):
 
 
 class CommandsGateApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._env_patch = patch.dict(
+            os.environ,
+            IDENTITY_TEST_ENV,
+            clear=True,
+        )
+        self._env_patch.start()
+        self.client = _telemetry_client()
+
     def tearDown(self) -> None:
+        patch_stop = getattr(self, "_env_patch", None)
+        if patch_stop is not None:
+            patch_stop.stop()
         client = getattr(self, "client", None)
         directory = getattr(client, "_directory", None) if client is not None else None
         if directory is not None:
             directory.cleanup()
 
-    @patch.dict(os.environ, {}, clear=True)
-    def setUp(self) -> None:
-        self.client = _telemetry_client()
-
-    @patch.dict(os.environ, {}, clear=True)
     def test_capabilities_reports_ground_mode_by_default(self) -> None:
         response = self.client.get("/api/v1/capabilities")
         self.assertEqual(response.status_code, 200)
@@ -81,7 +89,7 @@ class CommandsGateApiTests(unittest.TestCase):
         self.assertTrue(response.json()["commands_enabled"])
         client._directory.cleanup()
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(os.environ, IDENTITY_TEST_ENV, clear=True)
     def test_command_routes_are_absent_when_disabled(self) -> None:
         headers = {"X-ByteWolf-Session": SESSION}
         body = {"north_m": 5.0, "east_m": 0.0, "altitude_m": 3.0, "goal": "Demo pont."}
@@ -95,6 +103,7 @@ class CommandsGateApiTests(unittest.TestCase):
         }
         routes = [
             ("post", "/api/v1/plans/approve", {"plan_id": "plan-x"}),
+            ("post", "/api/v1/plans/approval-token", {"plan_id": "plan-x"}),
             ("post", "/api/v1/plans/cancel", {"plan_id": "plan-x"}),
             ("post", "/api/v1/missions/point", body),
             ("post", "/api/v1/missions/survey", survey),
@@ -109,14 +118,14 @@ class CommandsGateApiTests(unittest.TestCase):
                 response = getattr(self.client, method)(path, **kwargs)
                 self.assertEqual(response.status_code, 404)
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(os.environ, IDENTITY_TEST_ENV, clear=True)
     def test_chat_flight_intent_returns_not_found_when_commands_disabled(self) -> None:
         response = self.client.post(
             "/api/v1/chat", headers={"X-ByteWolf-Session": SESSION}, json={"text": "repülj"}
         )
         self.assertEqual(response.status_code, 404)
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(os.environ, IDENTITY_TEST_ENV, clear=True)
     def test_chat_conversation_survives_when_commands_disabled(self) -> None:
         client = _telemetry_client(requests_flight=False)
         response = client.post(

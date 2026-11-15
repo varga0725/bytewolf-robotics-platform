@@ -10,6 +10,7 @@ from typing import Literal
 from brain.mission.acceptance_inflight_px4_mode import px4_flight_mode_from_custom_mode
 from brain.preflight_params.mavlink import MavlinkReadError, normalize_connection_url
 from brain.navigation.waypoints import GlobalPosition, horizontal_distance_m
+from brain.safety.connection_policy import ConnectionPolicyError, require_local_sitl_udp_endpoint
 
 MAV_CMD_COMPONENT_ARM_DISARM = 400
 EMERGENCY_DISARM_MAGIC = 21196
@@ -32,6 +33,10 @@ class GcsHeartbeatPublisher:
     """Send periodic GCS heartbeats so PX4 tracks datalink while enabled."""
 
     def __init__(self, connection_url: str, *, interval_s: float = 1.0) -> None:
+        try:
+            require_local_sitl_udp_endpoint(connection_url)
+        except ConnectionPolicyError as error:
+            raise MavlinkReadError(str(error)) from error
         self._url = normalize_connection_url(connection_url)
         self._interval_s = interval_s
         self._stop = threading.Event()
@@ -84,6 +89,10 @@ class GcsHeartbeatPublisher:
 
 
 def _mavlink_connection(connection_url: str, *, timeout_s: float = 10.0):
+    try:
+        require_local_sitl_udp_endpoint(connection_url)
+    except ConnectionPolicyError as error:
+        raise MavlinkReadError(str(error)) from error
     try:
         from pymavlink import mavutil
     except ModuleNotFoundError as error:

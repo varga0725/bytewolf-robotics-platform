@@ -19,10 +19,10 @@ type Envelope = {
 
 type Mission = {
   plan_id: string;
+  plan_hash?: string | null;
   summary: string;
   goal: string;
   steps: string[];
-  plan_hash?: string | null;
   waypoints?: Array<{ north_m: number; east_m: number; altitude_m?: number }>;
 };
 
@@ -59,6 +59,8 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
   const [spacing, setSpacing] = useState("3");
   const [goal, setGoal] = useState("Biztonságos pontküldetés a szimulációban");
   const [plan, setPlan] = useState<Mission | null>(null);
+  const [approvalToken, setApprovalToken] = useState<string | null>(null);
+  const [confirmStep, setConfirmStep] = useState<0 | 1>(0);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("A biztonsági korlátok betöltése…");
   const [occupancyCells, setOccupancyCells] = useState<OccupancyCell[]>([]);
@@ -67,8 +69,6 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
   const [pendingTarget, setPendingTarget] = useState<{ latitude_deg: number; longitude_deg: number } | null>(null);
   const [mapWaypoints, setMapWaypoints] = useState<ControlRoomMapWaypoint[]>([]);
   const [mapHome, setMapHome] = useState<MapHomePosition | null>(null);
-  const [approvalToken, setApprovalToken] = useState<string | null>(null);
-  const [confirmStep, setConfirmStep] = useState<0 | 1>(0);
   const statusTimer = useRef<number | null>(null);
   const mapSize = 400;
   // The view is chosen, not derived from the safety radius. Deriving it meant

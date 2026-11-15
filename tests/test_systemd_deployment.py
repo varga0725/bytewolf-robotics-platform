@@ -66,6 +66,32 @@ class SystemdDeploymentTests(unittest.TestCase):
         self.assertIn("API_ROOT=http://127.0.0.1:8080", verifier)
         self.assertIn("127.0.0.1", control_room)
 
+    def test_installer_enables_mavsdk_grpc_containment_service(self) -> None:
+        installer = self._unit("install-stack.sh")
+        self.assertIn("bytewolf-mavsdk-grpc-containment.service", installer)
+        self.assertNotIn("apply-mavsdk-grpc-containment.sh", installer)
+
+    def test_target_wants_mavsdk_grpc_containment(self) -> None:
+        target = self._unit("bytewolf.target")
+        self.assertIn("bytewolf-mavsdk-grpc-containment.service", target)
+
+    def test_verifier_checks_mavsdk_grpc_containment_posture(self) -> None:
+        verifier = self._unit("verify-stack.sh")
+        self.assertIn("brain.deploy.mavsdk_grpc_containment", verifier)
+        self.assertIn("verify-posture", verifier)
+        self.assertIn("ss -ltnp", verifier)
+        self.assertIn("bytewolf-mavsdk-grpc-containment.service", verifier)
+
+    def test_containment_unit_is_oneshot(self) -> None:
+        unit = self._unit("bytewolf-mavsdk-grpc-containment.service")
+        self.assertIn("Type=oneshot", unit)
+        self.assertIn("RemainAfterExit=yes", unit)
+        self.assertIn("apply-mavsdk-grpc-containment.sh", unit)
+        self.assertNotIn("User=bytewolf", unit)
+        self.assertIn("ProtectHome=read-only", unit)
+        self.assertIn("NoNewPrivileges=yes", unit)
+        self.assertIn("CAP_NET_ADMIN", unit)
+
     def test_control_room_and_telemetry_are_pinned_to_simulation(self) -> None:
         for service in ("bytewolf-controlroom.service", "bytewolf-telemetry.service"):
             with self.subTest(service=service):
