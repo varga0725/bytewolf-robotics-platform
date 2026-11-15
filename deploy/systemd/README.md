@@ -20,13 +20,13 @@ deploy/systemd/verify-stack.sh
 
 The installer is idempotent. It validates the pinned PX4/Gazebo baseline and
 the Python 3.10 Gazebo bindings, builds both frontends, verifies and installs
-the units, applies the narrow **mavsdk_server gRPC loopback firewall** rule
-(`apply-mavsdk-grpc-containment.sh`), and restarts the target. It deliberately
-does not install packages, credentials, or publish the loopback API; the Ubuntu
-runbook owns host prerequisites and remote access remains blocked.
+the units, enables the **`bytewolf-mavsdk-grpc-containment.service`** oneshot
+(firewall rules via `apply-mavsdk-grpc-containment.sh`), and restarts the target.
+It deliberately does not install packages, credentials, or publish the loopback
+API; the Ubuntu runbook owns host prerequisites and remote access remains blocked.
 
-`verify-stack.sh` rejects a running `mavsdk_server` that still listens on a
-non-loopback address (see `docs/mavsdk-server-grpc-listen-address.md`).
+`verify-stack.sh` requires the containment rules and inspects `mavsdk_server`
+listeners via `ss` (see `docs/mavsdk-server-grpc-listen-address.md`).
 
 ## Operate
 

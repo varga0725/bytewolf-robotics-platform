@@ -11,6 +11,7 @@ units=(
   bytewolf-world-map.service
   bytewolf-yolo.service
   bytewolf-controlroom.service
+  bytewolf-mavsdk-grpc-containment.service
   bytewolf.target
 )
 
@@ -21,9 +22,9 @@ done
 
 cd "$PROJECT_ROOT"
 
-if ! ss -ltnp | .venv/bin/python -m brain.deploy.mavsdk_grpc_containment verify-listeners; then
-  echo "Refusing stack verification: mavsdk_server must not listen on a non-loopback address." >&2
-  echo "Re-run deploy/systemd/apply-mavsdk-grpc-containment.sh after install, or stop stray mavsdk_server processes." >&2
+if ! ss -ltnp | .venv/bin/python -m brain.deploy.mavsdk_grpc_containment verify-posture; then
+  echo "Refusing stack verification: mavsdk_server gRPC firewall containment is missing or incomplete." >&2
+  echo "Run: sudo systemctl start bytewolf-mavsdk-grpc-containment.service" >&2
   exit 1
 fi
 

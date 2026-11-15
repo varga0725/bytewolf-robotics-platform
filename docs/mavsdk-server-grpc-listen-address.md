@@ -60,32 +60,29 @@ scope for this ticket). Remediation options belong in a follow-up (upstream
 feature, MAVSDK pin with a bind-host flag, or an architecture change explicitly
 approved outside BYT-46).
 
-## BYT-73 containment (host firewall)
+## BYT-73 firewall containment
 
 Evidence from this repo (wheel help and upstream `grpc_server.cpp`, sections
 above) shows no supported gRPC bind-host flag. **Option (a) is unavailable** on
 the pinned stack.
 
-The Ubuntu stack installer therefore applies a **narrow, idempotent iptables/ip6tables
-INPUT rule** (`deploy/systemd/apply-mavsdk-grpc-containment.sh`) that drops only
-non-loopback sources targeting MAVSDK gRPC ports (`50051` and `51000–60999`, the
-same range the headless scenario runner allocates). The rule carries comment
-`bytewolf-mavsdk-grpc-loopback`, inserts with `-I` only when `-C` reports it is
-missing, and does not flush or rewrite unrelated policy.
+The Ubuntu stack therefore enables **`bytewolf-mavsdk-grpc-containment.service`**
+(a oneshot unit) which runs `deploy/systemd/apply-mavsdk-grpc-containment.sh` at
+boot and after install. That script applies **narrow, idempotent iptables/ip6tables
+INPUT DROP rules** for **NEW** inbound TCP only (`-m conntrack --ctstate NEW`,
+`! -i lo`) on MAVSDK gRPC ports `50051`, `50055`, and `51000–60999`. Rules carry
+comment `bytewolf-mavsdk-grpc-loopback`, use `sudo iptables -C` before `-I`, and
+do not flush or rewrite unrelated policy.
 
-`deploy/systemd/verify-stack.sh` still fails closed when `ss -ltnp` shows
-`mavsdk_server` bound to a non-loopback address (for example `0.0.0.0:50051`), so
-an operator cannot mistake an uncontained listener for an acceptable posture.
+`deploy/systemd/verify-stack.sh` requires the containment rules to be present and
+fails closed when a `mavsdk_server` listener uses a port outside that set, when
+`ss` rows are unparseable, or when a wide bind (`0.0.0.0`) exists **without** the
+firewall rules. With rules in place, a `0.0.0.0` bind is tolerated because remote
+reachability is denied at the host.
 
 The always-on dashboard relay defaults to **pymavlink** and does not spawn
 `mavsdk_server`. Missions and `--backend mavsdk` still do; containment limits who
 can reach those listeners while upstream lacks a true loopback bind.
-
-## Longer-term direction
-
-See [pymavlink-sitl-mission-adapter.md](pymavlink-sitl-mission-adapter.md) for a
-pymavlink-based mission path that would remove the gRPC listener from routine
-SITL flights without relaxing the safety gate.
 
 ## BYT-49 default (pymavlink backend)
 
