@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
             verify_sitl_failsafe_profile(px4_build_directory=build_directory, read_px4_parameter=read)
         except SitlFailsafeProfileError as error:
             print(error, file=sys.stderr)
-            write_sitl_failsafe_status(run_directory, "failed", str(error))
+            write_sitl_failsafe_status(run_directory, "failed", reason=str(error))
             return 2
         print("SITL failsafe profile verified on PX4.")
         return 0
@@ -69,14 +69,14 @@ def main(argv: list[str] | None = None) -> int:
             px4_build_directory=build_directory,
             read_px4_parameter=read,
         )
-        write_sitl_failsafe_status(run_directory, "applied", f"count={len(applied)}")
+        write_sitl_failsafe_status(run_directory, "applied", reason=f"count={len(applied)}")
     except SitlFailsafeProfileError as error:
         print(error, file=sys.stderr)
-        write_sitl_failsafe_status(run_directory, "failed", str(error))
+        write_sitl_failsafe_status(run_directory, "failed", reason=str(error))
         return 2
     except FaultInjectionError as error:
         print(error, file=sys.stderr)
-        write_sitl_failsafe_status(run_directory, "failed", str(error))
+        write_sitl_failsafe_status(run_directory, "failed", reason=str(error))
         return 1
     print(f"Applied {len(applied)} SITL failsafe parameters.")
     return 0

@@ -5,7 +5,9 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+
+from simulation.gazebo.fault_injection import AppliedParameter, FaultInjectionError
 
 from brain.preflight_params.evaluate import evaluate_params
 from brain.preflight_params.param_value import MAV_PARAM_TYPE_INT32, MAV_PARAM_TYPE_REAL32, ParamValue
@@ -103,19 +105,84 @@ class SitlFailsafeStatusAndVerifyTests(unittest.TestCase):
         with self.assertRaises(SitlFailsafeProfileError):
             verify_sitl_failsafe_profile(px4_build_directory=Path("build"), read_px4_parameter=bad_read)
 
-    def test_cli_verify_requires_applied_status_when_run_dir_set(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            run_dir = Path(directory)
-            code = apply_cli.main(["--verify", "--px4-run-directory", str(run_dir)])
-            self.assertEqual(code, 3)
-            self.assertIn("failed", sitl_failsafe_status_path(run_dir).read_text(encoding="utf-8"))
-
     def test_apply_helper_stops_retry_on_exit_code_two(self) -> None:
         root = Path(__file__).resolve().parents[1]
         helper = (root / "simulation/gazebo/launch/apply_sitl_failsafe_profile.zsh").read_text(encoding="utf-8")
         self.assertIn("exit_code=$?", helper)
         self.assertIn("(( exit_code == 2 ))", helper)
         self.assertIn("return 2", helper)
+
+
+class SitlFailsafeCliMainTests(unittest.TestCase):
+    def _run_dir(self) -> tuple[Path, list[str]]:
+        tmp = tempfile.mkdtemp()
+        run_dir = Path(tmp)
+        base = ["--px4-build-directory", str(run_dir), "--px4-run-directory", str(run_dir)]
+        return run_dir, base
+
+    @patch("simulation.px4.apply_sitl_failsafe_profile.apply_sitl_failsafe_profile")
+    def test_gate_refusal_returns_two_and_writes_failed_with_reason(self, apply_mock: Mock) -> None:
+        apply_mock.side_effect = SitlFailsafeProfileError("Refusing SITL gate")
+        run_dir, args = self._run_dir()
+        code = apply_cli.main(args)
+        self.assertEqual(code, 2)
+        text = sitl_failsafe_status_path(run_dir).read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("failed\n"))
+        self.assertIn("Refusing SITL gate", text)
+
+    @patch("simulation.px4.apply_sitl_failsafe_profile.apply_sitl_failsafe_profile")
+    def test_unready_client_returns_one_and_writes_failed(self, apply_mock: Mock) -> None:
+        apply_mock.side_effect = FaultInjectionError("PX4 parameter client timed out")
+        run_dir, args = self._run_dir()
+        code = apply_cli.main(args)
+        self.assertEqual(code, 1)
+        text = sitl_failsafe_status_path(run_dir).read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("failed\n"))
+        self.assertIn("timed out", text)
+
+    @patch("simulation.px4.apply_sitl_failsafe_profile.verify_sitl_failsafe_profile")
+    @patch(
+        "simulation.px4.apply_sitl_failsafe_profile.profile_applied_in_run_directory",
+        return_value=True,
+    )
+    def test_verify_mismatch_returns_two_and_writes_failed(self, _applied: Mock, verify_mock: Mock) -> None:
+        verify_mock.side_effect = SitlFailsafeProfileError("GF_MAX_HOR_DIST: expected 100, got 0")
+        run_dir, args = self._run_dir()
+        code = apply_cli.main([*args, "--verify"])
+        self.assertEqual(code, 2)
+        text = sitl_failsafe_status_path(run_dir).read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("failed\n"))
+        self.assertIn("GF_MAX_HOR_DIST", text)
+
+    def test_verify_without_applied_status_returns_three(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            code = apply_cli.main(
+                [
+                    "--px4-build-directory",
+                    str(run_dir),
+                    "--px4-run-directory",
+                    str(run_dir),
+                    "--verify",
+                ]
+            )
+            self.assertEqual(code, 3)
+            text = sitl_failsafe_status_path(run_dir).read_text(encoding="utf-8")
+            self.assertTrue(text.startswith("failed\n"))
+            self.assertIn("does not record applied", text)
+
+    @patch("simulation.px4.apply_sitl_failsafe_profile.apply_sitl_failsafe_profile")
+    def test_success_writes_applied_status(self, apply_mock: Mock) -> None:
+        applied = tuple(
+            AppliedParameter("GF_MAX_HOR_DIST", 100.0, 100.0) for _ in range(3)
+        )
+        apply_mock.return_value = applied
+        run_dir, args = self._run_dir()
+        code = apply_cli.main(args)
+        self.assertEqual(code, 0)
+        text = sitl_failsafe_status_path(run_dir).read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("applied\n"))
+        self.assertIn("count=3", text)
 
 
 class SitlFailsafePreflightTests(unittest.TestCase):
