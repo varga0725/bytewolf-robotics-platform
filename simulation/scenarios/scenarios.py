@@ -296,9 +296,16 @@ class ScenarioRunner:
         twin_path: Path | None = None,
         wind_observer: Callable[[str, str, Path], object] = GazeboPoseObserver,
         apply_px4_parameters: Callable[..., tuple] = apply_px4_parameters,
+        apply_sitl_failsafe: Callable[..., tuple] | None = None,
     ) -> None:
         self._wind_observer = wind_observer
         self._apply_px4_parameters = apply_px4_parameters
+        if apply_sitl_failsafe is None:
+            from simulation.px4.sitl_failsafe_profile import apply_sitl_failsafe_profile
+
+            self._apply_sitl_failsafe = apply_sitl_failsafe_profile
+        else:
+            self._apply_sitl_failsafe = apply_sitl_failsafe
         self._command_runner = command_runner
         self._uses_default_command_runner = command_runner is subprocess.run
         self._now = now or (lambda: datetime.now(UTC))
@@ -317,6 +324,7 @@ class ScenarioRunner:
         self._sitl_retry_delay_s = sitl_retry_delay_s
         self._sleep = sleep
         self._scenario_subprocess_env: dict[str, str] = {}
+        self._current_px4_run_dir: Path | None = None
 
     def run(self, scenarios: Iterable[Scenario], output_directory: Path) -> Path:
         """Run every scenario and write one JSON report, including failures."""
@@ -359,6 +367,7 @@ class ScenarioRunner:
         px4_run_directory.mkdir(parents=True, exist_ok=True)
         sitl_environment = _px4_run_directory_environment(px4_run_directory)
         self._scenario_subprocess_env = sitl_environment
+        self._current_px4_run_dir = px4_run_directory
         try:
             sitl_process = self._start_sitl(sitl_environment)
             launch_failure = self._sitl_launch_failure(sitl_process)
@@ -372,6 +381,12 @@ class ScenarioRunner:
                     self._blocked_result(scenario, "SITL readiness check failed.", output_directory)
                     for scenario in scenarios
                 )
+            try:
+                self._ensure_sitl_failsafe_profile()
+            except FaultInjectionError as error:
+                return tuple(
+                    self._blocked_result(scenario, str(error), output_directory) for scenario in scenarios
+                )
             return tuple(self._run_scenario(scenario, output_directory) for scenario in scenarios)
         except OSError as error:
             return tuple(
@@ -382,6 +397,7 @@ class ScenarioRunner:
             if sitl_process is not None:
                 self._stop_sitl(sitl_process)
             self._scenario_subprocess_env = {}
+            self._current_px4_run_dir = None
 
     def _run_with_fresh_sitl(self, scenario: Scenario, output_directory: Path) -> ScenarioResult:
         """Run one disruptive scenario against a brand-new bounded SITL lifecycle."""
@@ -397,6 +413,7 @@ class ScenarioRunner:
         px4_run_directory.mkdir(parents=True, exist_ok=True)
         px4_env = _px4_run_directory_environment(px4_run_directory)
         self._scenario_subprocess_env = px4_env
+        self._current_px4_run_dir = px4_run_directory
         if environment is None:
             environment = px4_env
         else:
@@ -410,6 +427,10 @@ class ScenarioRunner:
                 return self._blocked_result(scenario, launch_failure, output_directory, wind)
             if sitl_process is not None and not self._readiness_check(sitl_process):
                 return self._blocked_result(scenario, "SITL readiness check failed.", output_directory, wind)
+            try:
+                self._ensure_sitl_failsafe_profile()
+            except FaultInjectionError as error:
+                return self._blocked_result(scenario, str(error), output_directory, wind)
             try:
                 injected = self._inject_faults(scenario)
             except FaultInjectionError as error:
@@ -427,6 +448,7 @@ class ScenarioRunner:
             if sitl_process is not None:
                 self._stop_sitl(sitl_process)
             self._scenario_subprocess_env = {}
+            self._current_px4_run_dir = None
 
     def _run_observed_wind_scenario(
         self, scenario: Scenario, output_directory: Path, wind: WindEvidence
@@ -493,6 +515,34 @@ class ScenarioRunner:
             total_mass_kg=fixture.total_mass_kg,
         )
         return environment, evidence
+
+    def _ensure_sitl_failsafe_profile(self) -> None:
+        """Apply the SITL failsafe profile once per booted PX4 (skipped when disabled)."""
+        from simulation.gazebo.fault_injection import read_px4_parameter
+        from simulation.px4.sitl_failsafe_profile import SitlFailsafeProfileError, write_sitl_failsafe_status
+
+        run_directory = self._current_px4_run_dir
+        if os.environ.get("BYTEWOLF_SKIP_SITL_FAILSAFE_PROFILE", "").strip().lower() in ("1", "true", "yes"):
+            write_sitl_failsafe_status(run_directory, "skipped")
+            return
+
+        build_directory = self._px4_root / "build/px4_sitl_default"
+        try:
+            applied = self._apply_sitl_failsafe(
+                px4_build_directory=build_directory,
+                read_px4_parameter=lambda name, directory: read_px4_parameter(name, build_directory),
+                apply_parameters=self._apply_px4_parameters,
+            )
+            write_sitl_failsafe_status(run_directory, "applied", reason=f"count={len(applied)}")
+        except SitlFailsafeProfileError as error:
+            write_sitl_failsafe_status(run_directory, "failed", reason=str(error))
+            raise FaultInjectionError(f"Could not apply SITL failsafe profile: {error}") from error
+        except FaultInjectionError as error:
+            write_sitl_failsafe_status(run_directory, "failed", reason=str(error))
+            raise
+        except Exception as error:
+            write_sitl_failsafe_status(run_directory, "failed", reason=str(error))
+            raise FaultInjectionError(f"Could not apply SITL failsafe profile: {error}") from error
 
     def _inject_faults(self, scenario: Scenario) -> list[dict[str, object]] | None:
         """Apply the scenario's PX4 fault parameters and record what PX4 confirmed."""

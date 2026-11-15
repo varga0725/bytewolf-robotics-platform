@@ -221,6 +221,8 @@ if ! kill -0 "$GZ_SERVER_PID" 2>/dev/null; then
 fi
 
 print "Headless PX4 SITL indítása: $TARGET a(z) $WORLD worldben"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/apply_sitl_failsafe_profile.zsh"
 # The launcher itself is run with stdout/stderr pipes by the regression runner.
 # PX4's normal interactive pxh shell continuously writes prompts to such a pipe;
 # once the pipe fills, PX4 blocks before MAVLink becomes available.  Daemon mode
@@ -231,4 +233,21 @@ print "Headless PX4 SITL indítása: $TARGET a(z) $WORLD worldben"
 cd "$PX4_BUILD_DIR"
 PX4_SIM_MODEL="$TARGET" "$PX4_BINARY" -d -w "$PX4_RUN_DIR" "$PX4_BUILD_DIR/etc" &
 PX4_PID=$!
+(
+  sleep 3
+  if ! apply_bytewolf_sitl_failsafe_profile "$PROJECT_ROOT" "$PX4_BUILD_DIR" "$PX4_RUN_DIR"; then
+    print -u2 "BYTEWOLF_SITL_FAILSAFE_PROFILE_FAILED: ${PX4_RUN_DIR}/sitl-failsafe-profile.status"
+    exit 1
+  fi
+) &
+FAILSAFE_APPLY_PID=$!
 wait "$PX4_PID"
+px4_status=$?
+if [[ -n "${FAILSAFE_APPLY_PID:-}" ]]; then
+  wait "$FAILSAFE_APPLY_PID" 2>/dev/null
+  failsafe_apply_status=$?
+  if (( failsafe_apply_status != 0 )); then
+    print -u2 "BYTEWOLF_SITL_FAILSAFE_PROFILE_FAILED: ${PX4_RUN_DIR}/sitl-failsafe-profile.status"
+  fi
+fi
+exit "$px4_status"

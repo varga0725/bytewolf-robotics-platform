@@ -89,6 +89,16 @@ def _apply_parameter(name: str, value: float, build_directory: Path, run_command
     return AppliedParameter(name, value, confirmed)
 
 
+def read_px4_parameter(
+    name: str,
+    build_directory: Path,
+    run_command=subprocess.run,
+    sleep=time.sleep,
+) -> float:
+    """Read one parameter from a running PX4 SITL via its local client."""
+    return _read_parameter(name, build_directory, run_command, sleep)
+
+
 def _read_parameter(name: str, build_directory: Path, run_command, sleep) -> float:
     output = _run_param(("show", name), build_directory, run_command, sleep)
     for parameter_name, raw_value in _PARAM_VALUE.findall(output):

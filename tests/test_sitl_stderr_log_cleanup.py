@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from simulation.scenarios.scenarios import P0_SCENARIOS, ScenarioRunner
 from simulation.scenarios.sitl_startup import unlink_stderr_log
 
 
 class SitlStderrLogCleanupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._env = patch.dict(os.environ, {"BYTEWOLF_SKIP_SITL_FAILSAFE_PROFILE": "1"})
+        self._env.start()
+
+    def tearDown(self) -> None:
+        self._env.stop()
     def test_unlink_stderr_log_removes_the_file(self) -> None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as handle:
             path = Path(handle.name)

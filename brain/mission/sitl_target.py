@@ -33,6 +33,34 @@ def _autostart_is_posix_sitl(autostart: int) -> bool:
     return low <= autostart <= high
 
 
+def collect_param_based_sitl_signals(
+    *,
+    sys_autostart: int,
+    sim_gz_en: int | None = None,
+    sih_vehicle_type: int | None = None,
+) -> list[str]:
+    """PX4-parameter indicators used by the multi-signal SITL gate (PR #18)."""
+    matched: list[str] = []
+    if _autostart_is_posix_sitl(sys_autostart):
+        matched.append("sys_autostart_posix_sitl")
+
+    gz_low, gz_high = _GZ_AUTOSTART_RANGE
+    if gz_low <= sys_autostart <= gz_high and sim_gz_en is not None and sim_gz_en == 1:
+        matched.append("sim_gz_en")
+
+    sih_low, sih_high = _SIH_AUTOSTART_RANGE
+    if sih_low <= sys_autostart <= sih_high and sih_vehicle_type is not None:
+        if 0 <= sih_vehicle_type <= 5:
+            matched.append("sih_vehicle_type")
+    return list(dict.fromkeys(matched))
+
+
+def sitl_indicators_sufficient(matched_signals: list[str]) -> bool:
+    """At least two independent SITL indicators, or refuse."""
+    unique = list(dict.fromkeys(matched_signals))
+    return len(unique) >= _MIN_POSITIVE_SIGNALS
+
+
 async def _read_param_int(drone: object, name: str, *, timeout_s: float) -> int:
     param = getattr(drone, "param", None)
     if param is None:
@@ -122,27 +150,31 @@ async def require_px4_sitl_indication(drone, *, timeout_s: float = 10.0) -> dict
         release_name=release_name,
     )
 
-    if _autostart_is_posix_sitl(sys_autostart):
-        matched.append("sys_autostart_posix_sitl")
-    elif sys_autostart == 0:
+    if sys_autostart == 0:
         param_observations["sys_autostart_note"] = "zero typically indicates unset hardware profile"
 
-    low, high = _GZ_AUTOSTART_RANGE
-    if low <= sys_autostart <= high:
+    sim_gz_en: int | None = None
+    sih_vehicle_type: int | None = None
+    gz_low, gz_high = _GZ_AUTOSTART_RANGE
+    if gz_low <= sys_autostart <= gz_high:
         sim_gz_en = await _read_param_int(drone, _PARAM_SIM_GZ_EN, timeout_s=timeout_s)
         param_observations[_PARAM_SIM_GZ_EN] = str(sim_gz_en)
-        if sim_gz_en == 1:
-            matched.append("sim_gz_en")
 
-    low, high = _SIH_AUTOSTART_RANGE
-    if low <= sys_autostart <= high:
-        sih_type = await _read_param_int(drone, _PARAM_SIH_VEHICLE_TYPE, timeout_s=timeout_s)
-        param_observations[_PARAM_SIH_VEHICLE_TYPE] = str(sih_type)
-        if 0 <= sih_type <= 5:
-            matched.append("sih_vehicle_type")
+    sih_low, sih_high = _SIH_AUTOSTART_RANGE
+    if sih_low <= sys_autostart <= sih_high:
+        sih_vehicle_type = await _read_param_int(drone, _PARAM_SIH_VEHICLE_TYPE, timeout_s=timeout_s)
+        param_observations[_PARAM_SIH_VEHICLE_TYPE] = str(sih_vehicle_type)
+
+    matched.extend(
+        collect_param_based_sitl_signals(
+            sys_autostart=sys_autostart,
+            sim_gz_en=sim_gz_en,
+            sih_vehicle_type=sih_vehicle_type,
+        )
+    )
 
     unique_signals = list(dict.fromkeys(matched))
-    if len(unique_signals) >= _MIN_POSITIVE_SIGNALS:
+    if sitl_indicators_sufficient(unique_signals):
         return _build_proof(
             unique_signals,
             product_name=product_name,

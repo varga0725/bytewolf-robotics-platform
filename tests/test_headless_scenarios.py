@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -23,6 +24,19 @@ from simulation.scenarios.scenarios import (
     ScenarioRunner,
     parse_arguments,
 )
+
+_ENV_PATCHER = None
+
+
+def setUpModule() -> None:
+    global _ENV_PATCHER
+    _ENV_PATCHER = patch.dict(os.environ, {"BYTEWOLF_SKIP_SITL_FAILSAFE_PROFILE": "1"})
+    _ENV_PATCHER.start()
+
+
+def tearDownModule() -> None:
+    if _ENV_PATCHER is not None:
+        _ENV_PATCHER.stop()
 
 
 def _alive_sitl_process(*, pid: int = 4242) -> Mock:
