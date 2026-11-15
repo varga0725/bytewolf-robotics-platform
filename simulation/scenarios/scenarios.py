@@ -296,9 +296,16 @@ class ScenarioRunner:
         twin_path: Path | None = None,
         wind_observer: Callable[[str, str, Path], object] = GazeboPoseObserver,
         apply_px4_parameters: Callable[..., tuple] = apply_px4_parameters,
+        apply_sitl_failsafe: Callable[..., tuple] | None = None,
     ) -> None:
         self._wind_observer = wind_observer
         self._apply_px4_parameters = apply_px4_parameters
+        if apply_sitl_failsafe is None:
+            from simulation.px4.sitl_failsafe_profile import apply_sitl_failsafe_profile
+
+            self._apply_sitl_failsafe = apply_sitl_failsafe_profile
+        else:
+            self._apply_sitl_failsafe = apply_sitl_failsafe
         self._command_runner = command_runner
         self._uses_default_command_runner = command_runner is subprocess.run
         self._now = now or (lambda: datetime.now(UTC))
@@ -372,6 +379,12 @@ class ScenarioRunner:
                     self._blocked_result(scenario, "SITL readiness check failed.", output_directory)
                     for scenario in scenarios
                 )
+            try:
+                self._ensure_sitl_failsafe_profile()
+            except FaultInjectionError as error:
+                return tuple(
+                    self._blocked_result(scenario, str(error), output_directory) for scenario in scenarios
+                )
             return tuple(self._run_scenario(scenario, output_directory) for scenario in scenarios)
         except OSError as error:
             return tuple(
@@ -410,6 +423,10 @@ class ScenarioRunner:
                 return self._blocked_result(scenario, launch_failure, output_directory, wind)
             if sitl_process is not None and not self._readiness_check(sitl_process):
                 return self._blocked_result(scenario, "SITL readiness check failed.", output_directory, wind)
+            try:
+                self._ensure_sitl_failsafe_profile()
+            except FaultInjectionError as error:
+                return self._blocked_result(scenario, str(error), output_directory, wind)
             try:
                 injected = self._inject_faults(scenario)
             except FaultInjectionError as error:
@@ -493,6 +510,27 @@ class ScenarioRunner:
             total_mass_kg=fixture.total_mass_kg,
         )
         return environment, evidence
+
+    def _ensure_sitl_failsafe_profile(self) -> None:
+        """Apply the SITL failsafe profile once per booted PX4 (skipped when disabled)."""
+        if os.environ.get("BYTEWOLF_SKIP_SITL_FAILSAFE_PROFILE", "").strip().lower() in ("1", "true", "yes"):
+            return
+        from simulation.gazebo.fault_injection import read_px4_parameter
+        from simulation.px4.sitl_failsafe_profile import SitlFailsafeProfileError
+
+        build_directory = self._px4_root / "build/px4_sitl_default"
+        try:
+            self._apply_sitl_failsafe(
+                px4_build_directory=build_directory,
+                read_px4_parameter=lambda name, directory: read_px4_parameter(name, build_directory),
+                apply_parameters=self._apply_px4_parameters,
+            )
+        except SitlFailsafeProfileError as error:
+            raise FaultInjectionError(f"Could not apply SITL failsafe profile: {error}") from error
+        except FaultInjectionError:
+            raise
+        except Exception as error:
+            raise FaultInjectionError(f"Could not apply SITL failsafe profile: {error}") from error
 
     def _inject_faults(self, scenario: Scenario) -> list[dict[str, object]] | None:
         """Apply the scenario's PX4 fault parameters and record what PX4 confirmed."""

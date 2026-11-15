@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("BYTEWOLF_SKIP_SITL_FAILSAFE_PROFILE", "1")
+
 import json
 import tempfile
 import unittest

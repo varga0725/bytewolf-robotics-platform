@@ -59,13 +59,21 @@ class PreflightParamsSitlIntegrationTests(unittest.TestCase):
             "COM_ARM_WO_GPS": 1,
             "NAV_RCL_ACT": 2,
         }
-        gz_float = {"GF_MAX_HOR_DIST": 0.0, "GF_MAX_VER_DIST": 0.0, "COM_RC_LOSS_T": 0.5}
+        gz_float_stock = {"GF_MAX_HOR_DIST": 0.0, "GF_MAX_VER_DIST": 0.0, "COM_RC_LOSS_T": 0.5}
         matches_stock = all(params[name].display_value == expected for name, expected in gz_int.items()) and all(
-            abs(float(params[name].display_value) - expected) < 1e-6 for name, expected in gz_float.items()
+            abs(float(params[name].display_value) - expected) < 1e-6 for name, expected in gz_float_stock.items()
         )
+        geofence_enabled = float(params["GF_MAX_HOR_DIST"].display_value) > 0 and float(
+            params["GF_MAX_VER_DIST"].display_value
+        ) > 0
         if matches_stock:
             self.assertEqual(report.summary, "FAIL (2 failed, 3 warn, 5 pass)")
             self.assertEqual(exit_code, 1)
+        elif geofence_enabled:
+            for name in ("GF_MAX_HOR_DIST", "GF_MAX_VER_DIST", "GF_ACTION"):
+                row = next(r for r in report.results if r.param == name)
+                with self.subTest(param=name):
+                    self.assertEqual(row.status, "PASS", row.reason)
 
 
 if __name__ == "__main__":

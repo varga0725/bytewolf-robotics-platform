@@ -119,11 +119,19 @@ if [[ "$PROFILE" == "full-sensors" ]]; then
   }
   trap cleanup_full_sensors EXIT INT TERM
   sleep 2
+  # shellcheck source=/dev/null
+  source "${SCRIPT_DIR}/apply_sitl_failsafe_profile.zsh"
   cd "$PX4_BUILD_DIR"
   PX4_GZ_STANDALONE=1 PX4_SYS_AUTOSTART=4014 PX4_SIM_MODEL="$TARGET" GZ_IP=127.0.0.1 \
     "$PX4_BINARY" -d -w "$PX4_RUN_DIR" "$PX4_BUILD_DIR/etc" &
   PX4_PID=$!
+  (
+    sleep 3
+    apply_bytewolf_sitl_failsafe_profile "$PROJECT_ROOT" "$PX4_BUILD_DIR" || exit 1
+  ) &
+  FAILSAFE_APPLY_PID=$!
   wait "$PX4_PID"
+  wait "$FAILSAFE_APPLY_PID" 2>/dev/null || true
   exit $?
 fi
 

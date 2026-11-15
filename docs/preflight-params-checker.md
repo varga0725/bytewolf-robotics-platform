@@ -7,6 +7,9 @@ Real flight-controller use is **read-only over the telemetry or USB MAVLink link
 ## Usage
 
 ```bash
+On SITL, use the platform failsafe profile first so geofence limits are non-zero:
+see [`docs/sitl-failsafe-profile.md`](sitl-failsafe-profile.md) (`run_px4_gazebo_headless.zsh` applies it automatically).
+
 # Over MAVLink (simulation or bench; default deployment mode is simulation)
 .venv/bin/python -m brain.preflight_params \
   --connection 'udpin://127.0.0.1:14540' \
