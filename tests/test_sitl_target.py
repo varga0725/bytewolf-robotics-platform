@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import unittest
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from brain.mission.demo_point_rtl import DemoPointRtlError
 from brain.mission.sitl_target import TargetClassifier, require_px4_sitl_indication
@@ -120,6 +121,74 @@ class SitlTargetTests(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(DemoPointRtlError):
             await require_px4_sitl_indication(drone, timeout_s=1.0)
+
+
+class TargetClassifierInternalReadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_classify_never_raises_on_identity_timeout(self) -> None:
+        drone = _drone_with_identity()
+        drone.info.get_product = AsyncMock(side_effect=TimeoutError())
+
+        async def fail_indication(*_args, **_kwargs):
+            raise DemoPointRtlError("indicators insufficient")
+
+        with patch(
+            "brain.mission.sitl_target.require_px4_sitl_indication",
+            AsyncMock(side_effect=fail_indication),
+        ):
+            result = await TargetClassifier.classify(drone, timeout_s=0.05)
+
+        self.assertEqual(result.verdict, "unknown")
+        self.assertTrue(result.reason.strip())
+
+    async def test_classify_maps_runtime_error_to_unknown(self) -> None:
+        drone = MagicMock(info=None)
+
+        result = await TargetClassifier.classify(drone, timeout_s=1.0)
+        self.assertEqual(result.verdict, "unknown")
+        self.assertIn("MAVSDK Info", result.reason)
+
+
+class TargetClassifierEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_classify_at_endpoint_returns_unknown_when_connect_fails(self) -> None:
+        system = MagicMock()
+        system.connect = AsyncMock(side_effect=RuntimeError("bind failed"))
+        mavsdk = ModuleType("mavsdk")
+        mavsdk.System = MagicMock(return_value=system)  # type: ignore[attr-defined]
+        with (
+            patch("brain.cli.mavsdk_lifecycle.acquire_px4_link"),
+            patch("brain.cli.mavsdk_lifecycle.stop_owned_mavsdk_server"),
+            patch.dict(sys.modules, {"mavsdk": mavsdk}),
+        ):
+            result = await TargetClassifier.classify_at_endpoint(
+                "udpin://127.0.0.1:14540",
+                connection_timeout_s=1.0,
+            )
+        self.assertEqual(result.verdict, "unknown")
+        self.assertIn("bind failed", result.reason)
+
+    async def test_classify_at_endpoint_times_out_waiting_for_connection_state(self) -> None:
+        async def slow_states():
+            while True:
+                await asyncio.sleep(60)
+                yield MagicMock(is_connected=False)
+
+        system = MagicMock()
+        system.connect = AsyncMock()
+        system.core.connection_state = slow_states
+        mavsdk = ModuleType("mavsdk")
+        mavsdk.System = MagicMock(return_value=system)  # type: ignore[attr-defined]
+        with (
+            patch("brain.cli.mavsdk_lifecycle.acquire_px4_link"),
+            patch("brain.cli.mavsdk_lifecycle.stop_owned_mavsdk_server"),
+            patch.dict(sys.modules, {"mavsdk": mavsdk}),
+        ):
+            result = await TargetClassifier.classify_at_endpoint(
+                "udpin://127.0.0.1:14540",
+                connection_timeout_s=0.05,
+                classify_timeout_s=0.05,
+            )
+        self.assertEqual(result.verdict, "unknown")
+        self.assertTrue(result.reason.strip())
 
 
 class TargetClassifierTests(unittest.IsolatedAsyncioTestCase):

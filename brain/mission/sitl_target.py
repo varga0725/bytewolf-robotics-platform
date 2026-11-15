@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -23,6 +24,29 @@ _PARAM_SIM_GZ_EN = "SIM_GZ_EN"
 # SIH-only params (src/modules/simulation/simulator_sih/sih_params.c).
 _PARAM_SIH_VEHICLE_TYPE = "SIH_VEHICLE_TYPE"
 _PARAM_SYS_AUTOSTART = "SYS_AUTOSTART"
+_DEFAULT_CLASSIFIER_MAVSDK_PORT = 51052
+
+
+def default_target_classifier_mavsdk_port() -> int:
+    """Local gRPC port for approve-time SITL classification (loopback only)."""
+    raw = os.environ.get(
+        "BYTEWOLF_TARGET_CLASSIFIER_MAVSDK_PORT",
+        str(_DEFAULT_CLASSIFIER_MAVSDK_PORT),
+    )
+    try:
+        port = int(raw)
+    except ValueError:
+        return _DEFAULT_CLASSIFIER_MAVSDK_PORT
+    if port <= 0 or port > 65535:
+        return _DEFAULT_CLASSIFIER_MAVSDK_PORT
+    return port
+
+
+def _exception_reason(error: BaseException) -> str:
+    text = str(error).strip()
+    if text:
+        return f"{type(error).__name__}: {text}"
+    return f"{type(error).__name__} while verifying PX4 SITL identity."
 
 
 def _release_type_name(version: object) -> str:
@@ -256,12 +280,17 @@ class TargetClassifier:
         try:
             proof = await require_px4_sitl_indication(drone, timeout_s=timeout_s)
         except DemoPointRtlError as error:
+            reason = _exception_reason(error)
             try:
                 product_name, vendor_name, release_name, sys_autostart, matched = (
                     await _read_identity_and_param_signals(drone, timeout_s=timeout_s)
                 )
-            except DemoPointRtlError:
-                return TargetClassification("unknown", str(error))
+            except DemoPointRtlError as nested:
+                return TargetClassification("unknown", _exception_reason(nested) or reason)
+            except (TimeoutError, asyncio.TimeoutError, RuntimeError) as nested:
+                return TargetClassification("unknown", _exception_reason(nested))
+            except Exception as nested:
+                return TargetClassification("unknown", _exception_reason(nested))
             if _suspects_real_flight_controller(
                 product_name=product_name,
                 vendor_name=vendor_name,
@@ -269,13 +298,12 @@ class TargetClassifier:
                 sys_autostart=sys_autostart,
                 matched_signals=matched,
             ):
-                return TargetClassification("real_suspected", str(error))
-            return TargetClassification("unknown", str(error))
+                return TargetClassification("real_suspected", reason)
+            return TargetClassification("unknown", reason)
+        except (TimeoutError, asyncio.TimeoutError, RuntimeError) as error:
+            return TargetClassification("unknown", _exception_reason(error))
         except Exception as error:
-            return TargetClassification(
-                "unknown",
-                f"Unexpected error while verifying SITL identity: {error}",
-            )
+            return TargetClassification("unknown", _exception_reason(error))
         return TargetClassification(
             "sitl_verified",
             "PX4 presented stock SITL indicators (simulator-specific parameter confirmed).",
@@ -286,7 +314,7 @@ class TargetClassifier:
     async def classify_at_endpoint(
         endpoint: str,
         *,
-        mavsdk_server_port: int = 51052,
+        mavsdk_server_port: int | None = None,
         connection_timeout_s: float = 15.0,
         classify_timeout_s: float = 10.0,
     ) -> TargetClassification:
@@ -301,18 +329,17 @@ class TargetClassifier:
                 "unknown",
                 "MAVSDK is not installed; cannot verify a SITL target before arming.",
             )
+        port = default_target_classifier_mavsdk_port() if mavsdk_server_port is None else mavsdk_server_port
         try:
             acquire_px4_link("plan-approve-sitl-gate")
-            system = System(port=mavsdk_server_port)
+            system = System(port=port)
             await asyncio.wait_for(system.connect(system_address=endpoint), timeout=connection_timeout_s)
-            async for state in system.core.connection_state():
-                if state.is_connected:
-                    break
+            await _await_mavlink_connected(system.core, timeout_s=connection_timeout_s)
             return await TargetClassifier.classify(system, timeout_s=classify_timeout_s)
         except Exception as error:
             return TargetClassification(
                 "unknown",
-                f"Cannot reach PX4 for SITL identity verification: {type(error).__name__}: {error}",
+                f"Cannot reach PX4 for SITL identity verification: {_exception_reason(error)}",
             )
         finally:
             stop_owned_mavsdk_server(system)
@@ -321,7 +348,7 @@ class TargetClassifier:
     def require_sitl_verified(
         endpoint: str,
         *,
-        mavsdk_server_port: int = 51052,
+        mavsdk_server_port: int | None = None,
         connection_timeout_s: float = 15.0,
         classify_timeout_s: float = 10.0,
     ) -> TargetClassification:
@@ -337,16 +364,33 @@ class TargetClassifier:
         return result
 
 
+async def _await_mavlink_connected(core: object, *, timeout_s: float) -> None:
+    async def first_connected() -> None:
+        async for state in core.connection_state():
+            if bool(getattr(state, "is_connected", False)):
+                return
+        raise DemoPointRtlError("PX4 never reported a connected MAVLink state.")
+
+    await asyncio.wait_for(first_connected(), timeout=timeout_s)
+
+
 async def _read_identity_and_param_signals(
     drone: object, *, timeout_s: float
 ) -> tuple[str, str, str, int, list[str]]:
     info = getattr(drone, "info", None)
     if info is None:
         raise DemoPointRtlError("MAVSDK Info is unavailable.")
-    product, version = await asyncio.gather(
-        asyncio.wait_for(info.get_product(), timeout=timeout_s),
-        asyncio.wait_for(info.get_version(), timeout=timeout_s),
-    )
+    try:
+        product, version = await asyncio.gather(
+            asyncio.wait_for(info.get_product(), timeout=timeout_s),
+            asyncio.wait_for(info.get_version(), timeout=timeout_s),
+        )
+    except (TimeoutError, asyncio.TimeoutError) as error:
+        raise DemoPointRtlError(
+            "Timed out waiting for PX4 identity telemetry before arming."
+        ) from error
+    except RuntimeError as error:
+        raise DemoPointRtlError(f"Cannot read PX4 identity before arming: {error}") from error
     product_name = str(getattr(product, "product_name", "")).strip()
     vendor_name = str(getattr(product, "vendor_name", "")).strip()
     release_name = _release_type_name(version)

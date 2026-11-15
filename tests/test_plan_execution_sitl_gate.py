@@ -26,9 +26,10 @@ class PlanExecutionSitlGateTests(unittest.TestCase):
         plan_execution._active_execution = None
 
     @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"}, clear=False)
+    @patch("apps.gateway.plan_execution.subprocess.Popen")
     @patch("apps.gateway.plan_execution.TargetClassifier.require_sitl_verified")
     @patch("apps.gateway.plan_execution._validate_plan_before_spawn")
-    def test_refuses_when_classifier_not_verified(self, _validate, require_verified) -> None:
+    def test_refuses_when_classifier_not_verified(self, _validate, require_verified, popen) -> None:
         with patch.object(plan_execution, "_DEFAULT_PLAN_DIRECTORY", self.plan_dir):
             require_verified.return_value = TargetClassification(
                 "real_suspected",
@@ -38,6 +39,7 @@ class PlanExecutionSitlGateTests(unittest.TestCase):
                 execute_reviewed_plan(self.plan_name)
             self.assertIn("real_suspected", str(context.exception))
             require_verified.assert_called_once()
+            popen.assert_not_called()
 
     @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"}, clear=False)
     @patch("apps.gateway.plan_execution.subprocess.Popen")
