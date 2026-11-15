@@ -1,5 +1,5 @@
 [Unit]
-Description=ByteWolf dashboard telemetry relay (MAVSDK to live snapshot)
+Description=ByteWolf dashboard telemetry relay (pymavlink to live snapshot)
 PartOf=bytewolf.target
 After=bytewolf-sitl.service
 Wants=bytewolf-sitl.service

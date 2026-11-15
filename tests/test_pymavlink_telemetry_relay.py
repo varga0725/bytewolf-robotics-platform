@@ -9,7 +9,11 @@ import unittest
 from unittest import mock
 
 from brain.telemetry.mavsdk_relay import DashboardTelemetryState
-from brain.telemetry.pymavlink_relay import apply_mavlink_message, run_pymavlink_relay
+from brain.telemetry.pymavlink_relay import (
+    apply_mavlink_message,
+    core_message_pending_write,
+    run_pymavlink_relay,
+)
 
 
 class _Message:
@@ -55,6 +59,135 @@ class PymavlinkMappingTests(unittest.TestCase):
         self.assertTrue(document["in_air"])
         self.assertIn("heading_deg", document)
         self.assertEqual(document["captured_at"], "2026-07-22T09:00:00Z")
+
+
+class PymavlinkInvalidBatteryTests(unittest.TestCase):
+    def test_apply_mavlink_message_ignores_unknown_and_out_of_range_battery(self) -> None:
+        now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+        state = DashboardTelemetryState()
+        for message in _complete_core_messages():
+            state = apply_mavlink_message(state, message, observed_at=now)
+        self.assertAlmostEqual(state.battery.remaining_percent, 88.0)  # type: ignore[union-attr]
+
+        for invalid in (-1, 101, 255):
+            for message_type in ("SYS_STATUS", "BATTERY_STATUS"):
+                with self.subTest(message_type=message_type, remaining=invalid):
+                    after = apply_mavlink_message(
+                        state,
+                        _Message(message_type, battery_remaining=invalid),
+                        observed_at=now,
+                    )
+                    self.assertIs(after.battery, state.battery)
+                    self.assertAlmostEqual(after.battery.remaining_percent, 88.0)  # type: ignore[union-attr]
+
+    def test_apply_mavlink_message_accepts_valid_battery_updates(self) -> None:
+        now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+        state = DashboardTelemetryState()
+        for message in _complete_core_messages():
+            state = apply_mavlink_message(state, message, observed_at=now)
+
+        state = apply_mavlink_message(
+            state,
+            _Message("SYS_STATUS", battery_remaining=72),
+            observed_at=now,
+        )
+        self.assertAlmostEqual(state.battery.remaining_percent, 72.0)  # type: ignore[union-attr]
+
+        state = apply_mavlink_message(
+            state,
+            _Message("BATTERY_STATUS", battery_remaining=0),
+            observed_at=now,
+        )
+        self.assertAlmostEqual(state.battery.remaining_percent, 0.0)  # type: ignore[union-attr]
+
+    def test_mixed_battery_sequence_keeps_last_valid_percent(self) -> None:
+        now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+        state = DashboardTelemetryState()
+        for message in _complete_core_messages():
+            state = apply_mavlink_message(state, message, observed_at=now)
+
+        sequence = [
+            _Message("SYS_STATUS", battery_remaining=75),
+            _Message("BATTERY_STATUS", battery_remaining=-1),
+            _Message("SYS_STATUS", battery_remaining=105),
+            _Message("BATTERY_STATUS", battery_remaining=74),
+            _Message("SYS_STATUS", battery_remaining=-1),
+        ]
+        for message in sequence:
+            state = apply_mavlink_message(state, message, observed_at=now)
+        self.assertAlmostEqual(state.battery.remaining_percent, 74.0)  # type: ignore[union-attr]
+
+    def test_core_message_pending_write_false_for_ignored_battery_reads(self) -> None:
+        now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+        state = DashboardTelemetryState()
+        for message in _complete_core_messages():
+            state = apply_mavlink_message(state, message, observed_at=now)
+
+        for invalid in (-1, 200):
+            for message_type in ("SYS_STATUS", "BATTERY_STATUS"):
+                message = _Message(message_type, battery_remaining=invalid)
+                after = apply_mavlink_message(state, message, observed_at=now)
+                self.assertFalse(core_message_pending_write(message_type, state, after))
+
+    def test_invalid_battery_alone_does_not_refresh_captured_at(self) -> None:
+        timeline = {"t": 0.0}
+        base = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+        messages = [
+            *_complete_core_messages(),
+            _Message("SYS_STATUS", battery_remaining=-1),
+            _Message("BATTERY_STATUS", battery_remaining=150),
+            None,
+        ]
+        message_index = 0
+
+        class FakeMavlink:
+            def recv_match(self, *, blocking: bool, timeout: float) -> object | None:
+                nonlocal message_index
+                if message_index >= len(messages):
+                    timeline["t"] = 5.0
+                    return None
+                message = messages[message_index]
+                message_index += 1
+                timeline["t"] = 0.5 * message_index
+                return message
+
+            def close(self) -> None:
+                return None
+
+        def monotonic() -> float:
+            return timeline["t"]
+
+        def clock() -> datetime:
+            return base + timedelta(seconds=timeline["t"])
+
+        writes: list[tuple[str, float]] = []
+
+        def recording_write(destination: Path, document: dict[str, object]) -> None:
+            battery = document["battery"]
+            assert isinstance(battery, dict)
+            writes.append((str(document["captured_at"]), float(battery["remaining_percent"])))
+
+        stop_after = [0]
+
+        def should_stop() -> bool:
+            stop_after[0] += 1
+            return stop_after[0] > 20
+
+        with TemporaryDirectory() as directory:
+            destination = Path(directory) / "live-telemetry.json"
+            with mock.patch("brain.telemetry.pymavlink_relay.write_atomic_json", recording_write):
+                run_pymavlink_relay(
+                    "udpin://127.0.0.1:14540",
+                    destination,
+                    write_interval_s=0.2,
+                    mavlink_factory=lambda _url: FakeMavlink(),
+                    clock=clock,
+                    should_stop=should_stop,
+                    monotonic=monotonic,
+                )
+
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][1], 88.0)
 
 
 class PymavlinkWriteThrottleTests(unittest.TestCase):
