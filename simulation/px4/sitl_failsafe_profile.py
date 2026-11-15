@@ -10,7 +10,7 @@ from brain.mission.sitl_target import (
     _PARAM_SIH_VEHICLE_TYPE,
     _PARAM_SYS_AUTOSTART,
     collect_param_based_sitl_signals,
-    sitl_indicators_sufficient,
+    sitl_verification_passes,
 )
 from brain.preflight_params.sources import parse_qgc_params_file
 from simulation.gazebo.fault_injection import AppliedParameter, apply_px4_parameters
@@ -77,11 +77,11 @@ def refuse_apply_without_sitl_indicators(
         sim_gz_en=sim_gz_en,
         sih_vehicle_type=sih_vehicle_type,
     )
-    if sitl_indicators_sufficient(matched):
+    if sitl_verification_passes(matched):
         return matched
     raise SitlFailsafeProfileError(
         "Refusing SITL failsafe profile: PX4 did not present enough independent SITL "
-        f"indicators (matched {matched or ['none']})."
+        f"indicators including a simulator-specific parameter (matched {matched or ['none']})."
     )
 
 

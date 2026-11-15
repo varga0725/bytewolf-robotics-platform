@@ -46,6 +46,10 @@ class SitlFailsafeGuardTests(unittest.TestCase):
         self.assertIn("sys_autostart_posix_sitl", matched)
         self.assertIn("sim_gz_en", matched)
 
+    def test_refuses_gz_autostart_without_sim_gz_en(self) -> None:
+        with self.assertRaises(SitlFailsafeProfileError):
+            refuse_apply_without_sitl_indicators(sys_autostart=4001, sim_gz_en=0, sih_vehicle_type=None)
+
 
 class SitlFailsafeApplyTests(unittest.TestCase):
     def test_apply_refuses_without_sitl_before_any_set(self) -> None:

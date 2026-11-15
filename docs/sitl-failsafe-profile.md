@@ -4,9 +4,11 @@ Headless PX4 SITL boots with stock defaults: geofence distances are **0** (disab
 datalink-loss action is often **Disabled**, and the preflight checker ([`docs/preflight-params-checker.md`](preflight-params-checker.md))
 correctly FAILs those rows. Before in-flight SITL behavioural tests mean anything,
 the platform applies `simulation/px4/params/sitl-failsafe.params` **only** when the
-multi-signal SITL gate ([`brain/mission/sitl_target.py`](../brain/mission/sitl_target.py), PR #18)
-sees at least two independent indicators (e.g. `SYS_AUTOSTART` in the gz/SIH POSIX range and
-`SIM_GZ_EN=1`). The apply path refuses a physical FC that does not match.
+multi-signal SITL gate ([`brain/mission/sitl_target.py`](../brain/mission/sitl_target.py))
+sees at least two independent indicators **including one simulator-specific signal**:
+`SIM_GZ_EN=1` with a Gazebo POSIX autostart (4001–4999), or `SIH_VEHICLE_TYPE` in range
+with a SIH autostart (10040–10099). Product-name substrings or a `DEV` build type alone
+do not satisfy the gate. The apply path refuses a physical FC that does not match.
 
 ## Values (pinned to PX4 v1.17.0)
 
