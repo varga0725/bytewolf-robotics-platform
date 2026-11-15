@@ -68,6 +68,13 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="Lease file a flying mission claims; the bridge yields the PX4 link while it exists.",
     )
     parser.add_argument(
+        "--allow-link-lease-holder-pid",
+        type=int,
+        action="append",
+        default=None,
+        help="PIDs whose link lease this reader may share (e.g. parent acceptance harness).",
+    )
+    parser.add_argument(
         "--seconds",
         type=float,
         default=None,
@@ -94,13 +101,33 @@ def main(arguments: Sequence[str] | None = None) -> None:
         print("Telemetry bridge stopped.")
 
 
+def _allowed_lease_holders(arguments: argparse.Namespace) -> frozenset[int]:
+    import os
+
+    raw = arguments.allow_link_lease_holder_pid
+    if not raw:
+        return frozenset()
+    parent = os.getppid()
+    for item in raw:
+        pid = int(item)
+        if pid not in {parent, os.getpid()}:
+            print(
+                f"Rejected --allow-link-lease-holder-pid {pid}: "
+                f"only the parent process ({parent}) may coordinate this lease.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+    return frozenset(int(item) for item in raw)
+
+
 def run_pymavlink_bridge(arguments: argparse.Namespace) -> None:
     """Passive pymavlink relay with the same lease yield semantics as MAVSDK."""
 
+    holders = _allowed_lease_holders(arguments)
     deadline = None if arguments.seconds is None else time.monotonic() + arguments.seconds
     announced_wait = False
     while True:
-        if link_is_leased(arguments.link_lease):
+        if link_is_leased(arguments.link_lease, allow_holder_pids=holders):
             if not announced_wait:
                 print("A mission holds the PX4 link; the bridge is standing by.")
                 announced_wait = True
@@ -136,6 +163,7 @@ def _stream_pymavlink_once(arguments: argparse.Namespace, seconds: float | None)
         arguments.snapshot_file,
         write_interval_s=arguments.write_interval,
         link_lease=arguments.link_lease,
+        allow_link_lease_holder_pids=_allowed_lease_holders(arguments),
         should_stop=should_stop,
     )
 

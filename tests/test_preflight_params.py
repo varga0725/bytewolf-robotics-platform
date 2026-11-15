@@ -16,6 +16,9 @@ from brain.preflight_params.sources import parse_qgc_params_file
 
 
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "preflight_params" / "sample_qgc.params"
+_QGC_FIVE_COLUMN = (
+    Path(__file__).resolve().parent / "fixtures" / "preflight_params" / "qgc_five_column.params"
+)
 
 
 def _param(value: int | float, *, integer: bool = True) -> ParamValue:
@@ -129,6 +132,11 @@ class PreflightEvaluateTests(unittest.TestCase):
         report = evaluate_params(params)
         core = [row for row in report.results if row.group == "core"]
         self.assertTrue(all(row.status == "PASS" for row in core))
+
+    def test_qgc_five_column_export_with_type_column(self) -> None:
+        params = parse_qgc_params_file(_QGC_FIVE_COLUMN)
+        self.assertEqual(params["NAV_DLL_ACT"].display_value, 2)
+        self.assertEqual(len(params), 6)
 
     def test_json_report_round_trip(self) -> None:
         report = evaluate_params(_baseline_params())

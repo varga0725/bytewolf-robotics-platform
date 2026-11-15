@@ -44,6 +44,11 @@ class LinkLeaseTests(unittest.TestCase):
         self.assertEqual(lease["owner"], "mission")
         self.assertEqual(lease["pid"], os.getpid())
 
+    def test_allowed_holder_pid_is_not_leased_for_child_readers(self) -> None:
+        claim_link("parent", path=self.path)
+        self.assertTrue(link_is_leased(self.path))
+        self.assertFalse(link_is_leased(self.path, allow_holder_pids=frozenset({os.getpid()})))
+
     def test_the_lease_is_given_back_even_when_the_mission_raises(self) -> None:
         """A lease that outlives its mission leaves the dashboard blind.
 

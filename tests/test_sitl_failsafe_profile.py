@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from simulation.gazebo.fault_injection import AppliedParameter, FaultInjectionError
+from simulation.gazebo.fault_injection import PX4_BUILD_DIRECTORY, AppliedParameter, FaultInjectionError
 
 from brain.preflight_params.evaluate import evaluate_params
 from brain.preflight_params.param_value import MAV_PARAM_TYPE_INT32, MAV_PARAM_TYPE_REAL32, ParamValue
@@ -115,6 +118,30 @@ class SitlFailsafeStatusAndVerifyTests(unittest.TestCase):
         self.assertIn("exit_code=$?", helper)
         self.assertIn("(( exit_code == 2 ))", helper)
         self.assertIn("return 2", helper)
+        self.assertIn('( cd "$project_root"', helper)
+
+    def test_default_px4_build_directory_is_repo_relative(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        self.assertEqual(PX4_BUILD_DIRECTORY, root / "PX4-Autopilot/build/px4_sitl_default")
+
+    def test_cli_help_runs_from_foreign_cwd_without_pythonpath(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f'cd "{root}" && exec "{sys.executable}" -m simulation.px4.apply_sitl_failsafe_profile --help',
+                ],
+                cwd=tmp,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("SITL-only failsafe", proc.stdout)
 
 
 class SitlFailsafeCliMainTests(unittest.TestCase):

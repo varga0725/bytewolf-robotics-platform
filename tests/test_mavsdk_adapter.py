@@ -1,17 +1,23 @@
 import asyncio
 from dataclasses import replace
 import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter, MissionPreflightError
+from brain.mission.demo_errors import DemoPointRtlError
 from brain.safety.profile import SafetyProfile, load_safety_profile
 from brain.mission.runtime_policy import RuntimePolicy
 from brain.mission.commands import TakeoffCommand, WaypointCommand
 from brain.mission.execution import MissionPhase
 from brain.mission.flight import (
+    InterruptionAction,
     TakeoffHoverLandMission,
+    TakeoffInterruptLandMission,
     TakeoffReturnToHomeMission,
     TakeoffTargetApproachLandMission,
     TakeoffWaypointLandMission,
+    TakeoffWaypointSquareLandMission,
+    TakeoffWaypointsLandMission,
     TakeoffWaypointsReturnToHomeMission,
 )
 
@@ -326,6 +332,165 @@ class FailingArmDrone(FakeDrone):
 
 
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self._sitl_patcher = patch(
+            "brain.mission.sitl_target.require_px4_sitl_indication",
+            new_callable=AsyncMock,
+        )
+        self._sitl_mock = self._sitl_patcher.start()
+        self._sitl_mock.return_value = {
+            "status": "verified",
+            "matched_signals": ["sys_autostart_posix_sitl", "sim_gz_en"],
+        }
+        self.addCleanup(self._sitl_patcher.stop)
+
+    async def test_sitl_gate_refusal_never_calls_arm_or_altitude_writes(self) -> None:
+        refuse = DemoPointRtlError("PX4 did not present enough independent SITL indicators")
+        self._sitl_mock.side_effect = refuse
+        wp = WaypointCommand(1.0, 0.0, 2.0)
+
+        async def propose_none() -> None:
+            return None
+
+        demo_mission = MagicMock(
+            takeoff=MagicMock(target_altitude_m=2.0),
+            return_to_home=MagicMock(target_altitude_m=2.0),
+            waypoints=(wp,),
+            hover_duration_s=0.0,
+            waypoint_tolerance_m=2.0,
+            waypoint_timeout_s=5.0,
+            landing_timeout_s=5.0,
+            home_tolerance_m=6.0,
+            takeoff_settle_seconds=0.0,
+        )
+        cases: list[tuple[str, object]] = [
+            (
+                "execute",
+                TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.0),
+            ),
+            (
+                "execute_controlled_interruption_mission",
+                TakeoffInterruptLandMission(
+                    TakeoffCommand(2.0),
+                    interrupt_after_s=0.0,
+                    interruption_action=InterruptionAction.LAND,
+                ),
+            ),
+            (
+                "execute_waypoint_mission",
+                TakeoffWaypointLandMission(
+                    TakeoffCommand(2.0), wp, hover_duration_s=0.0, takeoff_settle_seconds=0.0
+                ),
+            ),
+            (
+                "execute_target_approach_mission",
+                TakeoffTargetApproachLandMission(
+                    TakeoffCommand(2.0),
+                    hover_duration_s=0.0,
+                    capture_settle_seconds=0.0,
+                ),
+            ),
+            (
+                "execute_waypoints_mission",
+                TakeoffWaypointsLandMission(
+                    TakeoffCommand(2.0), (wp,), hover_duration_s=0.0, takeoff_settle_seconds=0.0
+                ),
+            ),
+            (
+                "execute_waypoint_square_mission",
+                TakeoffWaypointSquareLandMission(
+                    TakeoffCommand(2.0),
+                    (wp, wp, wp, wp),
+                    hover_duration_s=0.0,
+                    takeoff_settle_seconds=0.0,
+                ),
+            ),
+            (
+                "execute_return_to_home_mission",
+                TakeoffReturnToHomeMission(
+                    TakeoffCommand(2.0), hover_duration_s=0.0, takeoff_settle_seconds=0.0
+                ),
+            ),
+            (
+                "execute_waypoints_return_to_home_mission",
+                TakeoffWaypointsReturnToHomeMission(
+                    TakeoffCommand(2.0),
+                    (wp,),
+                    hover_duration_s=0.0,
+                    takeoff_settle_seconds=0.0,
+                ),
+            ),
+            ("execute_demo_point_rtl_mission", demo_mission),
+        ]
+
+        for method_name, mission in cases:
+            with self.subTest(method=method_name):
+                if method_name == "execute_demo_point_rtl_mission":
+                    adapter = MavsdkMissionAdapter(MagicMock(), sleep=asyncio.sleep)
+                    adapter._require_preflight = AsyncMock()
+                    adapter._global_position_sample = AsyncMock(
+                        return_value=MagicMock(
+                            latitude_deg=0.0, longitude_deg=0.0, absolute_altitude_m=100.0
+                        )
+                    )
+                    adapter._begin_execution = MavsdkMissionAdapter._begin_execution.__get__(
+                        adapter, MavsdkMissionAdapter
+                    )
+                    adapter._record = lambda execution, phase: execution.transition(phase)
+                    adapter._drone.action.arm = AsyncMock()
+                    adapter._drone.action.set_takeoff_altitude = AsyncMock()
+                    with self.assertRaises(DemoPointRtlError):
+                        await adapter.execute_demo_point_rtl_mission(
+                            mission, action_timeout_s=1.0
+                        )
+                    adapter._drone.action.arm.assert_not_awaited()
+                    adapter._drone.action.set_takeoff_altitude.assert_not_awaited()
+                    continue
+
+                drone = FakeDrone()
+                adapter = MavsdkMissionAdapter(drone, sleep=asyncio.sleep)
+                with self.assertRaises(DemoPointRtlError):
+                    if method_name == "execute":
+                        await adapter.execute(mission)
+                    elif method_name == "execute_controlled_interruption_mission":
+                        await adapter.execute_controlled_interruption_mission(mission)
+                    elif method_name == "execute_waypoint_mission":
+                        await adapter.execute_waypoint_mission(mission)
+                    elif method_name == "execute_target_approach_mission":
+                        await adapter.execute_target_approach_mission(mission, propose_none)
+                    elif method_name == "execute_waypoints_mission":
+                        await adapter.execute_waypoints_mission(mission)
+                    elif method_name == "execute_waypoint_square_mission":
+                        await adapter.execute_waypoint_square_mission(mission)
+                    elif method_name == "execute_return_to_home_mission":
+                        await adapter.execute_return_to_home_mission(mission)
+                    else:
+                        await adapter.execute_waypoints_return_to_home_mission(mission)
+
+                self.assertNotIn("arm", drone.events)
+                self.assertFalse(
+                    any(
+                        isinstance(event, tuple) and event[0] == "set_takeoff_altitude"
+                        for event in drone.events
+                    )
+                )
+                self.assertFalse(
+                    any(
+                        isinstance(event, tuple) and event[0] == "set_return_to_launch_altitude"
+                        for event in drone.events
+                    )
+                )
+
+    async def test_sitl_gate_must_pass_before_arm_on_hover_mission(self) -> None:
+        drone = FakeDrone()
+        adapter = MavsdkMissionAdapter(drone, sleep=asyncio.sleep)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.0)
+
+        await adapter.execute(mission)
+
+        self._sitl_mock.assert_awaited()
+        self.assertIn("arm", drone.events)
+
     async def test_unreadable_battery_fails_closed_before_arming(self) -> None:
         """The X500 profile no longer permits an unknown battery: PX4 SITL does model one."""
         drone = UnknownBatteryThenZeroDrone()
