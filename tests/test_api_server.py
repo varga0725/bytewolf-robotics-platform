@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway
 from apps.api.server import _load_project_environment, create_app
+from tests.command_approval_helpers import IDENTITY_TEST_ENV, SAMPLE_PLAN_ID, issue_and_approve, seed_plan_file
 
 
 SESSION = "b3b9c777-4860-4b6d-bf59-1a4a98c31ea3"
@@ -22,14 +23,20 @@ class ApiServerTests(unittest.TestCase):
         self.telemetry = Path(self.directory.name) / "telemetry.json"
         self.telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
         self.executed: list[str] = []
+        self.plan_dir = Path(self.directory.name) / "plans"
         gateway = DashboardCommandGateway(
             converse=lambda _session, _text: AgentReply("Tervet készítek.", True),
-            review=lambda _text: "plan-1",
+            review=lambda _text: SAMPLE_PLAN_ID,
             execute=lambda plan: self.executed.append(plan) or "submitted",
         )
-        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        self._commands_patch = patch.dict(
+            os.environ,
+            {**IDENTITY_TEST_ENV, "BYTEWOLF_COMMANDS_ENABLED": "true"},
+            clear=False,
+        )
         self._commands_patch.start()
-        self.client = TestClient(create_app(self.telemetry, gateway=gateway))
+        seed_plan_file(self.plan_dir)
+        self.client = TestClient(create_app(self.telemetry, plan_directory=self.plan_dir, gateway=gateway))
 
     def tearDown(self) -> None:
         self._commands_patch.stop()
@@ -180,9 +187,9 @@ class ApiServerTests(unittest.TestCase):
         self.assertEqual(proposed.status_code, 200)
         self.assertTrue(proposed.json()["approval_required"])
         self.assertEqual(self.executed, [])
-        approved = self.client.post("/api/v1/plans/approve", headers=headers, json={"plan_id": "plan-1"})
+        _, approved = issue_and_approve(self.client, SESSION, SAMPLE_PLAN_ID)
         self.assertEqual(approved.status_code, 200)
-        self.assertEqual(self.executed, ["plan-1"])
+        self.assertEqual(self.executed, [SAMPLE_PLAN_ID])
 
     def test_rejects_bad_session_identifier(self) -> None:
         response = self.client.post("/api/v1/chat", headers={"X-ByteWolf-Session": "no"}, json={"text": "hello"})
@@ -278,7 +285,7 @@ class ApiCapabilitiesDefaultTests(unittest.TestCase):
         self.directory = TemporaryDirectory()
         telemetry = Path(self.directory.name) / "telemetry.json"
         telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, IDENTITY_TEST_ENV, clear=True):
             self.client = TestClient(create_app(telemetry))
 
     def tearDown(self) -> None:

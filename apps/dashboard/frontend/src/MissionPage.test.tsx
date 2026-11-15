@@ -41,7 +41,7 @@ describe("MissionPage", () => {
     await screen.findByText(/Aktív korlát/);
     fireEvent.click(screen.getByRole("button", { name: "Terv ellenőrzése" }));
 
-    expect(await screen.findByRole("button", { name: /Kifejezett jóváhagyás és indítás/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Tovább a terv-hash megerősítéséhez/ })).toBeInTheDocument();
     expect(screen.getByText("1. Javaslat elküldve")).toBeInTheDocument();
     expect(screen.getByText("2. SafetyGate ellenőrizte")).toBeInTheDocument();
     expect(screen.getByText("3. Operátori jóváhagyás szükséges")).toBeInTheDocument();
