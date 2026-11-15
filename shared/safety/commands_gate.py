@@ -14,9 +14,9 @@ class CommandsRouteUnavailableError(RuntimeError):
 
 
 def commands_enabled(environment: os._Environ[str] | None = None) -> bool:
-    """Only an explicit ``true`` value enables command routes."""
+    """Only the exact environment value ``true`` enables command routes."""
     values = os.environ if environment is None else environment
-    return values.get(_ENVIRONMENT_VARIABLE, "false").strip().lower() == "true"
+    return values.get(_ENVIRONMENT_VARIABLE) == "true"
 
 
 def control_room_mode(environment: os._Environ[str] | None = None) -> _ControlRoomMode:

@@ -132,7 +132,7 @@ export function ChatPage({ commandsEnabled }: ChatPageProps) {
     statusTimer.current = window.setInterval(refresh, 1_000);
   }
 
-  const inputLocked = busy || pendingPlan !== null || lifecycle === "submitted" || !commandsEnabled;
+  const inputLocked = busy || pendingPlan !== null || lifecycle === "submitted";
 
   return (
     <section className="content-card" aria-labelledby="chat-title">
@@ -140,18 +140,27 @@ export function ChatPage({ commandsEnabled }: ChatPageProps) {
       <p id="chat-guidance" className="safety-copy">
         {commandsEnabled
           ? "A Cognitive Runtime csak javaslatot készít. A kérés először tervvé válik, a SafetyGate ellenőrzi, és jóváhagyás nélkül nem indul szimulációs küldetés."
-          : "Ground Control Room mód: a küldetési tervezés és a jóváhagyás nem érhető el. A nézet csak megfigyelésre szolgál."}
+          : "Ground Control Room mód: a repülési tervezés és jóváhagyás nem érhető el. A nem repülési beszélgetés továbbra is működik."}
       </p>
       <p className="muted" role="status" aria-atomic="true"><strong>Állapot: {lifecycleLabel[lifecycle]}</strong><br />{status}{trackedPlan && lifecycle !== "ready" && <><br /><span>Kapcsolódó terv: {trackedPlan}</span></>}</p>
       <div className="message-list" role="log" aria-label="Küldetési beszélgetés" aria-live="polite" aria-relevant="additions">
-        {messages.length === 0 ? <p className="muted">Írj például egy rövid, magas szintű küldetési célt.</p> : messages.map((message, index) => <p className={`message message--${message.role}`} key={`${message.role}-${index}`} aria-label={message.role === "operator" ? "Operátor üzenete" : "Asszisztens üzenete"}>{message.text}</p>)}
+        {messages.length === 0 ? (
+          <p className="muted">
+            {commandsEnabled
+              ? "Írj például egy rövid, magas szintű küldetési célt."
+              : "Írj egy rövid üzenetet — a nem repülési válaszok Ground módban is működnek."}
+          </p>
+        ) : messages.map((message, index) => <p className={`message message--${message.role}`} key={`${message.role}-${index}`} aria-label={message.role === "operator" ? "Operátor üzenete" : "Asszisztens üzenete"}>{message.text}</p>)}
       </div>
       {commandsEnabled && pendingPlan && <div className="approval-panel" aria-labelledby="approval-title" aria-describedby="approval-boundary approval-id"><strong id="approval-title">Jóváhagyásra vár</strong><p id="approval-id">Tervazonosító: {pendingPlan}</p><p id="approval-boundary">Ellenőrzési határ: az asszisztens csak javaslatot készített.</p><p>Ez a terv csak ebben a böngésző-sessionben érvényes. Az indítás kizárólag a kifejezett jóváhagyás után történhet.</p><button type="button" className="primary" onClick={() => void decide("approve")} disabled={busy}>Kifejezett jóváhagyás és indítás</button><button type="button" onClick={() => void decide("cancel")} disabled={busy}>Terv visszavonása</button></div>}
-      {commandsEnabled ? (
-        <form className="composer" onSubmit={submit}><label htmlFor="chat-prompt">Küldetési kérés</label><textarea id="chat-prompt" aria-describedby="chat-guidance" value={text} onChange={(event) => setText(event.target.value)} maxLength={2000} rows={3} disabled={inputLocked} /><button className="primary" disabled={inputLocked || !text.trim()}>{lifecycle === "drafting" ? "Terv készül…" : "Terv készítése"}</button></form>
-      ) : (
-        <p className="muted" role="note">A küldetési kérések SITL konzol üzemmódban érhetők el, ha a szerveren a parancsút szándékosan engedélyezett.</p>
-      )}
+      <form className="composer" onSubmit={submit}>
+        <label htmlFor="chat-prompt">{commandsEnabled ? "Küldetési kérés" : "Üzenet"}</label>
+        <textarea id="chat-prompt" aria-describedby="chat-guidance" value={text} onChange={(event) => setText(event.target.value)} maxLength={2000} rows={3} disabled={inputLocked} />
+        <button className="primary" disabled={inputLocked || !text.trim()}>
+          {lifecycle === "drafting" ? "Terv készül…" : commandsEnabled ? "Terv készítése" : "Küldés"}
+        </button>
+      </form>
+      {!commandsEnabled && <p className="muted" role="note">Repülési szándék SITL konzol módban érhető el, ha a szerveren a parancsút szándékosan engedélyezett.</p>}
     </section>
   );
 }

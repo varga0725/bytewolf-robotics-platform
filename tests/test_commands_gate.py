@@ -38,13 +38,14 @@ class CommandsGateUnitTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(commands_enabled())
 
-    def test_only_explicit_true_enables_commands(self) -> None:
-        for value in ("TRUE", " true "):
-            with self.subTest(value=value), patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": value}):
-                self.assertTrue(commands_enabled())
-        for value in ("", "1", "yes", "false", "maybe"):
-            with self.subTest(value=value), patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": value}):
-                self.assertFalse(commands_enabled())
+    def test_only_the_exact_string_true_enables_commands(self) -> None:
+        with patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}):
+            self.assertTrue(commands_enabled())
+        for value in (None, "", "True", " true ", "TRUE", "1", "yes", "false", "maybe"):
+            with self.subTest(value=value):
+                env = {} if value is None else {"BYTEWOLF_COMMANDS_ENABLED": value}
+                with patch.dict(os.environ, env, clear=True):
+                    self.assertFalse(commands_enabled())
 
     def test_capabilities_document_omits_target_class_by_default(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -84,14 +85,28 @@ class CommandsGateApiTests(unittest.TestCase):
     def test_command_routes_are_absent_when_disabled(self) -> None:
         headers = {"X-ByteWolf-Session": SESSION}
         body = {"north_m": 5.0, "east_m": 0.0, "altitude_m": 3.0, "goal": "Demo pont."}
+        survey = {
+            "centre_north_m": 0.0,
+            "centre_east_m": 0.0,
+            "radius_m": 4.0,
+            "spacing_m": 2.0,
+            "altitude_m": 3.0,
+            "goal": "Felderítés.",
+        }
         routes = [
             ("post", "/api/v1/plans/approve", {"plan_id": "plan-x"}),
             ("post", "/api/v1/plans/cancel", {"plan_id": "plan-x"}),
             ("post", "/api/v1/missions/point", body),
+            ("post", "/api/v1/missions/survey", survey),
+            ("post", "/api/v1/missions/demo-point-rtl", None),
+            ("post", "/api/v1/missions/demo-waypoint-mission", None),
         ]
         for method, path, payload in routes:
             with self.subTest(path=path):
-                response = getattr(self.client, method)(path, headers=headers, json=payload)
+                kwargs = {"headers": headers}
+                if payload is not None:
+                    kwargs["json"] = payload
+                response = getattr(self.client, method)(path, **kwargs)
                 self.assertEqual(response.status_code, 404)
 
     @patch.dict(os.environ, {}, clear=True)

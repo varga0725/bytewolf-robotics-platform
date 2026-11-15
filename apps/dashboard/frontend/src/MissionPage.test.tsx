@@ -23,6 +23,8 @@ describe("MissionPage", () => {
     render(<MissionPage commandsEnabled={false} />);
     await screen.findByText(/Ground Control Room mód/);
     expect(screen.queryByRole("button", { name: "Terv ellenőrzése" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("form")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("/api/v1/missions/"), expect.anything());
   });
 
   it("reviews a point mission before it exposes the explicit start control", async () => {

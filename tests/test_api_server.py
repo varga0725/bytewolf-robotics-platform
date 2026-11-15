@@ -35,11 +35,6 @@ class ApiServerTests(unittest.TestCase):
         self._commands_patch.stop()
         self.directory.cleanup()
 
-    def test_capabilities_default_to_ground_control_room(self) -> None:
-        response = self.client.get("/api/v1/capabilities")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"mode": "ground", "commands_enabled": False})
-
     def test_public_root_and_telemetry_are_available(self) -> None:
         public_site = self.client.get("/")
         self.assertEqual(public_site.status_code, 200)
@@ -274,6 +269,25 @@ class SafetyEnvelopeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("max_altitude_m", response.json())
+
+
+class ApiCapabilitiesDefaultTests(unittest.TestCase):
+    """Capabilities must reflect the default Ground mode without the commands patch."""
+
+    def setUp(self) -> None:
+        self.directory = TemporaryDirectory()
+        telemetry = Path(self.directory.name) / "telemetry.json"
+        telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
+        with patch.dict(os.environ, {}, clear=True):
+            self.client = TestClient(create_app(telemetry))
+
+    def tearDown(self) -> None:
+        self.directory.cleanup()
+
+    def test_capabilities_default_to_ground_control_room(self) -> None:
+        response = self.client.get("/api/v1/capabilities")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"mode": "ground", "commands_enabled": False})
 
 
 if __name__ == "__main__":
