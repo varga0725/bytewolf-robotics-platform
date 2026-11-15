@@ -7,7 +7,13 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
+from brain.telemetry.domain import (
+    BatteryTelemetryEvent,
+    FlightStateTelemetryEvent,
+    PositionTelemetryEvent,
+    SupplementalTelemetryEvent,
+)
+from brain.telemetry.mavsdk_relay import DashboardTelemetryState, MavsdkTelemetryRelay, dashboard_snapshot_should_write
 
 
 class Position:
@@ -45,6 +51,24 @@ class ReadOnlyDrone:
     telemetry = Telemetry()
 
 
+class DashboardSnapshotWritePolicyTests(unittest.TestCase):
+    def test_supplemental_armed_does_not_schedule_snapshot_write(self) -> None:
+        now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+        state = DashboardTelemetryState(
+            relay_source="mavsdk",
+            position=PositionTelemetryEvent("telemetry/position", 47.0, 19.0, 100.0, 2.0, now),
+            battery=BatteryTelemetryEvent("telemetry/battery", 80.0, now),
+            flight_state=FlightStateTelemetryEvent("telemetry/in_air", False, now),
+        )
+        armed = SupplementalTelemetryEvent(
+            "telemetry/history/armed",
+            "MAVSDK telemetry.armed",
+            (("value", True),),
+            now,
+        )
+        self.assertFalse(dashboard_snapshot_should_write(state, armed))
+
+
 class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
     async def test_relays_all_declared_streams_to_an_atomic_dashboard_snapshot(self) -> None:
         captured_at = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
@@ -59,14 +83,17 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 json.loads(destination.read_text(encoding="utf-8")),
                 {
+                    "source": "mavsdk",
                     "position": {
                         "latitude_deg": 47.4979,
                         "longitude_deg": 19.0402,
                         "absolute_altitude_m": 125.5,
                         "relative_altitude_m": 2.0,
                     },
-                    "battery": {"remaining_percent": 78.0},
+                    "position_observed_at": "2026-07-16T12:00:00Z",
+                    "battery": {"remaining_percent": 78.0, "observed_at": "2026-07-16T12:00:00Z"},
                     "in_air": True,
+                    "in_air_observed_at": "2026-07-16T12:00:00Z",
                     "captured_at": "2026-07-16T12:00:00Z",
                 },
             )
@@ -106,7 +133,8 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
             await relay.run_until_streams_complete()
 
             document = json.loads(destination.read_text(encoding="utf-8"))
-            self.assertEqual(document["battery"], {"remaining_percent": 1.0})
+            self.assertEqual(document["battery"]["remaining_percent"], 1.0)
+            self.assertEqual(document["source"], "mavsdk")
 
     async def test_does_not_invent_battery_diagnostics_for_legacy_charge_only_samples(self) -> None:
         captured = []
@@ -178,7 +206,7 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
 
             document = json.loads(destination.read_text(encoding="utf-8"))
 
-        self.assertEqual(document["battery"], {"remaining_percent": 78.0})
+        self.assertEqual(document["battery"]["remaining_percent"], 78.0)
         diagnostics = [
             event
             for event in captured
