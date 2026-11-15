@@ -32,6 +32,30 @@ from brain.navigation.waypoints import (
 from brain.safety.profile import SafetyProfile, load_safety_profile
 
 
+# PX4 sets mode_req_prevent_arming for these (commander/ModeUtil/mode_requirements.cpp).
+_ARM_PREVENTING_FLIGHT_MODES = frozenset({"LAND", "RETURN_TO_LAUNCH"})
+
+
+async def _current_flight_mode(drone: Any, timeout_s: float) -> str | None:
+    try:
+        sample = await asyncio.wait_for(anext(drone.telemetry.flight_mode()), timeout=timeout_s)
+    except Exception:
+        return None
+    return getattr(sample, "name", None) or str(sample).rsplit(".", 1)[-1]
+
+
+async def arm_from_ground(drone: Any, *, mode_timeout_s: float = 2.0) -> None:
+    """Arm, first leaving a mode PX4 refuses to arm in.
+
+    A mission that ends with a landing leaves PX4 in Land, and PX4 will not arm in
+    Land or RTL, so the next mission got a bare COMMAND_DENIED. HOLD is a mode change,
+    not actuation. An unreadable mode keeps the old behaviour: arm directly.
+    """
+    if await _current_flight_mode(drone, mode_timeout_s) in _ARM_PREVENTING_FLIGHT_MODES:
+        await drone.action.hold()
+    await drone.action.arm()
+
+
 class MissionPreflightError(RuntimeError):
     """Raised when required PX4 telemetry cannot authorize a mission start."""
 
@@ -164,7 +188,7 @@ class MavsdkMissionAdapter:
         try:
             await self._require_px4_sitl_before_arm()
             await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
-            await self._drone.action.arm()
+            await arm_from_ground(self._drone)
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
@@ -200,7 +224,7 @@ class MavsdkMissionAdapter:
         try:
             await self._require_px4_sitl_before_arm()
             await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
-            await self._drone.action.arm()
+            await arm_from_ground(self._drone)
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
@@ -393,7 +417,7 @@ class MavsdkMissionAdapter:
         try:
             await self._require_px4_sitl_before_arm()
             await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
-            await self._drone.action.arm()
+            await arm_from_ground(self._drone)
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
@@ -435,7 +459,7 @@ class MavsdkMissionAdapter:
         try:
             await self._require_px4_sitl_before_arm()
             await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
-            await self._drone.action.arm()
+            await arm_from_ground(self._drone)
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
@@ -466,7 +490,7 @@ class MavsdkMissionAdapter:
         try:
             await self._require_px4_sitl_before_arm()
             await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
-            await self._drone.action.arm(); execution = self._record(execution, MissionPhase.TAKING_OFF)
+            await arm_from_ground(self._drone); execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff(); airborne = True
             await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
             execution = self._record(execution, MissionPhase.NAVIGATING)
@@ -495,7 +519,7 @@ class MavsdkMissionAdapter:
         try:
             await self._require_px4_sitl_before_arm()
             await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
-            await self._drone.action.arm()
+            await arm_from_ground(self._drone)
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
@@ -585,7 +609,7 @@ class MavsdkMissionAdapter:
             await self._require_px4_sitl_before_arm()
             await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
             await self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m)
-            await self._drone.action.arm()
+            await arm_from_ground(self._drone)
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
@@ -635,7 +659,7 @@ class MavsdkMissionAdapter:
             await self._require_px4_sitl_before_arm()
             await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
             await self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m)
-            await self._drone.action.arm()
+            await arm_from_ground(self._drone)
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
             airborne = True
@@ -693,7 +717,7 @@ class MavsdkMissionAdapter:
         armed = False
         landing_timeout_s = min(mission.landing_timeout_s, self._runtime_policy.landing_confirmation_timeout_s)
         try:
-            await asyncio.wait_for(self._drone.action.arm(), timeout=action_timeout_s)
+            await asyncio.wait_for(arm_from_ground(self._drone), timeout=action_timeout_s)
             armed = True
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await asyncio.wait_for(self._drone.action.takeoff(), timeout=action_timeout_s)
