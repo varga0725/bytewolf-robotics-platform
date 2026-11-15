@@ -58,3 +58,4 @@ graphify-out/
 # that matters is written up in docs/hardware-bringup-x500v2.md without either.
 # Committing one of these needs the position redacted first, deliberately.
 simulation/artifacts/hardware-bench/
+var/runtime/
