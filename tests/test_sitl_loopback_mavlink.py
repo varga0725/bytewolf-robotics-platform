@@ -1,4 +1,4 @@
-"""PX4 SITL launch scripts must bind MAVLink UDP to loopback via PX4_NET_INTERFACE."""
+"""Document PX4 v1.17 MAVLink UDP bind behaviour; do not assert ineffective env exports."""
 
 from __future__ import annotations
 
@@ -6,24 +6,19 @@ from pathlib import Path
 import unittest
 
 
-class SitlLoopbackMavlinkLaunchTests(unittest.TestCase):
-    def test_loopback_helper_exports_px4_net_interface_lo(self) -> None:
+class SitlMavlinkBindDocumentationTests(unittest.TestCase):
+    def test_helper_stub_documents_v1_17_limitation(self) -> None:
         root = Path(__file__).resolve().parents[1]
         helper = (root / "simulation/gazebo/launch/apply_sitl_loopback_mavlink.zsh").read_text(encoding="utf-8")
-        self.assertIn("PX4_NET_INTERFACE=lo", helper)
+        self.assertIn("v1.17", helper)
+        self.assertNotIn("export PX4_NET_INTERFACE", helper)
 
-    def test_headless_launcher_sources_loopback_helper_before_px4(self) -> None:
+    def test_handover_documents_inaddr_any_and_firewall_follow_up(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        launcher = (root / "simulation/gazebo/launch/run_px4_gazebo_headless.zsh").read_text(encoding="utf-8")
-        self.assertIn("apply_sitl_loopback_mavlink.zsh", launcher)
-        loopback_pos = launcher.index("apply_sitl_loopback_mavlink.zsh")
-        px4_start = launcher.index('"$PX4_BINARY" -d')
-        self.assertLess(loopback_pos, px4_start)
-
-    def test_interactive_launcher_sources_loopback_helper(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        launcher = (root / "simulation/gazebo/launch/run_px4_gazebo.zsh").read_text(encoding="utf-8")
-        self.assertIn("apply_sitl_loopback_mavlink.zsh", launcher)
+        handover = (root / "docs/handover-2026-07-27.md").read_text(encoding="utf-8")
+        self.assertIn("v1.17", handover)
+        self.assertIn("0.0.0.0", handover)
+        self.assertIn("firewall", handover.lower())
 
 
 if __name__ == "__main__":

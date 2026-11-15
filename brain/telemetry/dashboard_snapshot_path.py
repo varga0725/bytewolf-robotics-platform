@@ -17,4 +17,9 @@ def default_dashboard_snapshot_path() -> Path:
     return _DEFAULT_RELATIVE
 
 
-__all__ = ["default_dashboard_snapshot_path"]
+def resolve_dashboard_snapshot_path(path: Path | None) -> Path:
+    """CLI/API default when ``--snapshot-file`` / ``--telemetry-file`` is omitted."""
+    return default_dashboard_snapshot_path() if path is None else path
+
+
+__all__ = ["default_dashboard_snapshot_path", "resolve_dashboard_snapshot_path"]

@@ -26,7 +26,7 @@ from apps.agent.pi_conversation import PiConversation
 from apps.agent.pi_memory_extractor import extract_memory_delta
 from brain.cognitive_runtime import NIMProvider, ProviderError
 from brain.memory.briefing import capability_briefing, world_briefing
-from brain.telemetry.dashboard_snapshot_path import default_dashboard_snapshot_path
+from brain.telemetry.dashboard_snapshot_path import resolve_dashboard_snapshot_path
 from brain.memory.graph import knowledge_view
 from brain.memory.world_map import map_view
 from brain.memory.world_memory import load_world_memory
@@ -856,7 +856,7 @@ def _forest_semantic_entities() -> tuple[tuple[float, float, str], ...]:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run the ByteWolf web Command Gateway.")
-    parser.add_argument("--telemetry-file", type=Path, default=default_dashboard_snapshot_path())
+    parser.add_argument("--telemetry-file", type=Path, default=None)
     parser.add_argument("--camera-file", type=Path, default=Path("simulation/artifacts/dashboard/camera.jpg"))
     parser.add_argument("--detections-file", type=Path, default=Path("simulation/artifacts/dashboard/detections.json"))
     parser.add_argument("--down-camera-file", type=Path, default=Path("simulation/artifacts/dashboard/camera-down.jpg"))
@@ -869,7 +869,9 @@ def main(argv: list[str] | None = None) -> None:
     import uvicorn
     uvicorn.run(
         create_app(
-            args.telemetry_file, camera_path=args.camera_file, detections_path=args.detections_file,
+            resolve_dashboard_snapshot_path(args.telemetry_file),
+            camera_path=args.camera_file,
+            detections_path=args.detections_file,
             down_camera_path=args.down_camera_file, down_detections_path=args.down_detections_file,
             map_view_path=args.map_view_file, map_view_meta_path=args.map_view_meta_file,
         ), host="127.0.0.1", port=args.port,

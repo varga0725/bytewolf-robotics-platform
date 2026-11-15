@@ -108,10 +108,7 @@ class WaypointSquareMissionTests(unittest.IsolatedAsyncioTestCase):
         arguments = fly_waypoint_square_land.parse_arguments(())
 
         self.assertEqual(arguments.side_length, 5.0)
-        self.assertEqual(
-            arguments.dashboard_snapshot,
-            __import__("pathlib").Path("simulation/artifacts/dashboard/live-telemetry.json"),
-        )
+        self.assertIsNone(arguments.dashboard_snapshot)
 
     async def test_visits_and_confirms_every_corner_before_landing(self) -> None:
         mission = authorize_takeoff_waypoint_square_land(

@@ -35,7 +35,9 @@ starts (`create_app`); an invalid value fails closed before routes are served.
 
 ## API boundary
 
-- `GET /api/v1/telemetry` — read-only flight state.
+- `GET /api/v1/telemetry` — read-only flight state (`target_class` derives from the
+  snapshot `vehicle_identity` block written by the passive pymavlink bridge; the
+  mavsdk telemetry backend does not populate that block yet).
 - `GET /api/v1/camera`, `GET /api/v1/detections` — read-only vision evidence.
 - `GET /api/v1/world-map`, `/world-memory`, `/knowledge` — read-only evidence
   and separate personal/world knowledge context. `/knowledge` is session-bound.

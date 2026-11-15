@@ -428,10 +428,10 @@ class PymavlinkHeartbeatTests(unittest.TestCase):
             *_complete_core_messages(),
             _Message(
                 "HEARTBEAT",
-                type=2,
-                autopilot=mavutil.mavlink.MAV_AUTOPILOT_PX4,
+                type=6,
+                autopilot=mavutil.mavlink.MAV_AUTOPILOT_INVALID,
                 base_mode=0,
-                custom_mode=px4_auto_rtl_custom_mode(),
+                custom_mode=0,
             ),
             None,
         ]
@@ -614,6 +614,12 @@ class PymavlinkVehicleIdentitySnapshotTests(unittest.TestCase):
             def get_type(self) -> str:
                 return self._type
 
+            def get_srcSystem(self) -> int:
+                return 1
+
+            def get_srcComponent(self) -> int:
+                return 1
+
         messages = [
             _Hb(),
             _Pv("SYS_AUTOSTART", 4001),
@@ -669,6 +675,41 @@ class PymavlinkVehicleIdentitySnapshotTests(unittest.TestCase):
         assert isinstance(identity, dict)
         self.assertEqual(identity.get("sys_autostart"), 4001)
         self.assertEqual(identity.get("sim_gz_en"), 1)
+        self.assertEqual(identity.get("mavlink_sysid"), 1)
+
+    def test_gcs_heartbeat_does_not_retarget_param_lock(self) -> None:
+        from brain.preflight_params.param_value import encode_px4_int32_wire_value
+        from brain.telemetry.autopilot_identity import qualifying_autopilot_heartbeat
+
+        class _GcsHb:
+            type = 6
+            autopilot = 0
+            base_mode = 0
+            custom_mode = 0
+
+            def get_srcSystem(self) -> int:
+                return 255
+
+            def get_srcComponent(self) -> int:
+                return 0
+
+        self.assertIsNone(qualifying_autopilot_heartbeat(_GcsHb()))
+
+        class _Pv:
+            param_id = "SYS_AUTOSTART"
+            param_value = encode_px4_int32_wire_value(4001)
+            param_type = 6
+
+            def get_srcSystem(self) -> int:
+                return 255
+
+            def get_srcComponent(self) -> int:
+                return 0
+
+        collector = __import__(
+            "brain.telemetry.autopilot_identity", fromlist=["AutopilotIdentityCollector"]
+        ).AutopilotIdentityCollector()
+        self.assertFalse(collector.apply_param_value(_Pv))
 
 
 if __name__ == "__main__":
