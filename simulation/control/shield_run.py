@@ -163,8 +163,8 @@ async def _fly(
         # a minute on every one of forty runs; asking is both faster and right.
         await _await_armable(drone)
         await require_px4_sitl_indication(drone)
-        await drone.action.arm()
         await drone.action.set_takeoff_altitude(altitude_m)
+        await drone.action.arm()
         await drone.action.takeoff()
         await asyncio.sleep(9.0)
 

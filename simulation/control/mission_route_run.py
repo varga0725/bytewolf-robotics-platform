@@ -308,11 +308,11 @@ async def _fly_route(
 
     try:
         await _await_armable(drone)
+        await require_px4_sitl_indication(drone)
         await drone.action.set_takeoff_altitude(altitude_m)
         ground_truth_task = asyncio.create_task(monitor_ground_truth())
         armed_at_s = time.monotonic() - route_started
         arm_attempted = True
-        await require_px4_sitl_indication(drone)
         await drone.action.arm()
         await drone.action.takeoff()
         await asyncio.sleep(9.0)

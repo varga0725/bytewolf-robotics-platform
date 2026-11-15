@@ -2,8 +2,11 @@
 
 [`require_px4_sitl_indication`](../brain/mission/sitl_target.py) runs after MAVSDK
 connect and immediately before any `action.arm()` on paths that can start flight.
-Insufficient PX4 proof (fewer than two independent SITL indicators), timeouts, or
-read errors raise `DemoPointRtlError` and **arm is not called** (fail-closed).
+Insufficient proof from PX4 **simulator-specific** parameter and identity signals
+(at least two independent SITL indicators per `sitl_target.py`, not name/substring
+heuristics alone), timeouts, or read errors raise `DemoPointRtlError` and **no
+actuation** (`arm`, altitude parameter writes, offboard fallbacks) runs
+(fail-closed).
 
 Loopback / deployment checks and physical-actuation locks are separate; this
 document lists only the SITL multi-signal gate.
@@ -11,7 +14,8 @@ document lists only the SITL multi-signal gate.
 ## `MavsdkMissionAdapter` (`brain/adapters/mavsdk_adapter.py`)
 
 All `execute_*` missions that arm or take off call `_require_px4_sitl_before_arm`
-(after preflight, before `arm`):
+(after preflight, before any `set_takeoff_altitude` / `set_return_to_launch_altitude`
+and before `arm`):
 
 | Method | Approx. gate line |
 |--------|-------------------|

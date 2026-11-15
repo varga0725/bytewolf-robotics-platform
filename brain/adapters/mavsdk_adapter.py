@@ -159,11 +159,11 @@ class MavsdkMissionAdapter:
         """Execute takeoff-hover-land and confirm the normal landing by telemetry."""
         await self._require_preflight()
         execution = self._begin_execution()
-        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
         await self._start_peak_altitude_tracking()
         try:
             await self._require_px4_sitl_before_arm()
+            await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
             await self._drone.action.arm()
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
@@ -195,11 +195,11 @@ class MavsdkMissionAdapter:
         """
         await self._require_preflight()
         execution = self._begin_execution()
-        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
         await self._start_peak_altitude_tracking()
         try:
             await self._require_px4_sitl_before_arm()
+            await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
             await self._drone.action.arm()
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
@@ -389,10 +389,10 @@ class MavsdkMissionAdapter:
         """Take off, visit one waypoint, then land with telemetry confirmation."""
         await self._require_preflight()
         execution = self._begin_execution()
-        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
         try:
             await self._require_px4_sitl_before_arm()
+            await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
             await self._drone.action.arm()
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
@@ -431,10 +431,10 @@ class MavsdkMissionAdapter:
         """
         await self._require_preflight()
         execution = self._begin_execution()
-        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
         try:
             await self._require_px4_sitl_before_arm()
+            await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
             await self._drone.action.arm()
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
@@ -462,10 +462,10 @@ class MavsdkMissionAdapter:
         """Visit every approved local route point; one failure lands immediately."""
         await self._require_preflight()
         execution = self._begin_execution()
-        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
         try:
             await self._require_px4_sitl_before_arm()
+            await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
             await self._drone.action.arm(); execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff(); airborne = True
             await self._sleep_with_runtime_watchdog(mission.takeoff_settle_seconds)
@@ -491,10 +491,10 @@ class MavsdkMissionAdapter:
         """
         await self._require_preflight()
         execution = self._begin_execution()
-        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
         airborne = False
         try:
             await self._require_px4_sitl_before_arm()
+            await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
             await self._drone.action.arm()
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
@@ -580,11 +580,11 @@ class MavsdkMissionAdapter:
         await self._require_preflight()
         home = await self._global_position_sample("home")
         execution = self._begin_execution()
-        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
-        await self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m)
         airborne = False
         try:
             await self._require_px4_sitl_before_arm()
+            await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+            await self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m)
             await self._drone.action.arm()
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()
@@ -630,11 +630,11 @@ class MavsdkMissionAdapter:
         await self._require_preflight()
         home = await self._global_position_sample("home")
         execution = self._begin_execution()
-        await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
-        await self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m)
         airborne = False
         try:
             await self._require_px4_sitl_before_arm()
+            await self._drone.action.set_takeoff_altitude(mission.takeoff.target_altitude_m)
+            await self._drone.action.set_return_to_launch_altitude(mission.return_to_home.target_altitude_m)
             await self._drone.action.arm()
             execution = self._record(execution, MissionPhase.TAKING_OFF)
             await self._drone.action.takeoff()

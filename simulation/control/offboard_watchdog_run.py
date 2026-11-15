@@ -100,8 +100,8 @@ async def _fly(*, altitude_m: float, stream_seconds: float, observe_seconds: flo
     mode_watch = asyncio.create_task(_watch_modes(drone, modes, started_at))
     try:
         await require_px4_sitl_indication(drone)
-        await drone.action.arm()
         await drone.action.set_takeoff_altitude(altitude_m)
+        await drone.action.arm()
         await drone.action.takeoff()
         await asyncio.sleep(8.0)
 
