@@ -19,6 +19,7 @@ from brain.adapters.offboard_fallback import OffboardFallbackExecutor
 from brain.adapters.offboard_velocity_adapter import MavsdkVelocityAdapter
 from brain.control.contract import load_setpoint
 from brain.control.session import OffboardSession
+from brain.mission.sitl_target import require_px4_sitl_indication
 from brain.safety.profile import load_safety_profile
 from simulation.control.offboard_watchdog_scenario import (
     ModeSample,
@@ -98,8 +99,9 @@ async def _fly(*, altitude_m: float, stream_seconds: float, observe_seconds: flo
     started_at = time.monotonic()
     mode_watch = asyncio.create_task(_watch_modes(drone, modes, started_at))
     try:
-        await drone.action.arm()
+        await require_px4_sitl_indication(drone)
         await drone.action.set_takeoff_altitude(altitude_m)
+        await drone.action.arm()
         await drone.action.takeoff()
         await asyncio.sleep(8.0)
 

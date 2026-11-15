@@ -38,6 +38,7 @@ from brain.control.contract import Velocity, load_setpoint
 from brain.control.session import OffboardSession
 from brain.control.shield import RuntimeSafetyShield, ShieldMode
 from brain.perception.lidar_obstacle import laser_scan_from_gz_json, obstacle_observation
+from brain.mission.sitl_target import require_px4_sitl_indication
 from brain.safety.profile import load_safety_profile
 from brain.telemetry.observation import load_observation
 from simulation.control.shield_scenario import (
@@ -161,8 +162,9 @@ async def _fly(
         # estimator yet. A sleep long enough for the slowest start would waste
         # a minute on every one of forty runs; asking is both faster and right.
         await _await_armable(drone)
-        await drone.action.arm()
+        await require_px4_sitl_indication(drone)
         await drone.action.set_takeoff_altitude(altitude_m)
+        await drone.action.arm()
         await drone.action.takeoff()
         await asyncio.sleep(9.0)
 

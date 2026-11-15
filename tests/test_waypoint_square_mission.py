@@ -51,6 +51,9 @@ class _RecordingAdapter(MavsdkMissionAdapter):
     async def _require_preflight(self) -> None:
         return None
 
+    async def _require_px4_sitl_before_arm(self, *, timeout_s: float = 10.0) -> None:
+        return None
+
     async def goto_relative_waypoint(self, command):  # type: ignore[no-untyped-def]
         self.commands.append(command)
         if self.fail_at_waypoint == len(self.commands):
