@@ -47,6 +47,9 @@ for unit in "$UNIT_ROOT"/bytewolf-*.service; do
   sudo install -m 0644 "$unit" "$SYSTEMD_ROOT/$(basename "$unit")"
 done
 
+# mavsdk_server binds gRPC to 0.0.0.0; deny non-loopback INPUT on MAVSDK gRPC ports only.
+"${UNIT_ROOT}/apply-mavsdk-grpc-containment.sh"
+
 sudo systemctl daemon-reload
 sudo systemctl enable bytewolf.target
 sudo systemctl restart bytewolf.target

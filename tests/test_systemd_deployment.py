@@ -66,6 +66,16 @@ class SystemdDeploymentTests(unittest.TestCase):
         self.assertIn("API_ROOT=http://127.0.0.1:8080", verifier)
         self.assertIn("127.0.0.1", control_room)
 
+    def test_installer_applies_mavsdk_grpc_containment(self) -> None:
+        installer = self._unit("install-stack.sh")
+        self.assertIn("apply-mavsdk-grpc-containment.sh", installer)
+
+    def test_verifier_rejects_non_loopback_mavsdk_grpc(self) -> None:
+        verifier = self._unit("verify-stack.sh")
+        self.assertIn("brain.deploy.mavsdk_grpc_containment", verifier)
+        self.assertIn("ss -ltnp", verifier)
+        self.assertIn("mavsdk_server must not listen", verifier)
+
     def test_control_room_and_telemetry_are_pinned_to_simulation(self) -> None:
         for service in ("bytewolf-controlroom.service", "bytewolf-telemetry.service"):
             with self.subTest(service=service):

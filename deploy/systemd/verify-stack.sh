@@ -20,6 +20,13 @@ for unit in "${units[@]}"; do
 done
 
 cd "$PROJECT_ROOT"
+
+if ! ss -ltnp | .venv/bin/python -m brain.deploy.mavsdk_grpc_containment verify-listeners; then
+  echo "Refusing stack verification: mavsdk_server must not listen on a non-loopback address." >&2
+  echo "Re-run deploy/systemd/apply-mavsdk-grpc-containment.sh after install, or stop stray mavsdk_server processes." >&2
+  exit 1
+fi
+
 .venv/bin/python - "$API_ROOT" <<'PY'
 from datetime import datetime, timezone
 import json

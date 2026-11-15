@@ -60,6 +60,33 @@ scope for this ticket). Remediation options belong in a follow-up (upstream
 feature, MAVSDK pin with a bind-host flag, or an architecture change explicitly
 approved outside BYT-46).
 
+## BYT-73 containment (host firewall)
+
+Evidence from this repo (wheel help and upstream `grpc_server.cpp`, sections
+above) shows no supported gRPC bind-host flag. **Option (a) is unavailable** on
+the pinned stack.
+
+The Ubuntu stack installer therefore applies a **narrow, idempotent iptables/ip6tables
+INPUT rule** (`deploy/systemd/apply-mavsdk-grpc-containment.sh`) that drops only
+non-loopback sources targeting MAVSDK gRPC ports (`50051` and `51000–60999`, the
+same range the headless scenario runner allocates). The rule carries comment
+`bytewolf-mavsdk-grpc-loopback`, inserts with `-I` only when `-C` reports it is
+missing, and does not flush or rewrite unrelated policy.
+
+`deploy/systemd/verify-stack.sh` still fails closed when `ss -ltnp` shows
+`mavsdk_server` bound to a non-loopback address (for example `0.0.0.0:50051`), so
+an operator cannot mistake an uncontained listener for an acceptable posture.
+
+The always-on dashboard relay defaults to **pymavlink** and does not spawn
+`mavsdk_server`. Missions and `--backend mavsdk` still do; containment limits who
+can reach those listeners while upstream lacks a true loopback bind.
+
+## Longer-term direction
+
+See [pymavlink-sitl-mission-adapter.md](pymavlink-sitl-mission-adapter.md) for a
+pymavlink-based mission path that would remove the gRPC listener from routine
+SITL flights without relaxing the safety gate.
+
 ## BYT-49 default (pymavlink backend)
 
 The dashboard telemetry relay (`brain.cli.dashboard_telemetry`) now defaults to
