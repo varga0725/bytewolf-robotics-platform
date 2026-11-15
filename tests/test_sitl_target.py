@@ -276,6 +276,18 @@ class TelemetryDocumentClassifierTests(unittest.TestCase):
         }
         self.assertEqual(classify_telemetry_document(document), "unknown")
 
+    def test_stale_vehicle_identity_in_snapshot_is_unknown(self) -> None:
+        document = {
+            "vehicle_identity": {
+                "stale": True,
+                "mavlink_sysid": 1,
+                "mavlink_compid": 1,
+                "sys_autostart": 4001,
+                "sim_gz_en": 1,
+            }
+        }
+        self.assertEqual(classify_telemetry_document(document), "unknown")
+
     def test_partial_release_identity_without_sys_autostart_is_unknown(self) -> None:
         document = {
             "vehicle_identity": {

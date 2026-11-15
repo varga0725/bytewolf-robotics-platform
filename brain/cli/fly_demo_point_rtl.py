@@ -27,6 +27,7 @@ from brain.mission.execution import MissionExecution
 from brain.safety.deployment import actuation_request_sha256, add_deployment_arguments, file_sha256
 from brain.safety.gate import SafetyGate
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
+from brain.cli.live_telemetry_snapshot import effective_dashboard_snapshot_path
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
 from brain.telemetry.persistence import TelemetryHistoryStore
 from shared.safety.execution_gate import require_mission_execution_enabled
@@ -50,7 +51,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--dashboard-snapshot",
         type=Path,
-        default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
+        default=None,
     )
     parser.add_argument("--telemetry-history", type=Path, default=None)
     parser.add_argument("--px4-ulog", type=Path, default=None)
@@ -119,7 +120,7 @@ async def run(arguments: argparse.Namespace) -> None:
         dashboard_relay_task = asyncio.create_task(
             MavsdkTelemetryRelay(
                 system,
-                arguments.dashboard_snapshot,
+                effective_dashboard_snapshot_path(arguments.dashboard_snapshot),
                 on_event=history_store.append,
             ).run(dashboard_stop_event)
         )

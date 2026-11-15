@@ -82,6 +82,7 @@ CAVEATS = [
 
 def _gateway(artifact_root: Path):
     """Build exactly the gateway the web app builds, with the live conversation."""
+    from brain.cli.live_telemetry_snapshot import effective_default_path
     from apps.api.command_gateway import DashboardCommandGateway
     from apps.api.server import _build_live_converse, _capability_briefing
     from apps.gateway.telegram_mission_gateway import _execute_with_cli, _review_with_cli
@@ -89,7 +90,7 @@ def _gateway(artifact_root: Path):
     twin_path = Path("shared/config/x500v2/twin.yaml")
     return DashboardCommandGateway(
         converse=_build_live_converse(
-            Path("simulation/artifacts/dashboard/live-telemetry.json"),
+            effective_default_path(),
             Path("simulation/artifacts/dashboard/detections.json"),
             twin_path,
             Path("var/world-memory"),

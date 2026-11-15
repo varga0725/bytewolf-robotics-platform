@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 import signal
 
+from brain.cli.live_telemetry_snapshot import effective_dashboard_snapshot_path
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
 from brain.safety.deployment import add_deployment_arguments, authorize_readonly_connection
 from robots.drone.x500v2.ros2.bridge_runtime import TelemetryBridgeRuntime
@@ -29,7 +30,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--dashboard-snapshot",
         type=Path,
-        default=Path("simulation/artifacts/dashboard/live-telemetry.json"),
+        default=None,
     )
     parser.add_argument(
         "--artifact-dir",
@@ -70,7 +71,7 @@ async def run(arguments: argparse.Namespace) -> None:
         vehicle=system,
         ros_client=rclpy,
         node_factory=create_ros2_telemetry_node,
-        destination=arguments.dashboard_snapshot,
+        destination=effective_dashboard_snapshot_path(arguments.dashboard_snapshot),
         endpoint=arguments.endpoint,
         connection_timeout=arguments.connection_timeout,
         artifact_dir=arguments.artifact_dir,

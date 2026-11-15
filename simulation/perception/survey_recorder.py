@@ -277,7 +277,7 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
     parser.add_argument("--duration", type=float, default=120.0, help="How long to observe, in seconds.")
     parser.add_argument("--interval", type=float, default=DEFAULT_SCAN_INTERVAL_S)
     parser.add_argument(
-        "--telemetry-file", type=Path, default=Path("simulation/artifacts/dashboard/live-telemetry.json")
+        "--telemetry-file", type=Path, default=None
     )
     parser.add_argument("--world-memory-file", type=Path, default=DEFAULT_WORLD_MEMORY_PATH)
     parser.add_argument(
@@ -291,10 +291,13 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
         help="Lidar scan topic. Discovered from the running world when omitted.",
     )
     parsed = parser.parse_args(arguments)
+    from brain.cli.live_telemetry_snapshot import effective_dashboard_snapshot_path
+
+    telemetry_file = effective_dashboard_snapshot_path(parsed.telemetry_file)
     try:
         scan_topic = parsed.scan_topic or discover_scan_topic()
         if parsed.home_latitude is None or parsed.home_longitude is None:
-            latitude, longitude = origin_from_telemetry(load_telemetry_snapshot(parsed.telemetry_file))
+            latitude, longitude = origin_from_telemetry(load_telemetry_snapshot(telemetry_file))
         else:
             latitude, longitude = parsed.home_latitude, parsed.home_longitude
     except (SurveyRecorderError, TelemetryFormatError, FileNotFoundError) as error:
@@ -304,7 +307,7 @@ def main(arguments: tuple[str, ...] | None = None) -> int:
         return 2
     print(f"Survey observer: {scan_topic} · origin {latitude:.6f}, {longitude:.6f}")
     progress = run_survey_observer(
-        telemetry_path=parsed.telemetry_file,
+        telemetry_path=telemetry_file,
         world_memory_path=parsed.world_memory_file,
         grid=MapGrid(latitude, longitude, cell_size_m=parsed.cell_size),
         scan_topic=scan_topic,
