@@ -3,6 +3,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
+function controlRoomFetch(body: object) {
+  return vi.fn((input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
+    if (url.includes("/api/v1/capabilities")) {
+      return Promise.resolve(new Response(JSON.stringify({ mode: "ground", commands_enabled: false }), { status: 200 }));
+    }
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+  });
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -11,10 +21,11 @@ afterEach(() => {
 describe("App telemetry status", () => {
   it("accepts bounded browser/server clock skew", async () => {
     const capturedAt = new Date(Date.now() + 2_000).toISOString();
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+    vi.stubGlobal("fetch", controlRoomFetch({
       position: { latitude_deg: 47.4979, longitude_deg: 19.0402, absolute_altitude_m: 125.5, relative_altitude_m: 0 },
       battery_percent: 100, in_air: false, heading_deg: 0, captured_at: capturedAt,
-    }), { status: 200 }))));
+      target_class: "sitl_verified",
+    }));
 
     render(<App />);
     expect(await screen.findByRole("region", { name: "Élő telemetria állapot" })).toHaveTextContent("Telemetria kapcsolódva");
@@ -22,6 +33,33 @@ describe("App telemetry status", () => {
 
   it("announces a fresh sample with its capture time and age", async () => {
     const capturedAt = new Date(Date.now() - 5_000).toISOString();
+    vi.stubGlobal("fetch", controlRoomFetch({
+      position: {
+        latitude_deg: 47.4979,
+        longitude_deg: 19.0402,
+        absolute_altitude_m: 125.5,
+        relative_altitude_m: 12.3,
+      },
+      battery_percent: 74,
+      in_air: false,
+      heading_deg: 271.4,
+      captured_at: capturedAt,
+      target_class: "sitl_verified",
+    }));
+
+    render(<App />);
+
+    const summary = await screen.findByRole("region", { name: "Élő telemetria állapot" });
+    expect(summary).toHaveTextContent("Telemetria kapcsolódva");
+    expect(summary).toHaveTextContent(`Rögzítés ideje: ${capturedAt}`);
+    expect(summary).toHaveTextContent(/másodperce/);
+    expect(screen.getByRole("region", { name: "Telemetria integritása" })).toHaveTextContent("5 / 5 adatmező ellenőrizve");
+    expect(screen.getByText("271,4°")).toBeInTheDocument();
+    expect(screen.getAllByText("ÉLŐ MINTA")).toHaveLength(2);
+  });
+
+  it("does not keep a verified badge when telemetry is stale", async () => {
+    const capturedAt = new Date(Date.now() - 30_000).toISOString();
     vi.stubGlobal(
       "fetch",
       vi.fn(() =>
@@ -38,6 +76,7 @@ describe("App telemetry status", () => {
               in_air: false,
               heading_deg: 271.4,
               captured_at: capturedAt,
+              target_class: "sitl_verified",
             }),
             { status: 200 },
           ),
@@ -47,13 +86,9 @@ describe("App telemetry status", () => {
 
     render(<App />);
 
-    const summary = await screen.findByRole("region", { name: "Élő telemetria állapot" });
-    expect(summary).toHaveTextContent("Telemetria kapcsolódva");
-    expect(summary).toHaveTextContent(`Rögzítés ideje: ${capturedAt}`);
-    expect(summary).toHaveTextContent(/másodperce/);
-    expect(screen.getByRole("region", { name: "Telemetria integritása" })).toHaveTextContent("5 / 5 adatmező ellenőrizve");
-    expect(screen.getByText("271,4°")).toBeInTheDocument();
-    expect(screen.getAllByText("ÉLŐ MINTA")).toHaveLength(2);
+    expect(await screen.findByRole("alert", { name: "PX4 cél figyelmeztetés" })).toBeInTheDocument();
+    expect(screen.getAllByText("ISMERETLEN CÉL").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("SITL (ellenőrzött)")).toBeNull();
   });
 
   it("keeps stale measurements visible but explicitly warns they are not current", async () => {
@@ -289,7 +324,7 @@ describe("App overview context", () => {
 
     const context = await screen.findByRole("region", { name: "Működési kontextus" });
     expect(context).toHaveTextContent("Telemetria nem elérhető");
-    expect(context).toHaveTextContent("nincs közvetlen vezérlés");
+    expect(context).toHaveTextContent("közvetlen PX4-, MAVSDK- vagy aktuátorvezérlés nincs");
     expect(context).toHaveTextContent("külön jóváhagyás");
   });
 
@@ -300,9 +335,8 @@ describe("App overview context", () => {
 
     const strip = await screen.findByRole("region", { name: "Operátori rendszerállapot" });
     expect(strip).toHaveTextContent("Jóváhagyás-köteles");
-    expect(strip).toHaveTextContent("Szimuláció");
+    expect(strip).toHaveTextContent("ISMERETLEN CÉL");
     expect(strip).toHaveTextContent("NEM ELLENŐRIZHETŐ");
-    expect(strip).toHaveTextContent("1 SZIMULÁLT TEST");
     expect(strip).toHaveTextContent("Nincs ellenőrzött aktív küldetésadat");
     expect(strip).toHaveTextContent("Nincs ellenőrzött riasztási feed");
     expect(strip).toHaveTextContent("Nincs közvetlen vezérlés");

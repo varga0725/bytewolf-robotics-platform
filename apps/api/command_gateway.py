@@ -59,6 +59,9 @@ class DashboardCommandGateway:
         memory_update = reply.memory_update if reply.memory_update in MEMORY_UPDATE_STATES else "unavailable"
         if not reply.requests_drone_action:
             return DashboardReply(reply.text, "conversation", memory_update=memory_update)
+        from shared.safety.commands_gate import require_commands_enabled
+
+        require_commands_enabled()
         plan_id = self._review(text)
         superseded = self._set_pending(session_id, plan_id)
         return DashboardReply(

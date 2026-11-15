@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway
+from shared.safety.commands_gate import CommandsRouteUnavailableError
 from shared.safety.execution_gate import MissionExecutionQuarantinedError
 
 
@@ -18,6 +19,7 @@ class DashboardCommandGatewayTests(unittest.TestCase):
             execute=lambda plan_id: self.executed.append(plan_id) or "started",
         )
 
+    @patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
     def test_chat_creates_a_pending_plan_but_does_not_execute(self) -> None:
         reply = self.gateway.chat("browser-1", "Szállj fel két méterre, majd szállj le.")
 
@@ -26,7 +28,16 @@ class DashboardCommandGatewayTests(unittest.TestCase):
         self.assertTrue(reply.approval_required)
         self.assertEqual(reply.plan_id, "plan-1")
 
-    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"})
+    @patch.dict(os.environ, {}, clear=True)
+    def test_flight_intent_chat_refuses_when_commands_are_disabled(self) -> None:
+        with self.assertRaises(CommandsRouteUnavailableError):
+            self.gateway.chat("browser-1", "repülj")
+
+    @patch.dict(
+        os.environ,
+        {"BYTEWOLF_COMMANDS_ENABLED": "true", "BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"},
+        clear=False,
+    )
     def test_only_the_same_session_can_approve_its_pending_plan(self) -> None:
         self.gateway.chat("browser-1", "repülj")
 
@@ -37,6 +48,7 @@ class DashboardCommandGatewayTests(unittest.TestCase):
         self.assertEqual(self.executed, ["plan-1"])
         self.assertEqual(reply.status, "submitted")
 
+    @patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
     def test_approve_refuses_execution_until_the_gate_is_open(self) -> None:
         self.gateway.chat("browser-1", "repülj")
 
@@ -45,6 +57,7 @@ class DashboardCommandGatewayTests(unittest.TestCase):
 
         self.assertEqual(self.executed, [])
 
+    @patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
     def test_cancel_removes_the_pending_plan(self) -> None:
         self.gateway.chat("browser-1", "repülj")
         self.gateway.cancel("browser-1", "plan-1")
@@ -103,6 +116,7 @@ class PendingPlanReplacementTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "No pending plan"):
             gateway.approve("session", "plan-a")
 
+    @patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
     def test_replacing_across_surfaces_keeps_one_slot(self) -> None:
         """A chat plan and a map plan compete for the same slot, visibly."""
         gateway = DashboardCommandGateway(
