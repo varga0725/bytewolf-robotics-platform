@@ -1,6 +1,8 @@
 import { FormEvent, MouseEvent, useEffect, useRef, useState } from "react";
 
+import { ControlRoomMapPanel, type ControlRoomMapWaypoint } from "./ControlRoomMapPanel";
 import { api, post } from "./api";
+import { pointFromLocalOffset } from "./localMissionCoordinates";
 
 type Envelope = {
   max_altitude_m: number;
@@ -54,6 +56,8 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
   const [occupancyCells, setOccupancyCells] = useState<OccupancyCell[]>([]);
   const [mapBackground, setMapBackground] = useState<MapBackground | null>(null);
   const [events, setEvents] = useState<string[]>([]);
+  const [pendingTarget, setPendingTarget] = useState<{ latitude_deg: number; longitude_deg: number } | null>(null);
+  const [homeLatLon, setHomeLatLon] = useState<{ latitude_deg: number; longitude_deg: number } | null>(null);
   const statusTimer = useRef<number | null>(null);
   const mapSize = 400;
   // The view is chosen, not derived from the safety radius. Deriving it meant
@@ -76,22 +80,56 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
     setEvents((current) => [`${timestamp} · ${text}`, ...current].slice(0, 20));
   }
 
+  function applyWaypointSelection(waypoint: ControlRoomMapWaypoint) {
+    setNorth(waypoint.north_m.toFixed(1));
+    setEast(waypoint.east_m.toFixed(1));
+    setPendingTarget({ latitude_deg: waypoint.latitude_deg, longitude_deg: waypoint.longitude_deg });
+    setPlan(null);
+    setStatus(`Térképi cél kijelölve: É ${waypoint.north_m.toFixed(1)} m, K ${waypoint.east_m.toFixed(1)} m. A SafetyGate ellenőrzi a tervet.`);
+  }
+
   function pickOnMap(event: MouseEvent<SVGSVGElement>) {
     if (!envelope) return;
     const box = event.currentTarget.getBoundingClientRect();
     if (!box.width || !box.height) return;
     const east_m = ((event.clientX - box.left) / box.width * mapSize - mapSize / 2) / mapScale;
     const north_m = (mapSize / 2 - (event.clientY - box.top) / box.height * mapSize) / mapScale;
-    setNorth(north_m.toFixed(1));
-    setEast(east_m.toFixed(1));
+    const pending = homeLatLon === null ? null : pointFromLocalOffset(homeLatLon, { north_m, east_m });
+    applyWaypointSelection({
+      north_m,
+      east_m,
+      latitude_deg: pending?.latitude_deg ?? 0,
+      longitude_deg: pending?.longitude_deg ?? 0,
+    });
+  }
+
+  function clearPendingTarget() {
+    setPendingTarget(null);
     setPlan(null);
-    setStatus(`Térképi cél kijelölve: É ${north_m.toFixed(1)} m, K ${east_m.toFixed(1)} m. A SafetyGate ellenőrzi a tervet.`);
+    setStatus("A függő térképi cél törölve.");
   }
 
   useEffect(() => {
     void api<Envelope>("/api/v1/safety-envelope")
       .then((value) => { setEnvelope(value); setStatus("Jelölj ki egy célpontot és kérj tervet."); })
       .catch((error: Error) => setStatus(`A safety-profil nem olvasható: ${error.message}`));
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void api<unknown>("/api/v1/telemetry")
+      .then((payload) => {
+        if (!active || !payload || typeof payload !== "object") return;
+        const position = (payload as Record<string, unknown>).position;
+        if (!position || typeof position !== "object") return;
+        const latitude = (position as Record<string, unknown>).latitude_deg;
+        const longitude = (position as Record<string, unknown>).longitude_deg;
+        if (typeof latitude === "number" && typeof longitude === "number" && Number.isFinite(latitude) && Number.isFinite(longitude)) {
+          setHomeLatLon({ latitude_deg: latitude, longitude_deg: longitude });
+        }
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -212,14 +250,20 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
         <p className="muted">
           {commandsEnabled
             ? "A térképi kijelölés és a terv-ellenőrzés nem ad ki repülési parancsot. Csak az ellenőrzött tervhez tartozó, külön jóváhagyás kezdeményezhet indítást."
-            : "Ground Control Room mód: a tervkészítés és a jóváhagyás nem érhető el. A térkép és a korlátok csak megfigyelésre szolgálnak."}
+            : "Ground Control Room mód: a térképen kijelölhetsz célpontot és előkészítheted a koordinátákat; a SafetyGate-ellenőrzés és a jóváhagyás csak SITL konzol módban érhető el."}
         </p>
       </section>
       {envelope && <p className="envelope">Aktív korlát: max. {envelope.max_altitude_m} m magasság · {envelope.max_radius_m} m sugár · indításhoz min. {envelope.minimum_battery_percent_to_start}% akkumulátor.</p>}
-      {commandsEnabled ? (
       <form className="mission-form" onSubmit={review}>
-        <fieldset className="mission-kind"><legend>Küldetéstípus</legend><label><input type="radio" name="mission-kind" checked={kind === "point"} onChange={() => setKind("point")} /> Pontküldetés</label><label><input type="radio" name="mission-kind" checked={kind === "survey"} onChange={() => setKind("survey")} /> Terület felderítése</label></fieldset>
+        <fieldset className="mission-kind" disabled={!commandsEnabled}><legend>Küldetéstípus</legend><label><input type="radio" name="mission-kind" checked={kind === "point"} onChange={() => setKind("point")} disabled={!commandsEnabled} /> Pontküldetés</label><label><input type="radio" name="mission-kind" checked={kind === "survey"} onChange={() => setKind("survey")} disabled={!commandsEnabled} /> Terület felderítése</label></fieldset>
         <div className="mission-map-panel">
+          <ControlRoomMapPanel
+            ariaLabel="Küldetési OpenStreetMap térkép"
+            interactive
+            pendingTarget={pendingTarget}
+            onWaypointSelect={applyWaypointSelection}
+            onClearPending={pendingTarget ? clearPendingTarget : undefined}
+          />
           <div className="mission-map-head">
             <p className="eyebrow">{envelope ? "KATTINTS A CÉLPONTRA" : "TÉRKÉPI SKÁLA BETÖLTÉSE"}</p>
             <fieldset className="map-range"><legend className="sr-only">Térképi látótávolság</legend>
@@ -253,11 +297,9 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
         <label>Magasság (m)<input type="number" min="0" step="0.1" value={altitude} onChange={(event) => setAltitude(event.target.value)} /></label>
         {kind === "survey" && <><label>Sugár (m)<input aria-label="Sugár (m)" type="number" min="2" value={radius} onChange={(event) => setRadius(event.target.value)} /></label><label>Vonal-köz (m)<input type="number" min="1" max="15" value={spacing} onChange={(event) => setSpacing(event.target.value)} /></label></>}
         <label className="wide">Cél<input value={goal} maxLength={240} onChange={(event) => setGoal(event.target.value)} /></label>
-        <button className="primary" disabled={busy || !envelope}>{busy ? "Ellenőrzés…" : "Terv ellenőrzése"}</button>
+        <button className="primary" disabled={busy || !envelope || !commandsEnabled}>{busy ? "Ellenőrzés…" : "Terv ellenőrzése"}</button>
+        {!commandsEnabled && <p className="muted" role="note">A terv-ellenőrzés SITL konzol módban érhető el, ha a szerveren a parancsút szándékosan engedélyezett.</p>}
       </form>
-      ) : (
-        <p className="muted" role="note">A térképi tervezés SITL konzol módban érhető el, ha a szerveren a parancsút szándékosan engedélyezett.</p>
-      )}
       {commandsEnabled && plan && <div className="approval-panel" aria-labelledby="approval-title"><p className="eyebrow">SAFETYGATE-BIZONYÍTÉK · JÓVÁHAGYÁSRA VÁR</p><strong id="approval-title">Ellenőrzött terv: {plan.summary}</strong><p>{plan.goal}</p>{plan.waypoints && <p className="muted">Útvonal-bizonyíték: {plan.waypoints.length} SafetyGate által összeállított waypoint.</p>}<h3>Tervezett lépések</h3><ol>{plan.steps.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol><p className="muted">Ez a terv még nem indult el. A jóváhagyás ehhez a tervazonosítóhoz kötött, és visszavonható az indítás előtt.</p><button className="primary" type="button" onClick={() => void decide("approve")} disabled={busy}>Kifejezett jóváhagyás és indítás</button><button type="button" onClick={() => void decide("cancel")} disabled={busy}>Terv visszavonása</button></div>}
       <p className="muted" role="status">{status}</p>
       <section className="mission-events" aria-labelledby="mission-events-title"><p className="eyebrow">HELYI OPERÁTORI NAPLÓ</p><h3 id="mission-events-title">Küldetési események</h3>{events.length === 0 ? <p className="muted">Még nincs esemény ebben a böngésző-sessionben.</p> : <ol>{events.map((event, index) => <li key={`${event}-${index}`}>{event}</li>)}</ol>}</section>

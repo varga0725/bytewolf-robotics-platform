@@ -9,31 +9,42 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const mockTelemetry = {
+  captured_at: new Date().toISOString(),
+  heading_deg: 12,
+  position: { latitude_deg: 37.416, longitude_deg: -122.049, absolute_altitude_m: 0, relative_altitude_m: 0 },
+};
+
+function missionPayload(path: string, overrides: Record<string, unknown> = {}) {
+  if (path === "/api/v1/telemetry") return mockTelemetry;
+  if (path === "/api/v1/safety-envelope") {
+    return overrides.safety ?? { max_altitude_m: 20, max_radius_m: 50, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] };
+  }
+  if (path === "/api/v1/world-map") {
+    return overrides.world ?? { cells: [] };
+  }
+  if (path === "/api/v1/map-view/meta") return {};
+  return overrides.default ?? {};
+}
+
 describe("MissionPage", () => {
   it("hides mission approval controls in ground control room mode", async () => {
-    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
-      path === "/api/v1/safety-envelope"
-        ? { max_altitude_m: 20, max_radius_m: 50, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] }
-        : path === "/api/v1/world-map"
-          ? { cells: [] }
-          : {},
-    ), { status: 200 })));
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(missionPayload(path)), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<MissionPage commandsEnabled={false} />);
     await screen.findByText(/Ground Control Room mód/);
-    expect(screen.queryByRole("button", { name: "Terv ellenőrzése" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("form")).not.toBeInTheDocument();
+    expect(screen.getByRole("application", { name: "Küldetési OpenStreetMap térkép" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Terv ellenőrzése" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Kifejezett jóváhagyás/ })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("/api/v1/missions/"), expect.anything());
   });
 
   it("reviews a point mission before it exposes the explicit start control", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
-      path === "/api/v1/safety-envelope"
-        ? { max_altitude_m: 20, max_radius_m: 50, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] }
-        : path === "/api/v1/world-map"
-          ? { cells: [] }
-          : { plan_id: "plan-1", summary: "Rövid út", goal: "Teszt", steps: ["TAKEOFF"], waypoints: [] },
+      path === "/api/v1/missions/point"
+        ? { plan_id: "plan-1", summary: "Rövid út", goal: "Teszt", steps: ["TAKEOFF"], waypoints: [] }
+        : missionPayload(path),
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -57,11 +68,9 @@ describe("MissionPage", () => {
 
   it("keeps a rejected proposal out of the approval lifecycle", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
-      path === "/api/v1/safety-envelope"
-        ? { max_altitude_m: 20, max_radius_m: 50, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] }
-        : path === "/api/v1/world-map"
-          ? { cells: [] }
-          : { detail: "a cél a geofence-en kívül van" },
+      path === "/api/v1/missions/point"
+        ? { detail: "a cél a geofence-en kívül van" }
+        : missionPayload(path),
     ), { status: path === "/api/v1/missions/point" ? 422 : 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -75,11 +84,9 @@ describe("MissionPage", () => {
 
   it("sends the bounded survey payload to the reviewed survey endpoint", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
-      path === "/api/v1/safety-envelope"
-        ? { max_altitude_m: 20, max_radius_m: 50, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] }
-        : path === "/api/v1/world-map"
-          ? { cells: [] }
-          : { plan_id: "plan-2", summary: "Felderítés", goal: "Terület", steps: ["TAKEOFF"], waypoints: [] },
+      path === "/api/v1/missions/survey"
+        ? { plan_id: "plan-2", summary: "Felderítés", goal: "Terület", steps: ["TAKEOFF"], waypoints: [] }
+        : missionPayload(path),
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -96,7 +103,7 @@ describe("MissionPage", () => {
   });
 
   it("turns a map click into local north/east mission coordinates", async () => {
-    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(path === "/api/v1/world-map" ? { cells: [] } : { max_altitude_m: 20, max_radius_m: 50, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] }), { status: 200 })));
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(missionPayload(path)), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
     render(<MissionPage commandsEnabled />);
     await screen.findByText(/Aktív korlát/);
@@ -112,7 +119,7 @@ describe("MissionPage", () => {
   it("does not interpret a map click before the server safety envelope supplies its scale", () => {
     vi.stubGlobal("fetch", vi.fn((path: string) => path === "/api/v1/safety-envelope"
       ? new Promise<Response>(() => undefined)
-      : Promise.resolve(new Response(JSON.stringify({ cells: [] }), { status: 200 }))));
+      : Promise.resolve(new Response(JSON.stringify(missionPayload(path)), { status: 200 }))));
     render(<MissionPage commandsEnabled />);
     const map = screen.getByRole("img", { name: "Küldetési térkép" });
     vi.spyOn(map, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, width: 400, height: 400, top: 0, right: 400, bottom: 400, left: 0, toJSON: () => ({}) });
@@ -126,9 +133,7 @@ describe("MissionPage", () => {
 
   it("renders obstacle evidence from an explicitly occupancy-only document", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
-      path === "/api/v1/safety-envelope"
-        ? { max_altitude_m: 20, max_radius_m: 50, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] }
-        : { occupancy_only: true, cells: [{ north_m: 2, east_m: 3, cell_size_m: 1 }] },
+      missionPayload(path, { world: { occupancy_only: true, cells: [{ north_m: 2, east_m: 3, cell_size_m: 1 }] } }),
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -144,9 +149,10 @@ describe("MissionPage", () => {
     // metres. The aerial basemap shrank to 18 px, a 2 m obstacle cell to a fifth
     // of one, and picking a target became meaningless -- with nothing failing.
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
-      path === "/api/v1/safety-envelope"
-        ? { max_altitude_m: 20, max_radius_m: 2000, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] }
-        : { occupancy_only: true, cells: [{ north_m: 10, east_m: 0, cell_size_m: 2 }] },
+      missionPayload(path, {
+        safety: { max_altitude_m: 20, max_radius_m: 2000, minimum_battery_percent_to_start: 35, geofence_vertices_m: [] },
+        world: { occupancy_only: true, cells: [{ north_m: 10, east_m: 0, cell_size_m: 2 }] },
+      }),
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
