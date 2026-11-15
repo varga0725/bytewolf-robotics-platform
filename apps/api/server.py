@@ -39,7 +39,7 @@ from brain.telemetry.domain import (
     SupplementalTelemetryEvent,
 )
 from brain.telemetry.persistence import ObservationHistoryEvent, TelemetryHistoryEvent
-from apps.gateway.plan_execution import execute_reviewed_plan
+from apps.gateway.plan_execution import execute_reviewed_plan, validate_px4_endpoint_for_server
 from apps.gateway.telegram_mission_gateway import _review_with_cli
 from shared.safety.commands_gate import capabilities_document, commands_enabled
 
@@ -91,6 +91,7 @@ def create_app(
     safety_profile_path: Path = DEFAULT_SAFETY_PROFILE_PATH,
     gateway: DashboardCommandGateway | None = None,
 ) -> FastAPI:
+    validate_px4_endpoint_for_server()
     app = FastAPI(title="ByteWolf Command Gateway", version="0.1")
 
     @app.middleware("http")
