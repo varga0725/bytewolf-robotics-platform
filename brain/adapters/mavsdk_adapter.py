@@ -44,15 +44,34 @@ async def _current_flight_mode(drone: Any, timeout_s: float) -> str | None:
     return getattr(sample, "name", None) or str(sample).rsplit(".", 1)[-1]
 
 
-async def arm_from_ground(drone: Any, *, mode_timeout_s: float = 2.0) -> None:
-    """Arm, first leaving a mode PX4 refuses to arm in.
+async def _is_on_ground(drone: Any, timeout_s: float) -> bool:
+    try:
+        in_air = await asyncio.wait_for(anext(drone.telemetry.in_air()), timeout=timeout_s)
+    except Exception:
+        return False
+    return in_air is False
 
-    A mission that ends with a landing leaves PX4 in Land, and PX4 will not arm in
-    Land or RTL, so the next mission got a bare COMMAND_DENIED. HOLD is a mode change,
-    not actuation. An unreadable mode keeps the old behaviour: arm directly.
+
+async def leave_arm_preventing_mode(drone: Any, *, timeout_s: float = 2.0) -> bool:
+    """Switch a landed PX4 out of Land/RTL into HOLD; return whether it did.
+
+    A mission that ends with a landing leaves PX4 in Land. PX4 will not arm there,
+    and it also reports ``is_armable`` false, so preflight waited its whole budget
+    (120 s) before the arm was even tried. HOLD is a mode change, not actuation.
+    It is sent only when PX4 positively reports on-ground: an airborne or unknown
+    vehicle in Land/RTL is landing, and HOLD would stop that.
     """
-    if await _current_flight_mode(drone, mode_timeout_s) in _ARM_PREVENTING_FLIGHT_MODES:
-        await drone.action.hold()
+    if await _current_flight_mode(drone, timeout_s) not in _ARM_PREVENTING_FLIGHT_MODES:
+        return False
+    if not await _is_on_ground(drone, timeout_s):
+        return False
+    await drone.action.hold()
+    return True
+
+
+async def arm_from_ground(drone: Any, *, mode_timeout_s: float = 2.0) -> None:
+    """Arm, first leaving a mode PX4 refuses to arm in (see leave_arm_preventing_mode)."""
+    await leave_arm_preventing_mode(drone, timeout_s=mode_timeout_s)
     await drone.action.arm()
 
 
@@ -935,6 +954,9 @@ class MavsdkMissionAdapter:
 
     async def _require_preflight(self) -> None:
         """Verify PX4 telemetry before issuing any configuration or flight command."""
+        # Before the wait: in Land/RTL PX4 reports is_armable false, so the wait below
+        # would run out its whole budget on a vehicle that only needs a mode change.
+        await leave_arm_preventing_mode(self._drone)
         deadline = asyncio.get_running_loop().time() + self._preflight_wait_s
         health_stream = self._drone.telemetry.health()
         # A missing refresh is not alone a reason to reject a vehicle: PX4 can
