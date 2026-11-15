@@ -62,6 +62,8 @@ class MapMissionApiFlowTests(unittest.TestCase):
             "battery": {"remaining_percent": 99},
             "in_air": False,
             "captured_at": datetime.now(UTC).isoformat(),
+            # The relay publishes PX4's GF_MAX_HOR_DIST; map planning fails closed without it.
+            "px4_geofence": {"max_horizontal_m": 100.0},
         }
         if home is not None:
             document["home"] = home
