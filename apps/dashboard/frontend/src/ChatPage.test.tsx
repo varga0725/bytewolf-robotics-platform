@@ -104,6 +104,36 @@ describe("ChatPage", () => {
     );
   });
 
+  it("resets confirmation after a failed approve so a fresh token can be requested", async () => {
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path === "/api/v1/chat") {
+        return Promise.resolve(new Response(JSON.stringify(
+          { text: "A terv készen áll.", status: "awaiting_approval", plan_id: "plan-retry", plan_hash: "hash-retry", approval_required: true },
+        ), { status: 200 }));
+      }
+      if (path === "/api/v1/plans/approval-token") {
+        return Promise.resolve(new Response(JSON.stringify(
+          { approval_token: "token-retry", plan_hash: "hash-retry", expires_in_s: 300 },
+        ), { status: 200 }));
+      }
+      if (path === "/api/v1/plans/approve") {
+        return Promise.resolve(new Response(JSON.stringify({ detail: "Approval token expired" }), { status: 403 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ChatPage commandsEnabled />);
+    fireEvent.change(screen.getByLabelText("Küldetési kérés"), { target: { value: "Teszt" } });
+    fireEvent.click(screen.getByRole("button", { name: "Terv készítése" }));
+    await screen.findByText("Jóváhagyásra vár");
+    fireEvent.click(screen.getByRole("button", { name: "Tovább a terv-hash megerősítéséhez" }));
+    await screen.findByText("Terv-hash megerősítése");
+    fireEvent.click(screen.getByRole("button", { name: "Kifejezett jóváhagyás és indítás" }));
+    expect(await screen.findByText(/jóváhagyás nem sikerült/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tovább a terv-hash megerősítéséhez" })).toBeInTheDocument();
+  });
+
   it("surfaces an unverifiable execution status instead of leaving a submitted plan optimistic", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
       path === "/api/v1/chat"

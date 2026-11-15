@@ -78,7 +78,13 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
         self.directory = TemporaryDirectory()
         telemetry = Path(self.directory.name) / "telemetry.json"
         telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
-        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        from tests.command_approval_helpers import IDENTITY_TEST_ENV
+
+        self._commands_patch = patch.dict(
+            os.environ,
+            {**IDENTITY_TEST_ENV, "BYTEWOLF_COMMANDS_ENABLED": "true"},
+            clear=False,
+        )
         self._commands_patch.start()
         self.client = TestClient(create_app(telemetry))
 

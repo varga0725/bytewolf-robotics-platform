@@ -116,7 +116,7 @@ def create_app(
 
     @app.middleware("http")
     async def tailscale_identity_boundary(request: Request, call_next):
-        """Trust identity from the socket peer and Serve headers, never from Host."""
+        """Trust identity from loopback peer, allowed Host, and Serve headers."""
         try:
             request.state.operator = resolve_operator(request)
         except OperatorIdentityError as error:
@@ -313,12 +313,9 @@ def create_app(
 
     def _target_class() -> str:
         try:
-            document = load_telemetry_snapshot(telemetry_path).as_dict()
+            return load_telemetry_snapshot(telemetry_path).target_class
         except TelemetryFormatError:
             return "unknown"
-        from brain.mission.sitl_target import classify_telemetry_document
-
-        return classify_telemetry_document(document)
 
     def _record_audit(
         *,
@@ -353,6 +350,7 @@ def create_app(
             hashed = _plan_hash(reply.plan_id)
         except (OSError, ValueError, FileNotFoundError):
             return reply
+        command_gateway.attach_plan_hash(session_id, reply.plan_id, hashed)
         _record_audit(
             event="propose",
             operator=operator,
@@ -393,8 +391,23 @@ def create_app(
             session = _session(x_bytewolf_session)
             operator = http_request.state.operator
             try:
-                command_gateway.ensure_pending(session, body.plan_id)
-                hashed = _plan_hash(body.plan_id)
+                stored_hash = command_gateway.ensure_pending_plan_hash(session, body.plan_id)
+                live_hash = _plan_hash(body.plan_id)
+                if live_hash != stored_hash:
+                    _record_audit(
+                        event="refusal",
+                        operator=operator,
+                        plan_hash=stored_hash,
+                        gate_results={
+                            "reason": "plan_changed_after_propose",
+                            "detail": "Plan file hash differs from the hash recorded at proposal.",
+                        },
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Plan changed after proposal; review it again.",
+                    ) from None
+                hashed = stored_hash
             except PermissionError as error:
                 _record_audit(
                     event="refusal",
@@ -430,14 +443,34 @@ def create_app(
             session = _session(x_bytewolf_session)
             operator = http_request.state.operator
             try:
-                hashed = _plan_hash(body.plan_id)
-                approved_by = approval_tokens.redeem(
+                live_hash = _plan_hash(body.plan_id)
+                stored_hash = command_gateway.pending_plan_hash(session)
+                validate_hash = stored_hash or live_hash
+                approved_by = approval_tokens.validate(
                     body.approval_token,
                     operator=operator,
                     session_id=session,
                     plan_id=body.plan_id,
-                    plan_hash=hashed,
+                    plan_hash=validate_hash,
                 )
+                if stored_hash is None:
+                    raise PermissionError("No pending plan belongs to this session.")
+                command_gateway.ensure_pending(session, body.plan_id)
+                if live_hash != stored_hash:
+                    _record_audit(
+                        event="refusal",
+                        operator=operator,
+                        plan_hash=stored_hash,
+                        gate_results={
+                            "reason": "plan_changed_after_propose",
+                            "detail": "Plan file hash differs from the hash recorded at proposal.",
+                        },
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Plan changed after proposal; review it again.",
+                    ) from None
+                hashed = stored_hash
             except ApprovalTokenError as error:
                 _record_audit(
                     event="refusal",
@@ -446,6 +479,14 @@ def create_app(
                     gate_results={"reason": "approval_token", "detail": str(error)},
                 )
                 raise HTTPException(status_code=403, detail=str(error)) from error
+            except PermissionError as error:
+                _record_audit(
+                    event="refusal",
+                    operator=operator,
+                    plan_hash=None,
+                    gate_results={"reason": "no_pending_plan", "detail": str(error)},
+                )
+                raise HTTPException(status_code=409, detail=str(error)) from error
             except (OSError, ValueError, FileNotFoundError) as error:
                 _record_audit(
                     event="refusal",
@@ -454,6 +495,20 @@ def create_app(
                     gate_results={"reason": "plan_integrity", "detail": str(error)},
                 )
                 raise HTTPException(status_code=422, detail=str(error)) from error
+
+            try:
+                _record_audit(
+                    event="approve",
+                    operator=operator,
+                    plan_hash=hashed,
+                    gate_results={"mission_execution": "pending"},
+                    approved_by=approved_by,
+                )
+            except ValueError as error:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Command audit is unavailable; mission was not started.",
+                ) from error
 
             try:
                 reply = _handle_gateway(
@@ -473,13 +528,7 @@ def create_app(
                         gate_results=execution_refusal_payload(),
                     )
                 raise
-            _record_audit(
-                event="approve",
-                operator=operator,
-                plan_hash=hashed,
-                gate_results={"mission_execution": "submitted"},
-                approved_by=approved_by,
-            )
+            approval_tokens.consume(body.approval_token)
             return reply
 
         @app.post("/api/v1/plans/cancel")

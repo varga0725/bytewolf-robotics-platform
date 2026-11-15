@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import threading
 from typing import Any
 
@@ -61,11 +62,18 @@ class CommandAuditLog:
             body["approved_by"] = approved_by
         line = json.dumps(body, sort_keys=True, separators=(",", ":")) + "\n"
         _reject_forbidden_audit_line(line)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            with self._path.open("a", encoding="utf-8") as handle:
-                handle.write(line)
-                handle.flush()
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            os.chmod(self._path.parent, stat.S_IRWXU)
+            flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+            fd = os.open(self._path, flags, stat.S_IRUSR | stat.S_IWUSR)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(line)
+                    handle.flush()
+            except Exception:
+                os.close(fd)
+                raise
 
 
 def _sanitize_gate_results(document: dict[str, Any]) -> dict[str, Any]:
@@ -80,13 +88,24 @@ def _sanitize_gate_results(document: dict[str, Any]) -> dict[str, Any]:
     return cleaned
 
 
+_TOKEN_VALUE_RE = re.compile(r"[A-Za-z0-9_\-]{20,}")
+
+
+def _redact_token_like_substrings(text: str) -> str:
+    return _TOKEN_VALUE_RE.sub("[redacted-token]", text)
+
+
 def _sanitize_value(value: Any) -> Any:
     if isinstance(value, str):
         if _IPV4_RE.search(value):
             raise ValueError("Command audit must not record IP addresses.")
         lowered = value.lower()
+        if "approval token" in lowered or "approval_token" in lowered:
+            return _redact_token_like_substrings(value)
         if any(forbidden in lowered for forbidden in _FORBIDDEN_SUBSTRINGS):
-            return "[redacted]"
+            if lowered.strip() in {"approval token", "token"}:
+                return value
+            return _redact_token_like_substrings(value)
         return value
     if isinstance(value, dict):
         return {str(key): _sanitize_value(item) for key, item in value.items()}
@@ -96,13 +115,45 @@ def _sanitize_value(value: Any) -> Any:
 
 
 def _reject_forbidden_audit_line(line: str) -> None:
-    lowered = line.lower()
-    if "approval_token" in lowered:
-        raise ValueError("Command audit must never record approval tokens.")
+    try:
+        body = json.loads(line.strip())
+    except json.JSONDecodeError:
+        body = None
+    if isinstance(body, dict):
+        if "approval_token" in body:
+            raise ValueError("Command audit must never record approval token values.")
+        for value in _walk_string_values(body.get("gate_results")):
+            if _looks_like_approval_secret(value):
+                raise ValueError("Command audit must never record approval token values.")
+    elif re.search(r'"approval_token"\s*:\s*"[^"]+"', line):
+        raise ValueError("Command audit must never record approval token values.")
     if _IPV4_RE.search(line):
         match = _IPV4_RE.search(line)
         if match and match.group(0) != "127.0.0.1":
             raise ValueError("Command audit must not record host IP addresses.")
+
+
+def _walk_string_values(node: Any) -> list[str]:
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, dict):
+        collected: list[str] = []
+        for item in node.values():
+            collected.extend(_walk_string_values(item))
+        return collected
+    if isinstance(node, list):
+        collected: list[str] = []
+        for item in node:
+            collected.extend(_walk_string_values(item))
+        return collected
+    return []
+
+
+def _looks_like_approval_secret(text: str) -> bool:
+    lowered = text.lower()
+    if "approval token" in lowered or lowered.startswith("bwat_"):
+        return _TOKEN_VALUE_RE.search(text) is not None
+    return False
 
 
 def plan_sha256(plan_path: Path) -> str:

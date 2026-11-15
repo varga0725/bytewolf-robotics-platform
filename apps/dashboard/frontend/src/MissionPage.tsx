@@ -175,11 +175,18 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
     setBusy(true);
     try {
       const payload = await post<ApprovalTokenReply>("/api/v1/plans/approval-token", { plan_id: plan.plan_id });
+      if (plan.plan_hash && payload.plan_hash !== plan.plan_hash) {
+        throw new Error("A terv megváltozott a javaslat óta; ellenőrizd újra.");
+      }
+      if (!plan.plan_hash) {
+        setPlan({ ...plan, plan_hash: payload.plan_hash });
+      }
       setApprovalToken(payload.approval_token);
-      setPlan({ ...plan, plan_hash: payload.plan_hash });
       setConfirmStep(1);
       setStatus("Ellenőrizd a terv-hash értéket, majd erősítsd meg a jóváhagyást.");
     } catch (error) {
+      setConfirmStep(0);
+      setApprovalToken(null);
       setStatus(`A jóváhagyási token nem kérhető: ${error instanceof Error ? error.message : "ismeretlen hiba"}`);
     } finally {
       setBusy(false);
@@ -207,6 +214,10 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
       logEvent(action === "approve" ? `Küldetés jóváhagyva: ${reply.plan_id ?? "ismeretlen terv"}` : "A jóváhagyásra váró terv visszavonva.");
       if (action === "approve" && reply.plan_id) monitor(reply.plan_id);
     } catch (error) {
+      if (action === "approve") {
+        setConfirmStep(0);
+        setApprovalToken(null);
+      }
       setStatus(`Hiba: ${error instanceof Error ? error.message : "ismeretlen hiba"}`);
     } finally { setBusy(false); }
   }

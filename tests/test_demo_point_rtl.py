@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from apps.api.server import create_app
-from tests.command_approval_helpers import issue_and_approve
+from tests.command_approval_helpers import IDENTITY_TEST_ENV, issue_and_approve
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.mission.demo_point_rtl import (
     MISSION_TYPE,
@@ -43,7 +43,13 @@ class DemoPointRtlApiTests(unittest.TestCase):
         self.directory = TemporaryDirectory()
         telemetry = Path(self.directory.name) / "telemetry.json"
         telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
-        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        from tests.command_approval_helpers import IDENTITY_TEST_ENV
+
+        self._commands_patch = patch.dict(
+            os.environ,
+            {**IDENTITY_TEST_ENV, "BYTEWOLF_COMMANDS_ENABLED": "true"},
+            clear=False,
+        )
         self._commands_patch.start()
         self.client = TestClient(create_app(telemetry))
 
@@ -62,7 +68,11 @@ class DemoPointRtlApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(
+        os.environ,
+        {**IDENTITY_TEST_ENV, "BYTEWOLF_COMMANDS_ENABLED": "true"},
+        clear=True,
+    )
     def test_review_registers_a_plan_without_executing(self) -> None:
         response = self.client.post(
             "/api/v1/missions/demo-point-rtl",
@@ -71,7 +81,11 @@ class DemoPointRtlApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["approval_required"])
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(
+        os.environ,
+        {**IDENTITY_TEST_ENV, "BYTEWOLF_COMMANDS_ENABLED": "true"},
+        clear=True,
+    )
     def test_approve_refuses_execution_when_quarantined(self) -> None:
         plan_id = self.client.post(
             "/api/v1/missions/demo-point-rtl",

@@ -56,6 +56,18 @@ class CommandAuditLogTests(unittest.TestCase):
         self.assertEqual(json.loads(lines[1])["event"], "approve")
         self.assertEqual(json.loads(lines[1])["approved_by"], "local")
 
+    def test_keeps_readable_token_refusal_without_secret_values(self) -> None:
+        self.audit.append(
+            event="refusal",
+            operator="local",
+            plan_hash=None,
+            target_class="unknown",
+            gate_results={"reason": "approval_token", "detail": "Approval token expired"},
+        )
+        line = self.path.read_text(encoding="utf-8").strip()
+        self.assertIn("Approval token expired", line)
+        self.assertNotRegex(line, r'"[A-Za-z0-9_\-]{24,}"')
+
     def test_refuses_external_ip_addresses_in_gate_results(self) -> None:
         with self.assertRaises(ValueError):
             self.audit.append(

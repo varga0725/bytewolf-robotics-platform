@@ -21,7 +21,7 @@ from apps.api.command_gateway import AgentReply, DashboardCommandGateway
 from apps.api.point_mission import PointMissionError, build_point_mission_spec, review_point_mission
 from apps.api.server import create_app
 from brain.mission_spec.reviewed_plan import require_matching_review_approval
-from tests.command_approval_helpers import issue_and_approve
+from tests.command_approval_helpers import IDENTITY_TEST_ENV, issue_and_approve
 from brain.mission_spec.validation import load_mission_safety_profile
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH
 
@@ -132,7 +132,11 @@ class PointMissionApiTests(unittest.TestCase):
             review=lambda _text: "chat-plan",
             execute=lambda plan: self.executed.append(plan) or "submitted",
         )
-        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        self._commands_patch = patch.dict(
+            os.environ,
+            {**IDENTITY_TEST_ENV, "BYTEWOLF_COMMANDS_ENABLED": "true"},
+            clear=False,
+        )
         self._commands_patch.start()
         self.client = TestClient(create_app(self.root / "telemetry.json", gateway=self.gateway))
 

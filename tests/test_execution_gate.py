@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway
 from apps.api.server import create_app
-from tests.command_approval_helpers import SAMPLE_PLAN_ID, issue_and_approve, seed_plan_file
+from tests.command_approval_helpers import IDENTITY_TEST_ENV, SAMPLE_PLAN_ID, issue_and_approve, seed_plan_file
 from apps.gateway import telegram_mission_gateway
 from apps.gateway.telegram_mission_gateway import TelegramGatewayError
 from brain.safety import deployment
@@ -63,7 +63,11 @@ class ExecutionGateApiTests(unittest.TestCase):
             review=lambda _text: SAMPLE_PLAN_ID,
             execute=lambda plan: self.executed.append(plan) or "submitted",
         )
-        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        self._commands_patch = patch.dict(
+            os.environ,
+            {**IDENTITY_TEST_ENV, "BYTEWOLF_COMMANDS_ENABLED": "true"},
+            clear=False,
+        )
         self._commands_patch.start()
         seed_plan_file(self.plan_dir)
         self.client = TestClient(create_app(self.telemetry, plan_directory=self.plan_dir, gateway=self.gateway))
@@ -88,8 +92,14 @@ class ExecutionGateApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["detail"]["code"], "mission_execution_quarantined")
         self.assertEqual(self.executed, [])
+        retry_token = self.client.post(
+            "/api/v1/plans/approval-token",
+            headers=headers,
+            json={"plan_id": plan_id},
+        )
+        self.assertEqual(retry_token.status_code, 200, "token must stay valid when execution gate refuses")
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(os.environ, IDENTITY_TEST_ENV, clear=True)
     def test_map_point_review_still_works_without_execution(self) -> None:
         body = {"north_m": 5.0, "east_m": 0.0, "altitude_m": 3.0, "goal": "Demo pont."}
         response = self.client.post(
@@ -99,7 +109,7 @@ class ExecutionGateApiTests(unittest.TestCase):
         self.assertTrue(response.json()["approval_required"])
         self.assertEqual(self.executed, [])
 
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(os.environ, IDENTITY_TEST_ENV, clear=True)
     def test_survey_review_still_works_without_execution(self) -> None:
         body = {
             "centre_north_m": 0.0,

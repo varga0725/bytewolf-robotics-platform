@@ -98,11 +98,18 @@ export function ChatPage({ commandsEnabled }: ChatPageProps) {
     setStatus("Szerver jóváhagyási token igénylése…");
     try {
       const payload = await post<ApprovalTokenReply>("/api/v1/plans/approval-token", { plan_id: pendingPlan });
+      if (planHash && payload.plan_hash !== planHash) {
+        throw new Error("A terv megváltozott a javaslat óta; ellenőrizd újra.");
+      }
+      if (!planHash) {
+        setPlanHash(payload.plan_hash);
+      }
       setApprovalToken(payload.approval_token);
-      setPlanHash(payload.plan_hash);
       setConfirmStep(1);
       setStatus("Ellenőrizd a terv-hash értéket, majd erősítsd meg a jóváhagyást.");
     } catch (error) {
+      setConfirmStep(0);
+      setApprovalToken(null);
       setLifecycle("error");
       setStatus(`A jóváhagyási token nem kérhető: ${errorMessage(error)}`);
     } finally {
@@ -141,6 +148,10 @@ export function ChatPage({ commandsEnabled }: ChatPageProps) {
       setStatus("A jóváhagyott küldetés elküldve; a terminális visszajelzésre várunk.");
       monitor(planId);
     } catch (error) {
+      if (action === "approve") {
+        setConfirmStep(0);
+        setApprovalToken(null);
+      }
       setLifecycle("error");
       setStatus(`A ${action === "approve" ? "jóváhagyás" : "visszavonás"} nem sikerült: ${errorMessage(error)}`);
     } finally {

@@ -44,7 +44,6 @@ class ApprovalTokenStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._records: dict[str, _TokenRecord] = {}
-        self._consumed: set[str] = set()
 
     def issue(
         self,
@@ -67,10 +66,11 @@ class ApprovalTokenStore:
             expires_at=datetime.now(UTC) + timedelta(seconds=ttl),
         )
         with self._lock:
+            self._purge_expired_locked()
             self._records[token] = record
         return token
 
-    def redeem(
+    def validate(
         self,
         token: str,
         *,
@@ -79,12 +79,11 @@ class ApprovalTokenStore:
         plan_id: str,
         plan_hash: str,
     ) -> str:
-        """Consume a token and return the bound operator as ``approved_by``."""
+        """Check a token without consuming it; returns the bound operator."""
         if not token.strip():
             raise ApprovalTokenError("Approval token is required.")
         with self._lock:
-            if token in self._consumed:
-                raise ApprovalTokenError("Approval token was already used.")
+            self._purge_expired_locked()
             record = self._records.get(token)
             if record is None:
                 raise ApprovalTokenError("Approval token is unknown or expired.")
@@ -101,14 +100,27 @@ class ApprovalTokenStore:
                 raise ApprovalTokenError("Approval token is not valid for this plan.")
             if record.plan_hash != plan_hash:
                 raise ApprovalTokenError("Approval token does not match the plan hash.")
-            record.used = True
-            approved_by = record.operator
-            self._consumed.add(token)
-            del self._records[token]
-        return approved_by
+            return record.operator
+
+    def consume(self, token: str) -> None:
+        with self._lock:
+            record = self._records.pop(token, None)
+            if record is None:
+                raise ApprovalTokenError("Approval token is unknown or expired.")
 
     def invalidate_for_session(self, session_id: str) -> None:
         with self._lock:
-            doomed = [key for key, item in self._records.items() if item.session_id == session_id and not item.used]
+            self._purge_expired_locked()
+            doomed = [
+                key
+                for key, item in self._records.items()
+                if item.session_id == session_id and not item.used
+            ]
             for key in doomed:
                 del self._records[key]
+
+    def _purge_expired_locked(self) -> None:
+        now = datetime.now(UTC)
+        expired = [key for key, item in self._records.items() if now >= item.expires_at]
+        for key in expired:
+            del self._records[key]

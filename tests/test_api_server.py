@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.command_gateway import AgentReply, DashboardCommandGateway
 from apps.api.server import _load_project_environment, create_app
-from tests.command_approval_helpers import SAMPLE_PLAN_ID, issue_and_approve, seed_plan_file
+from tests.command_approval_helpers import IDENTITY_TEST_ENV, SAMPLE_PLAN_ID, issue_and_approve, seed_plan_file
 
 
 SESSION = "b3b9c777-4860-4b6d-bf59-1a4a98c31ea3"
@@ -29,7 +29,11 @@ class ApiServerTests(unittest.TestCase):
             review=lambda _text: SAMPLE_PLAN_ID,
             execute=lambda plan: self.executed.append(plan) or "submitted",
         )
-        self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
+        self._commands_patch = patch.dict(
+            os.environ,
+            {**IDENTITY_TEST_ENV, "BYTEWOLF_COMMANDS_ENABLED": "true"},
+            clear=False,
+        )
         self._commands_patch.start()
         seed_plan_file(self.plan_dir)
         self.client = TestClient(create_app(self.telemetry, plan_directory=self.plan_dir, gateway=gateway))
@@ -281,7 +285,7 @@ class ApiCapabilitiesDefaultTests(unittest.TestCase):
         self.directory = TemporaryDirectory()
         telemetry = Path(self.directory.name) / "telemetry.json"
         telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, IDENTITY_TEST_ENV, clear=True):
             self.client = TestClient(create_app(telemetry))
 
     def tearDown(self) -> None:
