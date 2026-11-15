@@ -451,15 +451,19 @@ class TrajectoryPlotTests(unittest.TestCase):
 
 class ArmFromGroundTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
-    def _drone(mode_name: str, calls: list[str]) -> SimpleNamespace:
+    def _drone(mode_name: str, calls: list[str], *, in_air: bool | None = False) -> SimpleNamespace:
         async def modes():
             yield SimpleNamespace(name=mode_name)
+
+        async def in_air_samples():
+            if in_air is not None:
+                yield in_air
 
         async def record(name: str) -> None:
             calls.append(name)
 
         return SimpleNamespace(
-            telemetry=SimpleNamespace(flight_mode=modes),
+            telemetry=SimpleNamespace(flight_mode=modes, in_air=in_air_samples),
             action=SimpleNamespace(hold=lambda: record("hold"), arm=lambda: record("arm")),
         )
 
@@ -470,6 +474,14 @@ class ArmFromGroundTests(unittest.IsolatedAsyncioTestCase):
             calls: list[str] = []
             await arm_from_ground(self._drone(mode, calls))
             self.assertEqual(calls, ["hold", "arm"], mode)
+
+    async def test_never_interrupts_an_airborne_or_unknown_landing(self) -> None:
+        from brain.adapters.mavsdk_adapter import leave_arm_preventing_mode
+
+        for in_air in (True, None):
+            calls: list[str] = []
+            self.assertFalse(await leave_arm_preventing_mode(self._drone("LAND", calls, in_air=in_air)))
+            self.assertEqual(calls, [], in_air)
 
     async def test_arms_directly_when_mode_allows_it(self) -> None:
         from brain.adapters.mavsdk_adapter import arm_from_ground
