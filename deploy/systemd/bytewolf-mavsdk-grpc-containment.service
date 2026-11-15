@@ -9,10 +9,13 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-User=bytewolf
-Group=bytewolf
 WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
 ExecStart=/home/bytewolf/bytewolf-robotics/platform/deploy/systemd/apply-mavsdk-grpc-containment.sh
+ProtectHome=read-only
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+PrivateTmp=yes
 
 [Install]
 WantedBy=bytewolf.target multi-user.target

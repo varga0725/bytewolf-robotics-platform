@@ -37,16 +37,12 @@ class MavsdkGrpcContainmentTests(unittest.TestCase):
         self.assertFalse(is_grpc_port_protected(61000))
 
     def test_containment_rule_args_use_conntrack_new_and_skip_loopback_interface(self) -> None:
-        ipv4 = containment_drop_rule_args(ipv6=False)
-        self.assertEqual(ipv4[:4], ["!", "-i", "lo", "-p"])
-        self.assertIn("conntrack", ipv4)
-        self.assertIn("NEW", ipv4)
-        self.assertIn(mavsdk_grpc_dport_spec(), ipv4)
-        self.assertIn(firewall_comment(), ipv4)
-
-        ipv6 = containment_drop_rule_args(ipv6=True)
-        self.assertEqual(ipv6[:8], ["!", "-i", "lo", "!", "-s", "::1/128", "-p", "tcp"])
-        self.assertIn("--ctstate", ipv6)
+        rule = containment_drop_rule_args()
+        self.assertEqual(rule[:4], ["!", "-i", "lo", "-p"])
+        self.assertIn("conntrack", rule)
+        self.assertIn("NEW", rule)
+        self.assertIn(mavsdk_grpc_dport_spec(), rule)
+        self.assertIn(firewall_comment(), rule)
 
     def test_containment_rules_present_uses_sudo_check_runner(self) -> None:
         calls: list[list[str]] = []
@@ -59,7 +55,7 @@ class MavsdkGrpcContainmentTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(missing, [])
         self.assertGreaterEqual(len(calls), 1)
-        drop = containment_drop_rule_args(ipv6=False)
+        drop = containment_drop_rule_args()
         self.assertEqual(calls[0], ["/usr/sbin/iptables", "-C", "INPUT", *drop])
 
     def test_wide_bind_allowed_only_when_rules_present(self) -> None:
@@ -126,14 +122,23 @@ class MavsdkGrpcContainmentTests(unittest.TestCase):
             0,
         )
 
-    def test_apply_script_uses_sudo_check_and_conntrack_new(self) -> None:
+    def test_apply_script_rule_args_match_python_builder(self) -> None:
         root = Path(__file__).resolve().parents[1]
         script = (root / "deploy/systemd/apply-mavsdk-grpc-containment.sh").read_text(encoding="utf-8")
-        self.assertIn("sudo", script)
-        self.assertIn("-C INPUT", script)
-        self.assertIn("conntrack", script)
-        self.assertIn("--ctstate NEW", script)
-        self.assertIn("! -i lo", script)
+        rule = containment_drop_rule_args()
+        self.assertEqual(rule[:3], ["!", "-i", "lo"])
+        for token in rule[3:]:
+            if token == mavsdk_grpc_dport_spec():
+                self.assertIn("DPORT_SPEC", script)
+                continue
+            if token == firewall_comment():
+                self.assertIn('COMMENT', script)
+                continue
+            self.assertIn(token, script)
+        self.assertIn("_iptables_cmd", script)
+        self.assertIn("id -u", script)
+        self.assertNotIn("::1/128", script)
+        self.assertIn('_apply_rule "$IP6TABLES" ! -i lo', script.replace("\n", " "))
 
     def test_cli_fails_without_rules_when_mavsdk_wide_bind(self) -> None:
         fixture = (

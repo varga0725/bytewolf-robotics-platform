@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Apply idempotent host firewall drops so only loopback can reach mavsdk_server gRPC.
+# Runs without sudo when invoked as root (systemd oneshot); uses sudo interactively otherwise.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -15,16 +16,24 @@ if [[ ! -x "$IPTABLES" ]]; then
   exit 2
 fi
 
+_iptables_cmd() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
 _apply_rule() {
   local tool=$1
   shift
   local family_args=("$@")
-  if sudo "${tool}" -C INPUT "${family_args[@]}" -p tcp -m conntrack --ctstate NEW -m multiport \
+  if _iptables_cmd "${tool}" -C INPUT "${family_args[@]}" -p tcp -m conntrack --ctstate NEW -m multiport \
       --dports "${DPORT_SPEC}" -m comment --comment "${COMMENT}" -j DROP 2>/dev/null; then
     echo "present  ${tool} mavsdk gRPC containment rule"
     return 0
   fi
-  sudo "${tool}" -I INPUT "${family_args[@]}" -p tcp -m conntrack --ctstate NEW -m multiport \
+  _iptables_cmd "${tool}" -I INPUT "${family_args[@]}" -p tcp -m conntrack --ctstate NEW -m multiport \
     --dports "${DPORT_SPEC}" -m comment --comment "${COMMENT}" -j DROP
   echo "applied  ${tool} mavsdk gRPC containment rule"
 }
@@ -33,7 +42,7 @@ _apply_rule() {
 _apply_rule "$IPTABLES" ! -i lo
 
 if [[ -x "$IP6TABLES" ]]; then
-  _apply_rule "$IP6TABLES" ! -i lo "!" -s ::1/128
+  _apply_rule "$IP6TABLES" ! -i lo
 else
   echo "skip     ${IP6TABLES} (not installed)"
 fi

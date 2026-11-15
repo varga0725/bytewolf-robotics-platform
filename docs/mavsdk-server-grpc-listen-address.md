@@ -68,11 +68,17 @@ the pinned stack.
 
 The Ubuntu stack therefore enables **`bytewolf-mavsdk-grpc-containment.service`**
 (a oneshot unit) which runs `deploy/systemd/apply-mavsdk-grpc-containment.sh` at
-boot and after install. That script applies **narrow, idempotent iptables/ip6tables
-INPUT DROP rules** for **NEW** inbound TCP only (`-m conntrack --ctstate NEW`,
-`! -i lo`) on MAVSDK gRPC ports `50051`, `50055`, and `51000–60999`. Rules carry
-comment `bytewolf-mavsdk-grpc-loopback`, use `sudo iptables -C` before `-I`, and
-do not flush or rewrite unrelated policy.
+boot and after install. The unit runs **as root** (no `User=`; bounded
+`CAP_NET_ADMIN` / `CAP_NET_RAW`, `ProtectHome=read-only`, `NoNewPrivileges=yes`)
+because `iptables` requires those capabilities and the host has no NOPASSWD
+sudoers for the `bytewolf` user. The same script uses **`sudo` only when**
+invoked interactively by a non-root user.
+
+The script applies **narrow, idempotent iptables/ip6tables INPUT DROP rules** for
+**NEW** inbound TCP only (`-m conntrack --ctstate NEW`, `! -i lo`) on MAVSDK gRPC
+ports `50051`, `50055`, and `51000–60999`. Rules carry comment
+`bytewolf-mavsdk-grpc-loopback`, use `iptables -C` (with `sudo` when non-root)
+before `-I`, and do not flush or rewrite unrelated policy.
 
 `deploy/systemd/verify-stack.sh` requires the containment rules to be present and
 fails closed when a `mavsdk_server` listener uses a port outside that set, when

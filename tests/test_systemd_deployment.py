@@ -87,6 +87,10 @@ class SystemdDeploymentTests(unittest.TestCase):
         self.assertIn("Type=oneshot", unit)
         self.assertIn("RemainAfterExit=yes", unit)
         self.assertIn("apply-mavsdk-grpc-containment.sh", unit)
+        self.assertNotIn("User=bytewolf", unit)
+        self.assertIn("ProtectHome=read-only", unit)
+        self.assertIn("NoNewPrivileges=yes", unit)
+        self.assertIn("CAP_NET_ADMIN", unit)
 
     def test_control_room_and_telemetry_are_pinned_to_simulation(self) -> None:
         for service in ("bytewolf-controlroom.service", "bytewolf-telemetry.service"):

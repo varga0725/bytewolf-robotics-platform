@@ -54,42 +54,37 @@ def is_grpc_port_protected(port: int) -> bool:
     return MAVSDK_GRPC_PORT_BASE <= port <= last
 
 
-def containment_drop_rule_args(*, ipv6: bool = False) -> list[str]:
+def containment_drop_rule_args() -> list[str]:
     """Arguments after ``iptables -C INPUT`` for the containment DROP rule."""
-    args = ["!", "-i", "lo"]
-    if ipv6:
-        args.extend(["!", "-s", "::1/128"])
-    args.extend(
-        [
-            "-p",
-            "tcp",
-            "-m",
-            "conntrack",
-            "--ctstate",
-            "NEW",
-            "-m",
-            "multiport",
-            "--dports",
-            mavsdk_grpc_dport_spec(),
-            "-m",
-            "comment",
-            "--comment",
-            firewall_comment(),
-            "-j",
-            "DROP",
-        ]
-    )
-    return args
+    return [
+        "!",
+        "-i",
+        "lo",
+        "-p",
+        "tcp",
+        "-m",
+        "conntrack",
+        "--ctstate",
+        "NEW",
+        "-m",
+        "multiport",
+        "--dports",
+        mavsdk_grpc_dport_spec(),
+        "-m",
+        "comment",
+        "--comment",
+        firewall_comment(),
+        "-j",
+        "DROP",
+    ]
 
 
-def _mavsdk_server_help_text(project_root: Path) -> str | None:
+def _mavsdk_server_help_text() -> str | None:
     try:
         import mavsdk
     except ImportError:
         return None
     binary = Path(mavsdk.__file__).resolve().parent / "bin" / "mavsdk_server"
-    if not binary.is_file():
-        binary = project_root / ".venv/lib/python3.12/site-packages/mavsdk/bin/mavsdk_server"
     if not binary.is_file():
         return None
     completed = subprocess.run(
@@ -104,7 +99,7 @@ def _mavsdk_server_help_text(project_root: Path) -> str | None:
 
 def grpc_bind_loopback_supported(project_root: Path) -> bool:
     """True when the bundled ``mavsdk_server`` documents a gRPC listen-host override."""
-    help_text = _mavsdk_server_help_text(project_root)
+    help_text = _mavsdk_server_help_text()
     if not help_text:
         return False
     lowered = help_text.lower()
@@ -126,10 +121,11 @@ def containment_rules_present(
     """True when IPv4 (and IPv6 when available) containment DROP rules exist."""
     runner = run_check or _default_iptables_check
     missing: list[str] = []
-    if runner([_IPTABLES_IPV4, "-C", "INPUT", *containment_drop_rule_args(ipv6=False)]) != 0:
+    rule = containment_drop_rule_args()
+    if runner([_IPTABLES_IPV4, "-C", "INPUT", *rule]) != 0:
         missing.append("ipv4")
     if os.path.isfile(_IPTABLES_IPV6):
-        if runner([_IPTABLES_IPV6, "-C", "INPUT", *containment_drop_rule_args(ipv6=True)]) != 0:
+        if runner([_IPTABLES_IPV6, "-C", "INPUT", *rule]) != 0:
             missing.append("ipv6")
     return (not missing, missing)
 
@@ -167,16 +163,11 @@ def _host_is_loopback_listen(host: str) -> bool:
 
 
 def _iter_mavsdk_listen_rows(ss_text: str) -> list[str]:
-    rows: list[str] = []
-    for line in ss_text.splitlines():
-        stripped = line.strip()
-        if not stripped or "mavsdk_server" not in stripped:
-            continue
-        if not stripped.startswith("LISTEN"):
-            rows.append(stripped)
-            continue
-        rows.append(stripped)
-    return rows
+    return [
+        stripped
+        for line in ss_text.splitlines()
+        if (stripped := line.strip()) and "mavsdk_server" in stripped
+    ]
 
 
 def verify_posture(

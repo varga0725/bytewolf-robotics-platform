@@ -21,7 +21,9 @@ deploy/systemd/verify-stack.sh
 The installer is idempotent. It validates the pinned PX4/Gazebo baseline and
 the Python 3.10 Gazebo bindings, builds both frontends, verifies and installs
 the units, enables the **`bytewolf-mavsdk-grpc-containment.service`** oneshot
-(firewall rules via `apply-mavsdk-grpc-containment.sh`), and restarts the target.
+(root, `CAP_NET_ADMIN`; firewall rules via `apply-mavsdk-grpc-containment.sh`),
+and restarts the target. The apply script calls `iptables` directly under
+systemd and uses `sudo` when run interactively as the `bytewolf` user.
 It deliberately does not install packages, credentials, or publish the loopback
 API; the Ubuntu runbook owns host prerequisites and remote access remains blocked.
 
