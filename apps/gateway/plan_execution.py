@@ -31,19 +31,19 @@ def execute_reviewed_plan(plan_name: str) -> str:
     if not _PLAN_NAME.fullmatch(plan_name) or not plan_path.is_file():
         raise RuntimeError("Reviewed plan does not exist.")
     _validate_plan_before_spawn(plan_path)
-    endpoint = os.environ.get("BYTEWOLF_PX4_ENDPOINT", "udpin://127.0.0.1:14540")
-    authorize_readonly_connection("simulation", endpoint)
-    classification = TargetClassifier.require_sitl_verified(endpoint)
-    if classification.verdict != "sitl_verified":
-        raise RuntimeError(
-            "Refusing mission spawn: PX4 target is "
-            f"{classification.verdict} ({classification.reason})."
-        )
 
     global _active_execution
     with _execution_lock:
         if _active_execution is not None and _active_execution.poll() is None:
             raise RuntimeError("A SITL mission is already running.")
+        endpoint = os.environ.get("BYTEWOLF_PX4_ENDPOINT", "udpin://127.0.0.1:14540")
+        authorize_readonly_connection("simulation", endpoint)
+        classification = TargetClassifier.require_sitl_verified(endpoint)
+        if classification.verdict != "sitl_verified":
+            raise RuntimeError(
+                "Refusing mission spawn: PX4 target is "
+                f"{classification.verdict} ({classification.reason})."
+            )
         lease_path = default_lease_path()
         lease_path.parent.mkdir(parents=True, exist_ok=True)
         claim_link("mission", pid=os.getpid(), path=lease_path)

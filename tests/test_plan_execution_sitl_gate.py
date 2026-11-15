@@ -52,12 +52,54 @@ class PlanExecutionSitlGateTests(unittest.TestCase):
                 TargetClassification("sitl_verified", "ok", {"status": "verified"}),
                 TargetClassification("unknown", "Timed out reading SYS_AUTOSTART."),
             ]
-            popen.return_value = MagicMock(pid=42, poll=MagicMock(return_value=None))
+            process = MagicMock(pid=42)
+            process.poll = MagicMock(return_value=None)
+            popen.return_value = process
             execute_reviewed_plan(self.plan_name)
+            process.poll.return_value = 0
             with self.assertRaises(RuntimeError) as context:
                 execute_reviewed_plan(self.plan_name)
             self.assertIn("unknown", str(context.exception))
             self.assertEqual(require_verified.call_count, 2)
+
+    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"}, clear=False)
+    @patch("apps.gateway.plan_execution.subprocess.Popen")
+    @patch("apps.gateway.plan_execution.TargetClassifier.require_sitl_verified")
+    @patch("apps.gateway.plan_execution.claim_link")
+    @patch("apps.gateway.plan_execution._validate_plan_before_spawn")
+    def test_refuses_second_approve_while_mission_running_without_classifier(
+        self, _validate, claim, require_verified, popen
+    ) -> None:
+        with patch.object(plan_execution, "_DEFAULT_PLAN_DIRECTORY", self.plan_dir):
+            plan_execution._active_execution = MagicMock(poll=MagicMock(return_value=None))
+            with self.assertRaises(RuntimeError) as context:
+                execute_reviewed_plan(self.plan_name)
+            self.assertIn("already running", str(context.exception))
+            require_verified.assert_not_called()
+            claim.assert_not_called()
+            popen.assert_not_called()
+
+    @patch.dict(os.environ, {"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"}, clear=False)
+    @patch("apps.gateway.plan_execution.subprocess.Popen")
+    @patch("apps.gateway.plan_execution.wait_for_free_link", return_value=True)
+    @patch("apps.gateway.plan_execution.TargetClassifier.require_sitl_verified")
+    @patch("apps.gateway.plan_execution._validate_plan_before_spawn")
+    def test_classifies_before_spawn(self, _validate, require_verified, _wait, popen) -> None:
+        call_order: list[str] = []
+
+        def classify(_endpoint: str) -> TargetClassification:
+            call_order.append("classify")
+            return TargetClassification("sitl_verified", "ok")
+
+        def spawn(*_args, **_kwargs) -> MagicMock:
+            call_order.append("popen")
+            return MagicMock(pid=42, poll=MagicMock(return_value=None))
+
+        with patch.object(plan_execution, "_DEFAULT_PLAN_DIRECTORY", self.plan_dir):
+            require_verified.side_effect = classify
+            popen.side_effect = spawn
+            execute_reviewed_plan(self.plan_name)
+        self.assertEqual(call_order, ["classify", "popen"])
 
 
 if __name__ == "__main__":

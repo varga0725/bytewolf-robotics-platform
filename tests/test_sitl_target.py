@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import unittest
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from brain.mission.demo_point_rtl import DemoPointRtlError
-from brain.mission.sitl_target import TargetClassifier, require_px4_sitl_indication
+from brain.mission.sitl_target import (
+    TargetClassifier,
+    _DEFAULT_CLASSIFIER_MAVSDK_PORT,
+    default_target_classifier_mavsdk_port,
+    require_px4_sitl_indication,
+)
 
 
 def _drone_with_identity(
@@ -47,6 +53,22 @@ def _drone_with_identity(
     param.get_param_int = AsyncMock(side_effect=read_param)
     drone = MagicMock(info=info, param=param)
     return drone
+
+
+class TargetClassifierPortEnvTests(unittest.TestCase):
+    def test_valid_port_env_is_used(self) -> None:
+        with patch.dict(os.environ, {"BYTEWOLF_TARGET_CLASSIFIER_MAVSDK_PORT": "52001"}, clear=False):
+            self.assertEqual(default_target_classifier_mavsdk_port(), 52001)
+
+    def test_invalid_port_values_fall_back_to_default(self) -> None:
+        for raw in ("abc", "0", "-5", "70000", ""):
+            with self.subTest(raw=raw), patch.dict(
+                os.environ, {"BYTEWOLF_TARGET_CLASSIFIER_MAVSDK_PORT": raw}, clear=False
+            ):
+                self.assertEqual(
+                    default_target_classifier_mavsdk_port(),
+                    _DEFAULT_CLASSIFIER_MAVSDK_PORT,
+                )
 
 
 class SitlTargetTests(unittest.IsolatedAsyncioTestCase):
