@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+from brain.safety.connection_policy import ConnectionPolicyError, require_local_sitl_udp_endpoint
 from brain.safety.deployment import (
     DeploymentAuthorizationError,
     DeploymentMode,
@@ -42,10 +43,10 @@ def require_simulation_target(
     parsed = urlparse(endpoint)
     if parsed.scheme == "serial" or parsed.scheme.startswith("tcp"):
         raise DemoPointRtlError("Demo missions refuse serial and TCP vehicle endpoints.")
-    if parsed.scheme not in {"udpin", "udpout"}:
-        raise DemoPointRtlError(f"Unsupported MAVSDK endpoint scheme '{parsed.scheme}'.")
-    if parsed.hostname not in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}:
-        raise DemoPointRtlError("Demo missions require a loopback UDP SITL endpoint.")
+    try:
+        require_local_sitl_udp_endpoint(endpoint)
+    except ConnectionPolicyError as error:
+        raise DemoPointRtlError(str(error)) from error
     if permit_path is not None:
         raise DemoPointRtlError("A physical actuation permit cannot be supplied for SITL demo missions.")
     try:
