@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -33,7 +34,8 @@ from brain.mission.acceptance_inflight_sitl import (
     evaluate_relay_inflight_machine,
     validate_evidence_document,
 )
-from brain.mission.acceptance_inflight_runner import evaluate_scenario, run_one_scenario
+from brain.mission.acceptance_inflight_runner import TransitionRecorder, evaluate_scenario, run_one_scenario
+from brain.telemetry.loopback_endpoint import LoopbackEndpointError, require_loopback_udpin_endpoint
 from simulation.px4.sitl_failsafe_profile import write_sitl_failsafe_status
 
 
@@ -226,14 +228,26 @@ class AcceptanceInflightCliRunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_one_scenario_records_exception_transitions(self) -> None:
         adapter = MagicMock()
+        adapter._global_position_sample = AsyncMock(
+            return_value=MagicMock(latitude_deg=47.0, longitude_deg=19.0, absolute_altitude_m=100.0),
+        )
         profile = ProfilePreconditionResult(True, True, "run", None)
+        async def seed_recorder(self) -> None:
+            self._origin_s = time.monotonic()
+            self.transitions.append(VehicleTransition(0.2, True, True, "auto", relative_altitude_m=20.0))
+
         with (
             patch(
                 "brain.mission.acceptance_inflight_runner.check_sitl_failsafe_profile_precondition",
                 return_value=profile,
             ),
+            patch.object(TransitionRecorder, "start", seed_recorder),
             patch(
-                "brain.mission.acceptance_inflight_runner.run_kill_in_air_scenario",
+                "brain.mission.acceptance_inflight_runner._takeoff_to_altitude",
+                new=AsyncMock(),
+            ),
+            patch(
+                "brain.mission.acceptance_inflight_runner.probe_kill_in_air",
                 side_effect=RuntimeError("boom"),
             ),
             patch(
@@ -255,6 +269,53 @@ class AcceptanceInflightCliRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(document["outcome"], "FAIL")
         self.assertIn("boom", document["failure_reason"] or "")
+        self.assertGreater(len(document.get("transitions") or []), 0)
+        self.assertGreater(len(document.get("timings") or {}), 0)
+        self.assertIn("takeoff_complete_s", document["timings"])
+
+    async def test_profile_not_applied_never_arms(self) -> None:
+        adapter = MagicMock()
+        profile = ProfilePreconditionResult(False, False, None, "profile not applied")
+        takeoff = AsyncMock()
+        with (
+            patch(
+                "brain.mission.acceptance_inflight_runner.check_sitl_failsafe_profile_precondition",
+                return_value=profile,
+            ),
+            patch("brain.mission.acceptance_inflight_runner._takeoff_to_altitude", new=takeoff),
+            patch(
+                "brain.mission.acceptance_inflight_runner._safe_recover_vehicle",
+                new=AsyncMock(),
+            ),
+        ):
+            document = await run_one_scenario(
+                SCENARIO_LOW_BATTERY,
+                adapter,
+                system=object(),
+                mavsdk_endpoint="udpin://127.0.0.1:14540",
+                mavlink_endpoint="udpin://127.0.0.1:14550",
+                profile_check=profile,
+                snapshot_path=Path("relay.json"),
+                relay_max_age_s=3.0,
+                px4_run_directory=Path("run"),
+                px4_build_directory=Path("build"),
+            )
+        self.assertEqual(document["outcome"], "FAIL")
+        takeoff.assert_not_awaited()
+
+
+class MavlinkEndpointValidationTests(unittest.TestCase):
+    def test_rejects_wildcard_udpin(self) -> None:
+        with self.assertRaises(LoopbackEndpointError):
+            require_loopback_udpin_endpoint("udpin://0.0.0.0:14550")
+
+    def test_rejects_non_loopback_ip(self) -> None:
+        with self.assertRaises(LoopbackEndpointError):
+            require_loopback_udpin_endpoint("udpin://192.0.2.1:14550")
+
+    def test_rejects_hostname(self) -> None:
+        with self.assertRaises(LoopbackEndpointError):
+            require_loopback_udpin_endpoint("udpin://example.com:14550")
 
 
 class EvaluateScenarioDispatchTests(unittest.TestCase):

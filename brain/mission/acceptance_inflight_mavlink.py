@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -145,19 +144,25 @@ def send_normal_disarm(connection_url: str) -> DisarmAttemptResult:
                 return DisarmAttemptResult("accepted", ack_elapsed_s=elapsed)
             if result in {MAV_RESULT_DENIED, MAV_RESULT_FAILED}:
                 return DisarmAttemptResult("denied", ack_elapsed_s=elapsed)
-            return DisarmAttemptResult("denied", ack_elapsed_s=elapsed)
+            return DisarmAttemptResult("no_ack")
         return DisarmAttemptResult("no_ack")
     finally:
         GcsHeartbeatPublisher._close_mavlink(mavlink)
 
 
-def wait_until_disarmed_via_mavlink(connection_url: str, *, timeout_s: float) -> float | None:
-    """Return seconds until HEARTBEAT reports disarmed, using one connection."""
+@dataclass
+class KillInAirProbeResult:
+    disarm: DisarmAttemptResult
+    kill_to_disarm_s: float | None
+
+
+def wait_until_disarmed_via_mavlink(connection_url: str, *, timeout_s: float = 5.0) -> float | None:
+    """Return seconds until disarm is seen on HEARTBEAT, or None on timeout."""
     from pymavlink import mavutil
 
-    mavlink = _mavlink_connection(connection_url, timeout_s=min(10.0, timeout_s))
+    start = time.monotonic()
+    mavlink = _mavlink_connection(connection_url)
     try:
-        start = time.monotonic()
         deadline = start + timeout_s
         while time.monotonic() < deadline:
             message = mavlink.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
@@ -167,6 +172,68 @@ def wait_until_disarmed_via_mavlink(connection_url: str, *, timeout_s: float) ->
             if not armed:
                 return time.monotonic() - start
         return None
+    finally:
+        GcsHeartbeatPublisher._close_mavlink(mavlink)
+
+
+def probe_kill_in_air(connection_url: str, *, timeout_s: float = 3.0) -> KillInAirProbeResult:
+    """Normal disarm attempt then emergency kill on one MAVLink session; timer starts before kill send."""
+    from pymavlink import mavutil
+
+    start = time.monotonic()
+    mavlink = _mavlink_connection(connection_url)
+    try:
+        mavlink.mav.command_long_send(
+            mavlink.target_system,
+            mavlink.target_component,
+            MAV_CMD_COMPONENT_ARM_DISARM,
+            0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+        disarm_outcome: DisarmOutcome = "no_ack"
+        disarm_elapsed: float | None = None
+        disarm_deadline = time.monotonic() + 5.0
+        while time.monotonic() < disarm_deadline:
+            message = mavlink.recv_match(type="COMMAND_ACK", blocking=True, timeout=1.0)
+            if message is None:
+                continue
+            if int(message.command) != MAV_CMD_COMPONENT_ARM_DISARM:
+                continue
+            disarm_elapsed = time.monotonic() - start
+            result = int(message.result)
+            disarm_outcome = "accepted" if result == 0 else "denied"
+            break
+        disarm = DisarmAttemptResult(disarm_outcome, ack_elapsed_s=disarm_elapsed)
+
+        kill_send_at = time.monotonic()
+        mavlink.mav.command_long_send(
+            mavlink.target_system,
+            mavlink.target_component,
+            MAV_CMD_COMPONENT_ARM_DISARM,
+            0,
+            0.0,
+            float(EMERGENCY_DISARM_MAGIC),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+        deadline = kill_send_at + timeout_s
+        while time.monotonic() < deadline:
+            message = mavlink.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
+            if message is None:
+                continue
+            armed = bool(message.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+            if not armed:
+                return KillInAirProbeResult(disarm, time.monotonic() - kill_send_at)
+        return KillInAirProbeResult(disarm, None)
     finally:
         GcsHeartbeatPublisher._close_mavlink(mavlink)
 
@@ -248,10 +315,7 @@ class MavlinkTelemetryPoller:
                 if 0 <= remaining <= 100:
                     sample.battery_percent = float(remaining)
             elif message_type == "STATUSTEXT":
-                text = str(message.text).strip("\x00")
-                sample.statustext = text
-                if "geofence" in text.lower():
-                    sample.geofence_breach = True
+                sample.statustext = str(message.text).strip("\x00")
             elif message_type == "FENCE_STATUS":
                 breached = int(message.breach_status) != 0
                 sample.geofence_breach = breached
@@ -260,85 +324,3 @@ class MavlinkTelemetryPoller:
             if sample.geofence_breach and self.geofence_breach_at_s is None:
                 self.geofence_breach_at_s = sample.monotonic_s
             self.samples.append(sample)
-
-
-_PROC_UDP = re.compile(
-    r"^\s*\d+:\s+[0-9A-F]{8}:(?P<port>[0-9A-F]{4})\s+(?P<addr>[0-9A-F]{8})", re.MULTILINE
-)
-
-
-def relay_uses_loopback_udp_only(
-    process: object,
-    *,
-    ingest_port: int,
-) -> bool:
-    """Fail closed when relay socket layout cannot be confirmed."""
-    pid = int(getattr(process, "pid", 0))
-    if pid <= 0:
-        return False
-    try:
-        import psutil
-    except ModuleNotFoundError:
-        return _relay_loopback_via_proc_net(pid, ingest_port=ingest_port)
-    if getattr(process, "poll", lambda: None)() is not None:
-        return False
-    root = psutil.Process(pid)
-    processes = [root, *root.children(recursive=True)]
-    saw_ingest = False
-    for candidate in processes:
-        for connection in candidate.net_connections(kind="all"):
-            if connection.type == 2 and connection.status == "LISTEN":  # SOCK_STREAM LISTEN
-                return False
-            if connection.type != 1:  # SOCK_DGRAM
-                continue
-            host = _connection_host(connection.laddr)
-            if not host or not _is_loopback(host):
-                return False
-            port = _connection_port(connection.laddr)
-            if port == ingest_port:
-                saw_ingest = True
-    return saw_ingest
-
-
-def _relay_loopback_via_proc_net(pid: int, *, ingest_port: int) -> bool:
-    path = f"/proc/{pid}/net/udp"
-    try:
-        text = open(path, encoding="utf-8").read()  # noqa: SIM115
-    except OSError:
-        return False
-    port_hex = f"{ingest_port:04X}"
-    saw = False
-    for match in _PROC_UDP.finditer(text):
-        if match.group("port") != port_hex:
-            continue
-        addr = match.group("addr")
-        if addr.endswith("7F000001") or addr.endswith("0100007F"):
-            saw = True
-    return saw
-
-
-def _connection_host(laddr: object) -> str | None:
-    host = getattr(laddr, "host", None)
-    if host is not None:
-        return str(host)
-    if isinstance(laddr, tuple) and laddr:
-        return str(laddr[0])
-    return None
-
-
-def _connection_port(laddr: object) -> int | None:
-    port = getattr(laddr, "port", None)
-    if port is not None:
-        return int(port)
-    if isinstance(laddr, tuple) and len(laddr) > 1:
-        return int(laddr[1])
-    return None
-
-
-def _is_loopback(host: str) -> bool:
-    import ipaddress
-
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return host in {"127.0.0.1", "::1", "localhost"}

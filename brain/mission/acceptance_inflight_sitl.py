@@ -36,9 +36,9 @@ GF_MAX_HOR_DIST_M = 100.0
 GF_MAX_VER_DIST_M = 50.0
 COM_DL_LOSS_T_S = 10.0
 BAT_LOW_THR = 0.15
-BAT_CRIT_THR = 0.08
+BAT_CRIT_THR = 0.10
 BAT_EMERGEN_THR = 0.05
-SIM_BAT_DRAIN_S = 240.0
+SIM_BAT_DRAIN_S = 300.0
 
 GEOFENCE_HOR_TOLERANCE_M = 15.0
 GEOFENCE_VER_TOLERANCE_M = 5.0
@@ -298,13 +298,18 @@ def evaluate_geofence_machine(
     ver_tolerance_m: float = GEOFENCE_VER_TOLERANCE_M,
 ) -> tuple[bool, str | None]:
     if geofence_breach_at_s is None:
-        return False, "No geofence breach signal was observed."
+        return False, "No FENCE_STATUS breach was observed."
     if not _saw_rtl(transitions, after_s=geofence_breach_at_s):
         return False, "Geofence breach did not trigger RTL flight mode."
     peak_hor = max(
         (t.horizontal_distance_from_home_m for t in transitions if t.horizontal_distance_from_home_m is not None),
         default=0.0,
     )
+    if peak_hor < gf_max_hor_m:
+        return (
+            False,
+            f"Peak horizontal distance {peak_hor:.1f} m did not reach geofence limit {gf_max_hor_m:.1f} m.",
+        )
     peak_ver = max(
         (t.relative_altitude_m for t in transitions if t.relative_altitude_m is not None),
         default=0.0,

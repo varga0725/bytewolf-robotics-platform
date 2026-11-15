@@ -16,15 +16,14 @@ from urllib.parse import urlparse
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.cli.mavsdk_lifecycle import stop_owned_mavsdk_server
 from brain.mission.acceptance_inflight_mavlink import (
-    DisarmAttemptResult,
     GcsHeartbeatPublisher,
     MavlinkSample,
     MavlinkTelemetryPoller,
-    relay_uses_loopback_udp_only,
+    probe_kill_in_air,
     send_emergency_kill,
-    send_normal_disarm,
     wait_until_disarmed_via_mavlink,
 )
+from brain.mission.acceptance_inflight_relay_inspect import relay_uses_loopback_udp_only
 from brain.mission.acceptance_inflight_ports import mavlink_endpoint_for_gcs
 from brain.mission.acceptance_inflight_sitl import (
     COM_DL_LOSS_T_S,
@@ -59,12 +58,42 @@ from brain.navigation.waypoints import GlobalPosition, horizontal_distance_m
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 from brain.telemetry.loopback_endpoint import require_loopback_udpin_endpoint
 
-LOW_BATTERY_TIMEOUT_S = 300.0
+# SIM_BAT_DRAIN=300 s full discharge while armed; hover + RTL needs margin beyond that.
+LOW_BATTERY_TIMEOUT_S = 270.0
 DEFAULT_ACTION_TIMEOUT_S = 45.0
 LANDING_TIMEOUT_S = 120.0
 GEOFENCE_INSIDE_GOTO_M = 92.0
 GEOFENCE_PUSH_SPEED_M_S = 4.0
 GEOFENCE_PUSH_DURATION_S = 18.0
+GEOFENCE_BREACH_POLL_S = 25.0
+
+
+def _commit_scenario_progress(
+    progress: ScenarioProgress | None,
+    *,
+    transitions: list[VehicleTransition] | None = None,
+    timings: dict[str, float] | None = None,
+    extra: dict[str, Any] | None = None,
+    relay_samples: list[RelaySample] | None = None,
+) -> None:
+    if progress is None:
+        return
+    if transitions is not None:
+        progress.transitions = list(transitions)
+    if timings is not None:
+        progress.timings = dict(timings)
+    if extra is not None:
+        progress.extra = dict(extra)
+    if relay_samples is not None:
+        progress.relay_samples = list(relay_samples)
+
+
+@dataclass
+class ScenarioProgress:
+    transitions: list[VehicleTransition] = field(default_factory=list)
+    timings: dict[str, float] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
+    relay_samples: list[RelaySample] | None = None
 
 
 @dataclass
@@ -293,6 +322,7 @@ async def run_datalink_loss_scenario(
     mavsdk_endpoint: str,
     mavlink_endpoint: str,
     action_timeout_s: float = DEFAULT_ACTION_TIMEOUT_S,
+    progress: ScenarioProgress | None = None,
 ) -> tuple[list[VehicleTransition], dict[str, float], dict[str, Any]]:
     gcs = GcsHeartbeatPublisher(mavlink_endpoint)
     gcs.start()
@@ -300,6 +330,7 @@ async def run_datalink_loss_scenario(
     timings: dict[str, float] = {}
     extra: dict[str, Any] = {}
     poller: MavlinkTelemetryPoller | None = None
+    transitions: list[VehicleTransition] = []
     try:
         home = await adapter._global_position_sample("home")
         recorder.home = home
@@ -322,11 +353,18 @@ async def run_datalink_loss_scenario(
         timings["landed_disarmed_s"] = time.monotonic() - loss_origin
         timings["takeoff_complete_s"] = takeoff_complete_s
         transitions = _mavlink_to_transitions(poller.samples)
+        extra["datalink_pass_complete"] = _mavlink_samples_landed_disarmed(poller.samples, after_s=0.0)
     finally:
         if poller is not None:
             poller.stop()
         gcs.stop()
         await recorder.stop()
+        _commit_scenario_progress(
+            progress,
+            transitions=transitions,
+            timings=timings,
+            extra=extra,
+        )
     return transitions, timings, extra
 
 
@@ -360,6 +398,7 @@ async def run_geofence_scenario(
     *,
     mavlink_endpoint: str,
     action_timeout_s: float = DEFAULT_ACTION_TIMEOUT_S,
+    progress: ScenarioProgress | None = None,
 ) -> tuple[list[VehicleTransition], dict[str, float], dict[str, Any]]:
     poller = MavlinkTelemetryPoller(mavlink_endpoint)
     recorder = TransitionRecorder(adapter._drone, mavlink_poller=poller)
@@ -383,13 +422,25 @@ async def run_geofence_scenario(
             speed_m_s=GEOFENCE_PUSH_SPEED_M_S,
         )
         timings["velocity_push_end_s"] = recorder._elapsed()
+        push_end = recorder._elapsed()
+        deadline = push_end + GEOFENCE_BREACH_POLL_S
+        while time.monotonic() - poller.origin_s < deadline:
+            if poller.geofence_breach_at_s is not None:
+                break
+            await asyncio.sleep(0.5)
         extra["geofence_breach_at_s"] = poller.geofence_breach_at_s
         await asyncio.sleep(5.0)
         await _wait_landed_disarmed(adapter, landing_timeout_s=LANDING_TIMEOUT_S, action_timeout_s=action_timeout_s)
         timings["landed_disarmed_s"] = recorder._elapsed()
     finally:
         await recorder.stop()
-    recorder.merge_mavlink_samples(poller.samples)
+        recorder.merge_mavlink_samples(poller.samples)
+        _commit_scenario_progress(
+            progress,
+            transitions=recorder.transitions,
+            timings=timings,
+            extra=extra,
+        )
     return recorder.transitions, timings, extra
 
 
@@ -398,6 +449,7 @@ async def run_kill_in_air_scenario(
     *,
     mavlink_endpoint: str,
     action_timeout_s: float = DEFAULT_ACTION_TIMEOUT_S,
+    progress: ScenarioProgress | None = None,
 ) -> tuple[list[VehicleTransition], dict[str, float], dict[str, Any]]:
     recorder = TransitionRecorder(adapter._drone)
     timings: dict[str, float] = {}
@@ -411,19 +463,19 @@ async def run_kill_in_air_scenario(
             altitude_m=KILL_SCENARIO_ALTITUDE_M,
             action_timeout_s=action_timeout_s,
         )
-        disarm: DisarmAttemptResult = await asyncio.to_thread(send_normal_disarm, mavlink_endpoint)
-        extra["disarm_outcome"] = disarm.outcome
-        kill_start = time.monotonic()
-        await asyncio.to_thread(send_emergency_kill, mavlink_endpoint)
-        kill_elapsed = await asyncio.to_thread(
-            wait_until_disarmed_via_mavlink,
-            mavlink_endpoint,
-            timeout_s=3.0,
-        )
-        extra["kill_to_disarm_s"] = kill_elapsed
-        timings["kill_command_s"] = kill_start - recorder._origin_s
+        timings["takeoff_complete_s"] = recorder._elapsed()
+        probe = await asyncio.to_thread(probe_kill_in_air, mavlink_endpoint, timeout_s=3.0)
+        extra["disarm_outcome"] = probe.disarm.outcome
+        extra["kill_to_disarm_s"] = probe.kill_to_disarm_s
+        timings["kill_command_s"] = recorder._elapsed()
     finally:
         await recorder.stop()
+        _commit_scenario_progress(
+            progress,
+            transitions=recorder.transitions,
+            timings=timings,
+            extra=extra,
+        )
     return recorder.transitions, timings, extra
 
 
@@ -431,6 +483,7 @@ async def run_low_battery_scenario(
     adapter: MavsdkMissionAdapter,
     *,
     action_timeout_s: float = DEFAULT_ACTION_TIMEOUT_S,
+    progress: ScenarioProgress | None = None,
 ) -> tuple[list[VehicleTransition], dict[str, float], dict[str, Any]]:
     recorder = TransitionRecorder(adapter._drone)
     timings: dict[str, float] = {}
@@ -453,6 +506,12 @@ async def run_low_battery_scenario(
         timings["landed_disarmed_s"] = recorder._elapsed()
     finally:
         await recorder.stop()
+        _commit_scenario_progress(
+            progress,
+            transitions=recorder.transitions,
+            timings=timings,
+            extra={},
+        )
     return recorder.transitions, timings, {}
 
 
@@ -473,6 +532,7 @@ async def run_relay_inflight_scenario(
     snapshot_path: Path,
     relay_max_age_s: float,
     action_timeout_s: float = DEFAULT_ACTION_TIMEOUT_S,
+    progress: ScenarioProgress | None = None,
 ) -> tuple[list[VehicleTransition], dict[str, float], dict[str, Any], list[RelaySample]]:
     require_loopback_udpin_endpoint(mavlink_endpoint)
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
@@ -527,6 +587,13 @@ async def run_relay_inflight_scenario(
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5.0)
+        _commit_scenario_progress(
+            progress,
+            transitions=recorder.transitions,
+            timings=timings,
+            extra=extra,
+            relay_samples=relay_samples,
+        )
     return recorder.transitions, timings, extra, relay_samples
 
 
@@ -599,10 +666,28 @@ async def run_one_scenario(
     started_at = datetime.now(UTC)
     failure_reason: str | None = None
     outcome: Outcome = "FAIL"
-    transitions: list[VehicleTransition] = []
-    timings: dict[str, float] = {}
-    extra: dict[str, Any] = {}
-    relay_samples: list[RelaySample] | None = None
+    progress = ScenarioProgress()
+
+    try:
+        require_loopback_udpin_endpoint(mavlink_endpoint)
+    except Exception as error:
+        finished_at = datetime.now(UTC)
+        return build_evidence_document(
+            scenario=scenario,
+            outcome="FAIL",
+            started_at=started_at,
+            finished_at=finished_at,
+            transitions=[],
+            profile_check=profile_check,
+            timings={},
+            failure_reason=str(error) or error.__class__.__name__,
+            notes=profile_notes_for_scenario(scenario),
+            extra={
+                "operation": OPERATION,
+                "mavsdk_endpoint": _redact_endpoint(mavsdk_endpoint),
+                "mavlink_endpoint": _redact_endpoint(mavlink_endpoint),
+            },
+        )
 
     profile_check = check_sitl_failsafe_profile_precondition(
         px4_run_directory=px4_run_directory,
@@ -615,50 +700,68 @@ async def run_one_scenario(
         elif adapter is None or system is None:
             failure_reason = "No MAVSDK adapter connected."
         else:
-            if scenario == SCENARIO_DATALINK_LOSS:
-                transitions, timings, extra = await run_datalink_loss_scenario(
-                    adapter,
-                    system=system,
-                    mavsdk_endpoint=mavsdk_endpoint,
-                    mavlink_endpoint=mavlink_endpoint,
-                )
-            elif scenario == SCENARIO_GEOFENCE:
-                transitions, timings, extra = await run_geofence_scenario(
-                    adapter,
-                    mavlink_endpoint=mavlink_endpoint,
-                )
-            elif scenario == SCENARIO_KILL_IN_AIR:
-                transitions, timings, extra = await run_kill_in_air_scenario(
-                    adapter,
-                    mavlink_endpoint=mavlink_endpoint,
-                )
-            elif scenario == SCENARIO_LOW_BATTERY:
-                transitions, timings, extra = await run_low_battery_scenario(adapter)
-            elif scenario == SCENARIO_RELAY_INFLIGHT:
-                transitions, timings, extra, relay_samples = await run_relay_inflight_scenario(
-                    adapter,
-                    mavlink_endpoint=mavlink_endpoint,
-                    snapshot_path=snapshot_path,
-                    relay_max_age_s=relay_max_age_s,
-                )
-            else:
-                failure_reason = f"Unknown scenario {scenario!r}."
-            if failure_reason is None:
-                outcome, eval_reason = evaluate_scenario(
-                    scenario,
-                    transitions,
-                    timings=timings,
-                    extra=extra,
-                    relay_samples=relay_samples,
-                )
-                if eval_reason:
-                    failure_reason = eval_reason
+            try:
+                if scenario == SCENARIO_DATALINK_LOSS:
+                    progress.transitions, progress.timings, progress.extra = await run_datalink_loss_scenario(
+                        adapter,
+                        system=system,
+                        mavsdk_endpoint=mavsdk_endpoint,
+                        mavlink_endpoint=mavlink_endpoint,
+                        progress=progress,
+                    )
+                elif scenario == SCENARIO_GEOFENCE:
+                    progress.transitions, progress.timings, progress.extra = await run_geofence_scenario(
+                        adapter,
+                        mavlink_endpoint=mavlink_endpoint,
+                        progress=progress,
+                    )
+                elif scenario == SCENARIO_KILL_IN_AIR:
+                    progress.transitions, progress.timings, progress.extra = await run_kill_in_air_scenario(
+                        adapter,
+                        mavlink_endpoint=mavlink_endpoint,
+                        progress=progress,
+                    )
+                elif scenario == SCENARIO_LOW_BATTERY:
+                    progress.transitions, progress.timings, progress.extra = await run_low_battery_scenario(
+                        adapter,
+                        progress=progress,
+                    )
+                elif scenario == SCENARIO_RELAY_INFLIGHT:
+                    (
+                        progress.transitions,
+                        progress.timings,
+                        progress.extra,
+                        progress.relay_samples,
+                    ) = await run_relay_inflight_scenario(
+                        adapter,
+                        mavlink_endpoint=mavlink_endpoint,
+                        snapshot_path=snapshot_path,
+                        relay_max_age_s=relay_max_age_s,
+                        progress=progress,
+                    )
+                else:
+                    failure_reason = f"Unknown scenario {scenario!r}."
+                if failure_reason is None:
+                    outcome, eval_reason = evaluate_scenario(
+                        scenario,
+                        progress.transitions,
+                        timings=progress.timings,
+                        extra=progress.extra,
+                        relay_samples=progress.relay_samples,
+                    )
+                    if eval_reason:
+                        failure_reason = eval_reason
+            except Exception as error:
+                failure_reason = str(error) or error.__class__.__name__
+                outcome = "FAIL"
     except Exception as error:
         failure_reason = str(error) or error.__class__.__name__
         outcome = "FAIL"
     finally:
         try:
-            needs_recovery = scenario != SCENARIO_KILL_IN_AIR or extra.get("kill_to_disarm_s") is None
+            needs_recovery = scenario != SCENARIO_KILL_IN_AIR or progress.extra.get("kill_to_disarm_s") is None
+            if scenario == SCENARIO_DATALINK_LOSS and progress.extra.get("datalink_pass_complete"):
+                needs_recovery = False
             if needs_recovery:
                 await _safe_recover_vehicle(adapter, mavlink_endpoint=mavlink_endpoint)
         except Exception as cleanup_error:
@@ -673,34 +776,35 @@ async def run_one_scenario(
         outcome=outcome,
         started_at=started_at,
         finished_at=finished_at,
-        transitions=transitions,
+        transitions=progress.transitions,
         profile_check=profile_check,
-        timings=timings,
+        timings=progress.timings,
         failure_reason=failure_reason,
         notes=profile_notes_for_scenario(scenario),
         extra={
-            **extra,
+            **progress.extra,
             "operation": OPERATION,
             "mavsdk_endpoint": _redact_endpoint(mavsdk_endpoint),
             "mavlink_endpoint": _redact_endpoint(mavlink_endpoint),
         },
     )
-    if relay_samples is not None:
+    if progress.relay_samples is not None:
         document["relay_samples"] = [
             {
                 "monotonic_s": sample.monotonic_s,
                 "captured_at_age_s": sample.captured_at_age_s,
                 "in_air": sample.in_air,
             }
-            for sample in relay_samples
+            for sample in progress.relay_samples
         ]
     return document
 
 
 def _redact_endpoint(endpoint: str) -> dict[str, object]:
     parsed = urlparse(endpoint)
-    port = parsed.port or (14540 if "14540" in endpoint else 14550)
-    return {"transport": "udp-loopback", "port": port}
+    if parsed.port is None:
+        raise ValueError(f"Endpoint must include an explicit UDP port: {endpoint!r}")
+    return {"transport": "udp-loopback", "port": parsed.port}
 
 
 async def connect_adapter(

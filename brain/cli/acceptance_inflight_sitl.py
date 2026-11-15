@@ -22,6 +22,7 @@ from brain.mission.acceptance_inflight_sitl import (
 )
 from brain.mission.simulation_target import require_simulation_target
 from brain.safety.deployment import add_deployment_arguments, actuation_request_sha256, file_sha256
+from brain.telemetry.loopback_endpoint import LoopbackEndpointError, require_loopback_udpin_endpoint
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 from shared.safety.execution_gate import require_mission_execution_enabled
 from simulation.gazebo.fault_injection import PX4_BUILD_DIRECTORY
@@ -109,6 +110,11 @@ async def run(arguments: argparse.Namespace) -> int:
     scenarios = _resolve_scenarios(arguments.scenario)
     mavsdk_endpoint = arguments.endpoint
     mavlink_endpoint = _resolve_mavlink_endpoint(arguments)
+    try:
+        require_loopback_udpin_endpoint(mavlink_endpoint)
+    except LoopbackEndpointError as error:
+        print(f"mavlink endpoint rejected: {error}", file=sys.stderr)
+        return 1
 
     profile = load_safety_profile(arguments.safety_profile)
     request_sha256 = actuation_request_sha256(

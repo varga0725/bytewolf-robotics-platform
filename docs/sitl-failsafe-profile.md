@@ -19,9 +19,9 @@ sees at least two independent indicators (e.g. `SYS_AUTOSTART` in the gz/SIH POS
 | `COM_DL_LOSS_T` | `10` | 10 s datalink-loss timeout (within preflight rule max). |
 | `COM_LOW_BAT_ACT` | `3` | v1.17: Return at critical, Land at emergency (`commander_params.c`). |
 | `BAT_LOW_THR` | `0.15` | 15 % warning (`battery` module). |
-| `BAT_CRIT_THR` | `0.08` | 8 % critical → RTL path with `COM_LOW_BAT_ACT=3` (wider gap before emergency). |
+| `BAT_CRIT_THR` | `0.10` | 10 % critical → RTL path with `COM_LOW_BAT_ACT=3` (wider gap before emergency). |
 | `BAT_EMERGEN_THR` | `0.05` | 5 % emergency → Land. |
-| `SIM_BAT_DRAIN` | `240` | Seconds for a full 100→0 % sim discharge while armed; slower drain keeps critical→RTL observable before emergency land. |
+| `SIM_BAT_DRAIN` | `300` | Seconds for a full 100→0 % sim discharge while armed; slower drain keeps critical→RTL observable before emergency land. |
 | `SIM_BAT_MIN_PCT` | `0` | Allow the sim battery to reach emergency threshold during tests. |
 
 ## How it is applied
