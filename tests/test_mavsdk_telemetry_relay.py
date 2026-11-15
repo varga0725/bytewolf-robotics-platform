@@ -321,5 +321,40 @@ class MavsdkTelemetryRelayTests(unittest.IsolatedAsyncioTestCase):
             await relay.run_until_streams_complete()
 
 
+
+class _Home:
+    latitude_deg = 47.4978
+    longitude_deg = 19.0401
+    absolute_altitude_m = 123.0
+
+
+class _HomeTelemetry(Telemetry):
+    def home(self):
+        return samples(_Home())
+
+
+class _HomeDrone:
+    telemetry = _HomeTelemetry()
+
+
+class MavsdkHomeStreamTests(unittest.IsolatedAsyncioTestCase):
+    async def test_home_stream_reaches_the_dashboard_snapshot(self) -> None:
+        captured_at = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "telemetry.json"
+            relay = MavsdkTelemetryRelay(_HomeDrone(), destination, clock=lambda: captured_at)
+            await relay.run_until_streams_complete()
+            document = json.loads(destination.read_text(encoding="utf-8"))
+        self.assertEqual(
+            document["home"],
+            {
+                "latitude_deg": 47.4978,
+                "longitude_deg": 19.0401,
+                "absolute_altitude_m": 123.0,
+                "captured_at": "2026-07-16T12:00:00Z",
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

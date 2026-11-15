@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from math import isfinite
 from pathlib import Path
 from typing import Any
 
 from apps.api.telemetry import TelemetryFormatError, TelemetrySnapshot, load_telemetry_snapshot
 from brain.mission.demo_errors import DemoWaypointMissionError
-from brain.navigation.local_offset import global_position_to_local_offset
-from brain.navigation.waypoints import GlobalPosition, horizontal_distance_m
+from brain.navigation.waypoints import GlobalPosition, global_position_to_local_offset, horizontal_distance_m
 
 HOME_MISMATCH_THRESHOLD_M = 2.0
+# Same budget the dashboard uses to call telemetry stale; an older snapshot means a dead relay.
+HOME_SNAPSHOT_MAX_AGE_S = 10.0
 
 
 @dataclass(frozen=True)
@@ -52,11 +54,21 @@ def parse_map_home_reference(document: dict[str, object]) -> MapHomeReference:
     )
 
 
-def load_snapshot_home(telemetry_path: Path) -> MapHomeReference:
+def load_snapshot_home(telemetry_path: Path, *, now: datetime | None = None) -> MapHomeReference:
     try:
         snapshot = load_telemetry_snapshot(telemetry_path)
     except (TelemetryFormatError, OSError) as error:
         raise DemoWaypointMissionError("Telemetry snapshot is unavailable; PX4 home is unknown.") from error
+    if snapshot.captured_at is None:
+        raise DemoWaypointMissionError("Telemetry snapshot has no captured_at; PX4 home freshness is unknown.")
+    captured = datetime.fromisoformat(snapshot.captured_at.replace("Z", "+00:00"))
+    age_s = ((now or datetime.now(UTC)) - captured).total_seconds()
+    # A future timestamp is a broken clock, not freshness.
+    if not -HOME_SNAPSHOT_MAX_AGE_S <= age_s <= HOME_SNAPSHOT_MAX_AGE_S:
+        raise DemoWaypointMissionError(
+            f"Telemetry snapshot is {age_s:.0f} s old (limit {HOME_SNAPSHOT_MAX_AGE_S:g} s); "
+            "the relay is not live, so PX4 home cannot be trusted."
+        )
     home = snapshot.home
     if home is None:
         raise DemoWaypointMissionError(
@@ -92,12 +104,10 @@ def waypoint_commands_from_geographic(
 ) -> list[tuple[float, float, float]]:
     origin = home.as_global()
     commands: list[tuple[float, float, float]] = []
-    for index, item in enumerate(waypoints):
+    for item in waypoints:
         latitude = item["latitude_deg"]
         longitude = item["longitude_deg"]
         altitude = item.get("relative_altitude_m", default_altitude_m)
-        if altitude <= 0 or not isfinite(altitude):
-            raise DemoWaypointMissionError(f"Waypoint {index + 1} altitude must be positive.")
         point = GlobalPosition(latitude_deg=latitude, longitude_deg=longitude, absolute_altitude_m=0.0)
         north_m, east_m = global_position_to_local_offset(origin, point)
         commands.append((north_m, east_m, altitude))
@@ -119,7 +129,9 @@ def _plan_has_map_origin_waypoints(document: dict[str, Any]) -> bool:
     return isinstance(geo_waypoints, list) and len(geo_waypoints) > 0
 
 
-def validate_plan_home_at_execution(plan_path: Path, telemetry_path: Path) -> None:
+def validate_plan_home_at_execution(
+    plan_path: Path, telemetry_path: Path, *, now: datetime | None = None
+) -> None:
     import json
 
     document = json.loads(plan_path.read_text(encoding="utf-8"))
@@ -131,5 +143,5 @@ def validate_plan_home_at_execution(plan_path: Path, telemetry_path: Path) -> No
                 "Map-origin plan is missing map_home; execution refused."
             )
         return
-    current = load_snapshot_home(telemetry_path)
+    current = load_snapshot_home(telemetry_path, now=now)
     assert_home_matches(stored, authority=current)

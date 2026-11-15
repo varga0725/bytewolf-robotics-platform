@@ -1,7 +1,8 @@
 export type GeoPoint = { latitude_deg: number; longitude_deg: number };
 export type LocalOffset = { north_m: number; east_m: number };
 
-const METERS_PER_DEGREE_LAT = 111_320;
+// Must match brain/navigation/waypoints.py (R = 6 371 000 m), which plans the mission.
+const METERS_PER_DEGREE_LAT = (6_371_000 * Math.PI) / 180;
 
 function metersPerDegreeLon(latitude_deg: number): number {
   return METERS_PER_DEGREE_LAT * Math.cos((latitude_deg * Math.PI) / 180);
