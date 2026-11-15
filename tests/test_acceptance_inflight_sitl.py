@@ -80,6 +80,17 @@ class ScenarioStateMachineTests(unittest.TestCase):
         ok, reason = evaluate_datalink_loss_machine(transitions, heartbeat_stopped_at_s=0.0)
         self.assertTrue(ok, reason)
 
+    def test_datalink_loss_passes_live_sitl_reference_timings(self) -> None:
+        """Observed on stock PX4 v1.17 gz_x500: RTL ~17.1 s, disarm ~40.1 s after loss."""
+        transitions = [
+            VehicleTransition(5.0, True, True, "position", relative_altitude_m=18.0),
+            VehicleTransition(17.1, True, True, "return_to_launch", relative_altitude_m=18.0),
+            VehicleTransition(40.0, False, False, "land", relative_altitude_m=0.5),
+            VehicleTransition(40.1, False, False, "land"),
+        ]
+        ok, reason = evaluate_datalink_loss_machine(transitions, heartbeat_stopped_at_s=0.0)
+        self.assertTrue(ok, reason)
+
     def test_geofence_passes_with_breach_signal(self) -> None:
         transitions = [
             VehicleTransition(0.1, False, False, "auto"),

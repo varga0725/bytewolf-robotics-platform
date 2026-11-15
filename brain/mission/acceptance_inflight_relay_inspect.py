@@ -123,18 +123,37 @@ def relay_uses_loopback_udp_only(process: object, *, ingest_port: int) -> bool:
 
     root = psutil.Process(pid)
     processes = [root, *root.children(recursive=True)]
+    return loopback_udp_ingest_from_psutil(
+        [int(item.pid) for item in processes],
+        ingest_port=ingest_port,
+        process_factory=psutil.Process,
+    )
+
+
+def loopback_udp_ingest_from_psutil(
+    pids: list[int],
+    *,
+    ingest_port: int,
+    process_factory: type | None = None,
+) -> bool:
+    """True when a listed PID holds loopback-only UDP ingest on ``ingest_port`` (psutil path)."""
+    import psutil
+
+    factory = process_factory or psutil.Process
     saw_ingest = False
-    for candidate in processes:
+    for pid in pids:
+        candidate = factory(pid)
         for connection in candidate.net_connections(kind="all"):
-            if connection.type == 2 and connection.status == psutil.CONN_LISTEN:
+            sock_type = int(connection.type)
+            if sock_type == 1 and connection.status == psutil.CONN_LISTEN:
                 return False
-            if connection.type != 1:
+            if sock_type not in (1, 2):
                 continue
             host = _psutil_host(connection.laddr)
             if not host or not _is_loopback(host):
                 return False
             port = _psutil_port(connection.laddr)
-            if port == ingest_port:
+            if sock_type == 2 and port == ingest_port:
                 saw_ingest = True
     return saw_ingest
 

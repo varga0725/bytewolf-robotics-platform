@@ -318,7 +318,7 @@ def evaluate_geofence_machine(
     ver_tolerance_m: float = GEOFENCE_VER_TOLERANCE_M,
 ) -> tuple[bool, str | None]:
     if geofence_breach_at_s is None:
-        return False, "No FENCE_STATUS breach was observed."
+        return False, "No geofence breach signal was observed."
     if not _saw_rtl(transitions, after_s=geofence_breach_at_s):
         return False, "Geofence breach did not trigger RTL flight mode."
     peak_hor = max(
@@ -441,6 +441,14 @@ def evaluate_relay_inflight_machine(
             saw_final_false = True
     if not (saw_false and saw_true and saw_final_false):
         return False, "in_air did not transition false→true→false in order."
+    if len(samples) < 3:
+        return False, "Relay samples did not cover takeoff, cruise, and landing."
+    airborne_index = next(i for i, sample in enumerate(samples) if sample.in_air is True)
+    grounded_after = [sample for sample in samples[airborne_index:] if sample.in_air is False]
+    if not grounded_after:
+        return False, "Relay samples did not cover the landing phase."
+    if not any(sample.in_air is False for sample in samples[: airborne_index + 1]):
+        return False, "Relay samples did not cover pre-takeoff ground state."
     return True, None
 
 

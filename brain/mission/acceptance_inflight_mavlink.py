@@ -7,12 +7,18 @@ import time
 from dataclasses import dataclass, field
 from typing import Literal
 
+from brain.mission.acceptance_inflight_px4_mode import px4_flight_mode_from_custom_mode
 from brain.preflight_params.mavlink import MavlinkReadError, normalize_connection_url
+from brain.navigation.relative import horizontal_distance_m
+from brain.navigation.waypoints import GlobalPosition
 
 MAV_CMD_COMPONENT_ARM_DISARM = 400
 EMERGENCY_DISARM_MAGIC = 21196
 MAV_RESULT_DENIED = 2
 MAV_RESULT_FAILED = 4
+
+# Mirrors GF_MAX_HOR_DIST_M in acceptance_inflight_sitl (avoid import cycle).
+_GEOFENCE_HOR_BREACH_M = 100.0
 
 DisarmOutcome = Literal["denied", "accepted", "no_ack"]
 
@@ -245,6 +251,8 @@ class MavlinkSample:
     in_air: bool | None = None
     flight_mode: str | None = None
     battery_percent: float | None = None
+    relative_altitude_m: float | None = None
+    horizontal_distance_from_home_m: float | None = None
     geofence_breach: bool | None = None
     statustext: str | None = None
 
@@ -255,6 +263,7 @@ class MavlinkTelemetryPoller:
 
     connection_url: str
     origin_s: float = field(default_factory=time.monotonic)
+    home: GlobalPosition | None = None
     samples: list[MavlinkSample] = field(default_factory=list)
     geofence_breach_at_s: float | None = None
     _stop: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -284,13 +293,7 @@ class MavlinkTelemetryPoller:
         from pymavlink import mavutil
 
         assert self._mavlink is not None
-        mode_map = {
-            0: "manual",
-            4: "guided",
-            5: "auto",
-            6: "rtl",
-            20: "mission",
-        }
+        last_position: GlobalPosition | None = None
         while not self._stop.is_set():
             message = self._mavlink.recv_match(blocking=True, timeout=0.5)
             if message is None:
@@ -300,9 +303,20 @@ class MavlinkTelemetryPoller:
             if message_type == "HEARTBEAT":
                 custom = int(message.custom_mode)
                 sample.armed = bool(message.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-                sample.flight_mode = mode_map.get(custom, f"custom_{custom}")
-                if sample.flight_mode == "rtl" or "rtl" in (sample.flight_mode or ""):
-                    sample.flight_mode = "return_to_launch"
+                sample.flight_mode = px4_flight_mode_from_custom_mode(custom)
+                if last_position is not None and self.home is not None:
+                    sample.horizontal_distance_from_home_m = horizontal_distance_m(self.home, last_position)
+                if sample.relative_altitude_m is None and last_position is not None and self.home is not None:
+                    sample.relative_altitude_m = last_position.absolute_altitude_m - self.home.absolute_altitude_m
+            elif message_type == "GLOBAL_POSITION_INT":
+                latitude_deg = int(message.lat) / 1.0e7
+                longitude_deg = int(message.lon) / 1.0e7
+                absolute_altitude_m = int(message.alt) / 1000.0
+                relative_altitude_m = int(message.relative_alt) / 1000.0
+                last_position = GlobalPosition(latitude_deg, longitude_deg, absolute_altitude_m)
+                sample.relative_altitude_m = relative_altitude_m
+                if self.home is not None:
+                    sample.horizontal_distance_from_home_m = horizontal_distance_m(self.home, last_position)
             elif message_type == "EXTENDED_SYS_STATE":
                 landed = int(message.landed_state)
                 sample.in_air = landed in {2, 3, 4}
@@ -316,11 +330,22 @@ class MavlinkTelemetryPoller:
                     sample.battery_percent = float(remaining)
             elif message_type == "STATUSTEXT":
                 sample.statustext = str(message.text).strip("\x00")
-            elif message_type == "FENCE_STATUS":
-                breached = int(message.breach_status) != 0
-                sample.geofence_breach = breached
             else:
                 continue
-            if sample.geofence_breach and self.geofence_breach_at_s is None:
-                self.geofence_breach_at_s = sample.monotonic_s
+            self._maybe_mark_geofence_breach(sample)
             self.samples.append(sample)
+
+    def _maybe_mark_geofence_breach(self, sample: MavlinkSample) -> None:
+        if self.geofence_breach_at_s is not None:
+            return
+        text = (sample.statustext or "").lower()
+        if "geofence" in text:
+            sample.geofence_breach = True
+            self.geofence_breach_at_s = sample.monotonic_s
+            return
+        hor = sample.horizontal_distance_from_home_m
+        mode = (sample.flight_mode or "").lower()
+        fence_mode = mode in {"return_to_launch", "loiter", "land", "position", "hold"}
+        if hor is not None and hor >= _GEOFENCE_HOR_BREACH_M - 1.0 and fence_mode:
+            sample.geofence_breach = True
+            self.geofence_breach_at_s = sample.monotonic_s

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import unittest
 
+from unittest import mock
+
 from brain.mission.acceptance_inflight_relay_inspect import (
     loopback_udp_ingest_from_proc,
+    loopback_udp_ingest_from_psutil,
     parse_proc_udp_sockets,
 )
 
@@ -61,6 +64,28 @@ class RelayProcUdpTests(unittest.TestCase):
                 fd_entries_by_pid={4242: fd},
             )
         )
+
+
+class RelayPsutilUdpTests(unittest.TestCase):
+    def test_udp_ingest_on_loopback_passes(self) -> None:
+        conn = mock.Mock(type=2, status="NONE", laddr=("127.0.0.1", 14550))
+        process = mock.Mock()
+        process.net_connections.return_value = [conn]
+        with mock.patch(
+            "brain.mission.acceptance_inflight_relay_inspect.psutil.Process",
+            return_value=process,
+        ):
+            self.assertTrue(loopback_udp_ingest_from_psutil([4242], ingest_port=14550))
+
+    def test_tcp_listen_fails(self) -> None:
+        conn = mock.Mock(type=1, status="LISTEN", laddr=("127.0.0.1", 8080))
+        process = mock.Mock()
+        process.net_connections.return_value = [conn]
+        with mock.patch(
+            "brain.mission.acceptance_inflight_relay_inspect.psutil.Process",
+            return_value=process,
+        ):
+            self.assertFalse(loopback_udp_ingest_from_psutil([4242], ingest_port=14550))
 
 
 if __name__ == "__main__":

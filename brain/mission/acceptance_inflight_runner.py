@@ -70,6 +70,8 @@ GEOFENCE_INSIDE_GOTO_M = 92.0
 GEOFENCE_PUSH_SPEED_M_S = 4.0
 GEOFENCE_PUSH_DURATION_S = 18.0
 GEOFENCE_BREACH_POLL_S = 25.0
+RELAY_SNAPSHOT_READY_TIMEOUT_S = 20.0
+INVALID_RELAY_SNAPSHOT_AGE_S = 900.0
 
 
 def _commit_scenario_progress(
@@ -307,7 +309,13 @@ async def _safe_recover_vehicle(
             pass
 
 
-async def _push_north_past_geofence(adapter: MavsdkMissionAdapter, *, duration_s: float, speed_m_s: float) -> None:
+async def _push_north_past_geofence(
+    adapter: MavsdkMissionAdapter,
+    *,
+    duration_s: float,
+    speed_m_s: float,
+    stop_offboard_after: bool = True,
+) -> None:
     from mavsdk.offboard import VelocityBodyYawspeed
 
     drone = adapter._drone
@@ -316,7 +324,8 @@ async def _push_north_past_geofence(adapter: MavsdkMissionAdapter, *, duration_s
     try:
         await asyncio.sleep(duration_s)
     finally:
-        await drone.offboard.stop()
+        if stop_offboard_after:
+            await drone.offboard.stop()
 
 
 async def run_datalink_loss_scenario(
@@ -342,12 +351,15 @@ async def run_datalink_loss_scenario(
         await _takeoff_to_altitude(adapter, altitude_m=TAKEOFF_ALTITUDE_M, action_timeout_s=action_timeout_s)
         takeoff_complete_s = recorder._elapsed()
         gcs.stop()
+        heartbeat_stop_s = recorder._elapsed()
         await recorder.stop()
+        pre_loss_transitions = list(recorder.transitions)
         loss_origin = time.monotonic()
         extra["heartbeat_stopped_at_s"] = 0.0
         stop_owned_mavsdk_server(system)
         poller = MavlinkTelemetryPoller(mavlink_endpoint)
         poller.origin_s = loss_origin
+        poller.home = home
         poller.start()
         deadline = DATALINK_LANDED_MAX_AFTER_STOP_S
         while time.monotonic() - loss_origin < deadline:
@@ -356,7 +368,8 @@ async def run_datalink_loss_scenario(
                 break
         timings["landed_disarmed_s"] = time.monotonic() - loss_origin
         timings["takeoff_complete_s"] = takeoff_complete_s
-        transitions = _mavlink_to_transitions(poller.samples)
+        post_transitions = _mavlink_to_transitions(poller.samples)
+        transitions = _merge_pre_post_transitions(pre_loss_transitions, post_transitions, heartbeat_stop_s)
         extra["datalink_pass_complete"] = _mavlink_samples_landed_disarmed(poller.samples, after_s=0.0)
     finally:
         if poller is not None:
@@ -380,21 +393,48 @@ def _mavlink_to_transitions(samples: list[MavlinkSample]) -> list[VehicleTransit
             in_air=sample.in_air,
             flight_mode=sample.flight_mode,
             battery_percent=sample.battery_percent,
+            relative_altitude_m=sample.relative_altitude_m,
+            horizontal_distance_from_home_m=sample.horizontal_distance_from_home_m,
         )
         for sample in samples
     ]
 
 
+def _merge_pre_post_transitions(
+    pre: list[VehicleTransition],
+    post: list[VehicleTransition],
+    heartbeat_stop_s: float,
+) -> list[VehicleTransition]:
+    merged: list[VehicleTransition] = []
+    for item in pre:
+        merged.append(
+            VehicleTransition(
+                monotonic_s=item.monotonic_s - heartbeat_stop_s,
+                armed=item.armed,
+                in_air=item.in_air,
+                flight_mode=item.flight_mode,
+                battery_percent=item.battery_percent,
+                relative_altitude_m=item.relative_altitude_m,
+                horizontal_distance_from_home_m=item.horizontal_distance_from_home_m,
+            )
+        )
+    merged.extend(post)
+    merged.sort(key=lambda row: row.monotonic_s)
+    return merged
+
+
 def _mavlink_samples_landed_disarmed(samples: list[MavlinkSample], *, after_s: float) -> bool:
-    saw_not_in_air = False
-    for sample in samples:
-        if sample.monotonic_s < after_s:
-            continue
-        if sample.in_air is False:
-            saw_not_in_air = True
-        if saw_not_in_air and sample.armed is False:
-            return True
-    return False
+    interim = [
+        VehicleTransition(
+            sample.monotonic_s,
+            sample.armed,
+            sample.in_air,
+            sample.flight_mode,
+            battery_percent=sample.battery_percent,
+        )
+        for sample in samples
+    ]
+    return _saw_landed_disarmed(interim, after_s=after_s)
 
 
 async def run_geofence_scenario(
@@ -411,6 +451,7 @@ async def run_geofence_scenario(
     try:
         home = await adapter._global_position_sample("home")
         recorder.home = home
+        poller.home = home
         await recorder.start()
         await _takeoff_to_altitude(adapter, altitude_m=15.0, action_timeout_s=action_timeout_s)
         inside = WaypointCommand(north_m=GEOFENCE_INSIDE_GOTO_M, east_m=0.0, target_altitude_m=15.0)
@@ -424,6 +465,7 @@ async def run_geofence_scenario(
             adapter,
             duration_s=GEOFENCE_PUSH_DURATION_S,
             speed_m_s=GEOFENCE_PUSH_SPEED_M_S,
+            stop_offboard_after=False,
         )
         timings["velocity_push_end_s"] = recorder._elapsed()
         push_end = recorder._elapsed()
@@ -566,13 +608,16 @@ async def run_relay_inflight_scenario(
     extra: dict[str, Any] = {"relay_max_age_s": relay_max_age_s}
     origin = time.monotonic()
     try:
-        await asyncio.sleep(0.5)
-        relay_samples.append(_read_relay_sample(snapshot_path, origin))
-        await asyncio.sleep(1.0)
+        await _await_relay_snapshot_ready(
+            snapshot_path,
+            origin,
+            max_age_s=relay_max_age_s,
+            timeout_s=RELAY_SNAPSHOT_READY_TIMEOUT_S,
+        )
         loopback_ok = relay_uses_loopback_udp_only(proc, ingest_port=ingest_port)
         extra["relay_loopback_udp_only"] = loopback_ok
         extra["relay_loopback_check_performed"] = True
-        relay_samples.append(_read_relay_sample(snapshot_path, origin))
+        _append_relay_sample(relay_samples, snapshot_path, origin, max_age_s=relay_max_age_s)
         home = await adapter._global_position_sample("home")
         recorder.home = home
         await recorder.start()
@@ -581,16 +626,18 @@ async def run_relay_inflight_scenario(
         timings["takeoff_complete_s"] = takeoff_complete_s
         hover_deadline = time.monotonic() + 10.0
         while time.monotonic() < hover_deadline:
-            relay_samples.append(_read_relay_sample(snapshot_path, origin))
+            _append_relay_sample(relay_samples, snapshot_path, origin, max_age_s=relay_max_age_s)
             await asyncio.sleep(0.4)
         drone = adapter._drone
         await asyncio.wait_for(drone.action.land(), timeout=action_timeout_s)
-        while time.monotonic() < origin + 25.0:
-            relay_samples.append(_read_relay_sample(snapshot_path, origin))
+        landed_deadline = time.monotonic() + LANDING_TIMEOUT_S
+        while time.monotonic() < landed_deadline:
+            _append_relay_sample(relay_samples, snapshot_path, origin, max_age_s=relay_max_age_s)
             await asyncio.sleep(0.4)
             if _saw_landed_disarmed_from_transitions(recorder.transitions, after_s=takeoff_complete_s):
                 break
         await _wait_landed_disarmed(adapter, landing_timeout_s=LANDING_TIMEOUT_S, action_timeout_s=action_timeout_s)
+        _append_relay_sample(relay_samples, snapshot_path, origin, max_age_s=relay_max_age_s)
         timings["flight_complete_s"] = time.monotonic() - origin
     finally:
         await recorder.stop()
@@ -610,9 +657,43 @@ async def run_relay_inflight_scenario(
     return recorder.transitions, timings, extra, relay_samples
 
 
+async def _await_relay_snapshot_ready(
+    snapshot_path: Path,
+    origin_s: float,
+    *,
+    max_age_s: float,
+    timeout_s: float,
+) -> RelaySample:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        sample = _read_relay_sample(snapshot_path, origin_s)
+        if sample.captured_at_age_s < max_age_s:
+            return sample
+        await asyncio.sleep(0.3)
+    raise RuntimeError(
+        f"Relay snapshot did not become valid within {timeout_s:.0f} s "
+        f"(need captured_at age < {max_age_s} s)."
+    )
+
+
+def _append_relay_sample(
+    relay_samples: list[RelaySample],
+    snapshot_path: Path,
+    origin_s: float,
+    *,
+    max_age_s: float,
+) -> None:
+    sample = _read_relay_sample(snapshot_path, origin_s)
+    if sample.captured_at_age_s >= INVALID_RELAY_SNAPSHOT_AGE_S:
+        return
+    if sample.captured_at_age_s >= max_age_s:
+        return
+    relay_samples.append(sample)
+
+
 def _read_relay_sample(snapshot_path: Path, origin_s: float) -> RelaySample:
     in_air: bool | None = None
-    age_s = 999.0
+    age_s = INVALID_RELAY_SNAPSHOT_AGE_S
     if snapshot_path.is_file():
         try:
             payload = json.loads(snapshot_path.read_text(encoding="utf-8"))

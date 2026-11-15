@@ -76,10 +76,14 @@ Manual apply (with SITL already running):
 After headless or GUI SITL is running with the profile **applied**, run the
 selectable scenario harness:
 
-```bash
-export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
-export PX4_RUN_DIR=/path/to/px4-sitl-run   # must contain sitl-failsafe-profile.status
+Set `PX4_RUN_DIR` to the disposable run directory that contains
+`sitl-failsafe-profile.status`. Only enable mission execution for the one harness
+invocation (do not `export` it into the shell — a forgotten global would weaken
+the execution gate for later commands in the same terminal):
 
+```bash
+PX4_RUN_DIR=/path/to/px4-sitl-run \
+BYTEWOLF_MISSION_EXECUTION_ENABLED=true \
 .venv/bin/python -m brain.cli.acceptance_inflight_sitl --scenario all
 ```
 
@@ -112,7 +116,7 @@ Unit tests (no network):
 Opt-in live relay scenario (requires SITL URL and applied profile):
 
 ```bash
-export BYTEWOLF_SITL_CONNECTION=udpin://127.0.0.1:14540
-export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
+BYTEWOLF_SITL_CONNECTION=udpin://127.0.0.1:14540 \
+BYTEWOLF_MISSION_EXECUTION_ENABLED=true \
 .venv/bin/python -m unittest tests.test_acceptance_inflight_sitl.AcceptanceInflightSitlLiveTests -v
 ```

@@ -102,9 +102,21 @@ def main(arguments: Sequence[str] | None = None) -> None:
 
 
 def _allowed_lease_holders(arguments: argparse.Namespace) -> frozenset[int]:
+    import os
+
     raw = arguments.allow_link_lease_holder_pid
     if not raw:
         return frozenset()
+    parent = os.getppid()
+    for item in raw:
+        pid = int(item)
+        if pid not in {parent, os.getpid()}:
+            print(
+                f"Rejected --allow-link-lease-holder-pid {pid}: "
+                f"only the parent process ({parent}) may coordinate this lease.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
     return frozenset(int(item) for item in raw)
 
 
