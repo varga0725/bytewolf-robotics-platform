@@ -24,7 +24,12 @@ def default_demo_waypoint_plan_path(mission_id: str) -> Path:
 
 
 def write_reviewed_demo_waypoint_plan(
-    path: Path, config: DemoWaypointMissionConfig, *, mission_id: str | None = None
+    path: Path,
+    config: DemoWaypointMissionConfig,
+    *,
+    mission_id: str | None = None,
+    map_home: dict[str, object] | None = None,
+    geo_waypoints: list[dict[str, object]] | None = None,
 ) -> str:
     mission_id = mission_id or str(uuid4())
     document = {
@@ -51,6 +56,10 @@ def write_reviewed_demo_waypoint_plan(
         "rtl_timeout_s": config.rtl_timeout_s,
         "mission_items_preview": mission_items_document(config),
     }
+    if map_home is not None:
+        document["map_home"] = map_home
+    if geo_waypoints is not None:
+        document["geo_waypoints"] = geo_waypoints
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(document, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     approval = {

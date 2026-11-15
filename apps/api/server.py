@@ -351,9 +351,10 @@ def create_app(
             """Review the multi-waypoint demo and offer it for explicit approval (no flight)."""
             session = _session(x_bytewolf_session)
             try:
-                if isinstance(request, dict) and request.get("waypoints"):
+                if isinstance(request, dict) and "waypoints" in request:
                     mission = review_demo_waypoint_mission_from_map(
-                        DemoWaypointMissionMapRequest.from_dict(request, default_altitude_m=8.0)
+                        DemoWaypointMissionMapRequest.from_dict(request, default_altitude_m=8.0),
+                        telemetry_path=telemetry_path,
                     )
                 else:
                     mission = review_demo_waypoint_mission()

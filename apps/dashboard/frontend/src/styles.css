@@ -501,6 +501,8 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .control-room-map-waypoint-icon { background: transparent; border: 0; }
 .control-room-map-waypoint { width: 24px; height: 24px; display: grid; place-items: center; border: 2px solid var(--color-surface-input); border-radius: 50%; background: var(--color-map-target); color: var(--color-surface-inset); font: 700 12px var(--mono); box-shadow: 0 0 8px rgba(243, 189, 86, .45); }
 .map-waypoint-list { display: grid; gap: 6px; margin: 10px 0 0; padding-left: 1.2rem; color: var(--color-text-data); font-family: var(--mono); font-size: .82rem; }
+.map-waypoint-list li { display: flex; align-items: center; gap: 0.5rem; }
+.map-waypoint-remove { margin-left: auto; border: 1px solid rgba(255, 255, 255, .2); background: transparent; color: inherit; width: 1.75rem; height: 1.75rem; border-radius: 4px; cursor: pointer; }
 /* Present for a screen reader, absent for the eye: the fieldset needs a name,
    and the three visible buttons already say what it is. */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

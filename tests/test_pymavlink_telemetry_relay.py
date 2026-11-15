@@ -62,9 +62,16 @@ class PymavlinkMappingTests(unittest.TestCase):
             observed_at=now,
         )
 
+        state = apply_mavlink_message(
+            state,
+            _Message("HOME_POSITION", latitude=474000000, longitude=190500000, altitude=500),
+            observed_at=now,
+        )
         document = state.as_dashboard_document(now)
 
         self.assertEqual(document["source"], "pymavlink")
+        self.assertIn("home", document)
+        self.assertAlmostEqual(document["home"]["latitude_deg"], 47.4)
         self.assertAlmostEqual(document["position"]["latitude_deg"], 47.4)
         self.assertAlmostEqual(document["battery"]["remaining_percent"], 88.0)
         self.assertEqual(document["battery"]["observed_at"], "2026-07-22T09:00:00Z")

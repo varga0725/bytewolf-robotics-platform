@@ -25,6 +25,14 @@ class Position:
 
 
 @dataclass(frozen=True)
+class HomePosition:
+    latitude_deg: float
+    longitude_deg: float
+    absolute_altitude_m: float
+    captured_at: str
+
+
+@dataclass(frozen=True)
 class TelemetrySnapshot:
     position: Position | None
     battery_percent: float | None
@@ -46,6 +54,7 @@ class TelemetrySnapshot:
     battery_observed_at: str | None = None
     in_air_observed_at: str | None = None
     target_class: TargetVerdict = "unknown"
+    home: HomePosition | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -78,6 +87,13 @@ class TelemetrySnapshot:
         for key, value in optional.items():
             if value is not None:
                 payload[key] = value
+        if self.home is not None:
+            payload["home"] = {
+                "latitude_deg": self.home.latitude_deg,
+                "longitude_deg": self.home.longitude_deg,
+                "absolute_altitude_m": self.home.absolute_altitude_m,
+                "captured_at": self.home.captured_at,
+            }
         return payload
 
 
@@ -125,6 +141,7 @@ def _snapshot_from_telemetry_dict(telemetry: dict[str, Any]) -> TelemetrySnapsho
     flight_mode = _optional_string(telemetry.get("flight_mode"), "flight_mode")
     autopilot = _optional_string(telemetry.get("autopilot"), "autopilot")
     sysid = _optional_sysid(telemetry.get("sysid"))
+    home = _parse_home(telemetry.get("home"))
     return TelemetrySnapshot(
         position,
         battery_percent,
@@ -144,7 +161,29 @@ def _snapshot_from_telemetry_dict(telemetry: dict[str, Any]) -> TelemetrySnapsho
         battery_observed_at=_optional_battery_observed_at(telemetry.get("battery")),
         in_air_observed_at=_optional_observed_at(telemetry.get("in_air_observed_at")),
         target_class=classify_telemetry_document(telemetry),
+        home=home,
     )
+
+
+def _parse_home(value: Any) -> HomePosition | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TelemetryFormatError("home must be an object when present.")
+    return HomePosition(
+        latitude_deg=_required_bounded_number(value, "latitude_deg", minimum=-90.0, maximum=90.0),
+        longitude_deg=_required_bounded_number(value, "longitude_deg", minimum=-180.0, maximum=180.0),
+        absolute_altitude_m=_required_number(value, "absolute_altitude_m"),
+        captured_at=_required_iso_timestamp(value, "captured_at"),
+    )
+
+
+def _required_iso_timestamp(document: dict[str, Any], field: str) -> str:
+    raw = document.get(field)
+    if not isinstance(raw, str) or not raw.strip():
+        raise TelemetryFormatError(f"home.{field} is required when home is present.")
+    _validate_capture_time(raw.strip())
+    return raw.strip()
 
 
 def _optional_string(value: Any, field: str) -> str | None:

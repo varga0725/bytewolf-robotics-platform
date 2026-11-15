@@ -7,6 +7,12 @@ from math import isfinite
 from pathlib import Path
 from uuid import uuid4
 
+from apps.api.map_mission_home import (
+    assert_home_matches,
+    load_snapshot_home,
+    parse_map_home_reference,
+    waypoint_commands_from_geographic,
+)
 from brain.mission.demo_errors import DemoWaypointMissionError
 from brain.mission.commands import WaypointCommand
 from brain.mission.demo_waypoint_mission import (
@@ -29,8 +35,8 @@ MAX_MAP_WAYPOINTS = 11
 
 @dataclass(frozen=True)
 class MapWaypointInput:
-    north_m: float
-    east_m: float
+    latitude_deg: float
+    longitude_deg: float
     relative_altitude_m: float | None = None
 
 
@@ -38,6 +44,7 @@ class MapWaypointInput:
 class DemoWaypointMissionMapRequest:
     takeoff_altitude_m: float
     waypoints: tuple[MapWaypointInput, ...]
+    home: dict[str, object]
     goal: str = ""
 
     @staticmethod
@@ -46,23 +53,32 @@ class DemoWaypointMissionMapRequest:
         if not isinstance(takeoff_raw, (int, float)) or not isfinite(float(takeoff_raw)) or float(takeoff_raw) <= 0:
             raise DemoWaypointMissionError("takeoff_altitude_m must be a positive finite number.")
         raw_points = document.get("waypoints")
-        if not isinstance(raw_points, list) or not raw_points:
+        if not isinstance(raw_points, list):
+            raise DemoWaypointMissionError("waypoints must be a JSON array.")
+        if len(raw_points) == 0:
             raise DemoWaypointMissionError("At least one waypoint is required.")
         if len(raw_points) > MAX_MAP_WAYPOINTS:
             raise DemoWaypointMissionError(f"At most {MAX_MAP_WAYPOINTS} waypoints are supported.")
+        home_raw = document.get("home")
+        if not isinstance(home_raw, dict):
+            raise DemoWaypointMissionError("A PX4 home reference is required for map waypoints.")
         parsed: list[MapWaypointInput] = []
         for index, item in enumerate(raw_points):
             if not isinstance(item, dict):
                 raise DemoWaypointMissionError(f"Waypoint {index + 1} must be an object.")
-            north = item.get("north_m")
-            east = item.get("east_m")
+            latitude = item.get("latitude_deg")
+            longitude = item.get("longitude_deg")
             altitude = item.get("relative_altitude_m", float(takeoff_raw))
-            if not all(isinstance(value, (int, float)) and isfinite(float(value)) for value in (north, east, altitude)):
-                raise DemoWaypointMissionError(f"Waypoint {index + 1} coordinates must be finite numbers.")
-            if float(altitude) <= 0:
+            if not all(isinstance(value, (int, float)) and isfinite(float(value)) for value in (latitude, longitude)):
+                raise DemoWaypointMissionError(f"Waypoint {index + 1} must include finite latitude_deg and longitude_deg.")
+            if not isinstance(altitude, (int, float)) or not isfinite(float(altitude)) or float(altitude) <= 0:
                 raise DemoWaypointMissionError(f"Waypoint {index + 1} altitude must be positive.")
             parsed.append(
-                MapWaypointInput(north_m=float(north), east_m=float(east), relative_altitude_m=float(altitude))
+                MapWaypointInput(
+                    latitude_deg=float(latitude),
+                    longitude_deg=float(longitude),
+                    relative_altitude_m=float(altitude),
+                )
             )
         goal = document.get("goal", "")
         if goal is not None and not isinstance(goal, str):
@@ -73,6 +89,7 @@ class DemoWaypointMissionMapRequest:
         return DemoWaypointMissionMapRequest(
             takeoff_altitude_m=float(takeoff_raw),
             waypoints=tuple(parsed),
+            home=home_raw,
             goal=goal_text,
         )
 
@@ -129,16 +146,34 @@ def review_demo_waypoint_mission() -> DemoWaypointMissionReview:
     )
 
 
-def review_demo_waypoint_mission_from_map(request: DemoWaypointMissionMapRequest) -> DemoWaypointMissionReview:
-    profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
-    commands = tuple(
-        WaypointCommand(
-            north_m=item.north_m,
-            east_m=item.east_m,
-            target_altitude_m=item.relative_altitude_m or request.takeoff_altitude_m,
-        )
+def review_demo_waypoint_mission_from_map(
+    request: DemoWaypointMissionMapRequest,
+    *,
+    telemetry_path: Path,
+) -> DemoWaypointMissionReview:
+    proposed_home = parse_map_home_reference({"home": request.home})
+    authority_home = load_snapshot_home(telemetry_path)
+    assert_home_matches(proposed_home, authority=authority_home)
+
+    waypoint_docs = tuple(
+        {
+            "latitude_deg": item.latitude_deg,
+            "longitude_deg": item.longitude_deg,
+            "relative_altitude_m": item.relative_altitude_m or request.takeoff_altitude_m,
+        }
         for item in request.waypoints
     )
+    converted = waypoint_commands_from_geographic(
+        home=authority_home,
+        waypoints=waypoint_docs,
+        default_altitude_m=request.takeoff_altitude_m,
+    )
+    commands = tuple(
+        WaypointCommand(north_m, east_m, target_altitude_m=altitude_m)
+        for north_m, east_m, altitude_m in converted
+    )
+
+    profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
     config = demo_waypoint_config_from_map(
         takeoff_altitude_m=request.takeoff_altitude_m,
         waypoints=commands,
@@ -151,7 +186,27 @@ def review_demo_waypoint_mission_from_map(request: DemoWaypointMissionMapRequest
         raise DemoWaypointMissionError(str(error)) from error
     mission_id = str(uuid4())
     plan_path = default_demo_waypoint_plan_path(mission_id)
-    write_reviewed_demo_waypoint_plan(plan_path, config, mission_id=mission_id)
+    map_home_document = {
+        "latitude_deg": authority_home.latitude_deg,
+        "longitude_deg": authority_home.longitude_deg,
+        "absolute_altitude_m": authority_home.absolute_altitude_m,
+        "captured_at": authority_home.captured_at,
+    }
+    geo_waypoints = [
+        {
+            "latitude_deg": item.latitude_deg,
+            "longitude_deg": item.longitude_deg,
+            "relative_altitude_m": item.relative_altitude_m or request.takeoff_altitude_m,
+        }
+        for item in request.waypoints
+    ]
+    write_reviewed_demo_waypoint_plan(
+        plan_path,
+        config,
+        mission_id=mission_id,
+        map_home=map_home_document,
+        geo_waypoints=geo_waypoints,
+    )
     summary = (
         f"Többpontos terv: fel {config.takeoff_altitude_m:g} m, "
         f"{len(config.waypoints)} waypoint, RTL és leszállás."

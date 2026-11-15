@@ -3,8 +3,14 @@ import { telemetryConnection, type TelemetryConnection } from "./telemetry";
 
 export type MapPosition = { latitude_deg: number; longitude_deg: number };
 
+export type MapHomePosition = MapPosition & {
+  absolute_altitude_m: number;
+  captured_at: string;
+};
+
 export type MapTelemetrySample = {
   position: MapPosition | null;
+  home: MapHomePosition | null;
   heading_deg: number | null;
   captured_at: string | null;
   target_class: TargetClass | null;
@@ -22,9 +28,27 @@ function finiteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function parseHome(value: unknown): MapHomePosition | null {
+  if (!isRecord(value)) return null;
+  if (
+    !finiteNumber(value.latitude_deg)
+    || !finiteNumber(value.longitude_deg)
+    || !finiteNumber(value.absolute_altitude_m)
+    || typeof value.captured_at !== "string"
+  ) {
+    return null;
+  }
+  return {
+    latitude_deg: value.latitude_deg,
+    longitude_deg: value.longitude_deg,
+    absolute_altitude_m: value.absolute_altitude_m,
+    captured_at: value.captured_at,
+  };
+}
+
 export function parseMapTelemetry(value: unknown): MapTelemetrySample {
   if (!isRecord(value)) {
-    return { position: null, heading_deg: null, captured_at: null, target_class: null };
+    return { position: null, home: null, heading_deg: null, captured_at: null, target_class: null };
   }
   const positionRaw = value.position;
   let position: MapPosition | null = null;
@@ -40,6 +64,7 @@ export function parseMapTelemetry(value: unknown): MapTelemetrySample {
   const captured_at = typeof value.captured_at === "string" ? value.captured_at : null;
   return {
     position,
+    home: parseHome(value.home),
     heading_deg,
     captured_at,
     target_class: parseTargetClass(value.target_class),
@@ -48,6 +73,10 @@ export function parseMapTelemetry(value: unknown): MapTelemetrySample {
 
 export function mapTelemetryConnection(sample: MapTelemetrySample, now: Date = new Date()): TelemetryConnection {
   return telemetryConnection(sample.captured_at, now);
+}
+
+export function mapHomeAnchor(sample: MapTelemetrySample): MapHomePosition | null {
+  return sample.home;
 }
 
 export function appendTrackPoint(
@@ -70,16 +99,4 @@ export function appendTrackPoint(
     return track;
   }
   return [...track, next].slice(-MAP_TRACK_LIMIT);
-}
-
-export function chooseHomeAnchor(
-  anchor: MapPosition | null,
-  sample: MapTelemetrySample,
-  connection: TelemetryConnection,
-): MapPosition | null {
-  if (anchor !== null) return anchor;
-  if (connection.state === "ready" && sample.position !== null) {
-    return sample.position;
-  }
-  return null;
 }

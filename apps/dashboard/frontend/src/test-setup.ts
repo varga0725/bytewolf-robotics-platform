@@ -41,6 +41,7 @@ vi.mock("leaflet", () => {
       marker: vi.fn(() => new FakeLayer()),
       polyline: vi.fn(() => new FakeLayer()),
       layerGroup: vi.fn(() => new FakeLayer()),
+      circle: vi.fn(() => new FakeLayer()),
       divIcon: vi.fn((options: { html: string }) => options),
       latLng: (lat: number, lng: number) => ({ lat, lng }),
     },

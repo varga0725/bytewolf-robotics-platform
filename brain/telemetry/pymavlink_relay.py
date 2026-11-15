@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from math import degrees, isfinite
 from pathlib import Path
 import time
+from dataclasses import replace
 from typing import Callable
 
 from brain.mission.acceptance_inflight_px4_mode import px4_flight_mode_from_custom_mode
@@ -17,7 +18,7 @@ from brain.telemetry.domain import (
     SupplementalTelemetryEvent,
 )
 from brain.telemetry.link_lease import link_is_leased
-from brain.telemetry.mavsdk_relay import DashboardTelemetryState, write_atomic_json
+from brain.telemetry.mavsdk_relay import DashboardHomePosition, DashboardTelemetryState, write_atomic_json
 
 
 _TOPIC_POSITION = "telemetry/position"
@@ -135,6 +136,20 @@ def apply_mavlink_message(
             observed_at=timestamp,
         )
         return state.with_event(event)
+
+    if message_type == "HOME_POSITION":
+        latitude_deg = message.latitude / 1.0e7
+        longitude_deg = message.longitude / 1.0e7
+        absolute_altitude_m = message.altitude / 1000.0
+        if not all(isfinite(value) for value in (latitude_deg, longitude_deg, absolute_altitude_m)):
+            return state
+        home = DashboardHomePosition(
+            latitude_deg=latitude_deg,
+            longitude_deg=longitude_deg,
+            absolute_altitude_m=absolute_altitude_m,
+            observed_at=timestamp,
+        )
+        return replace(state, home=home)
 
     if message_type == "HEARTBEAT":
         return _apply_vehicle_heartbeat(state, message, timestamp)

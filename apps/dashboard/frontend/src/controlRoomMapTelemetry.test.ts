@@ -2,21 +2,28 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   appendTrackPoint,
-  chooseHomeAnchor,
+  mapHomeAnchor,
   mapTelemetryConnection,
   parseMapTelemetry,
 } from "./controlRoomMapTelemetry";
 
 describe("controlRoomMapTelemetry", () => {
-  it("parses heading, position and target_class from telemetry", () => {
+  it("parses heading, position, home and target_class from telemetry", () => {
     const sample = parseMapTelemetry({
       captured_at: "2026-11-15T10:00:00.000Z",
       heading_deg: 271.25,
       target_class: "sitl_verified",
       position: { latitude_deg: 37.416, longitude_deg: -122.049, absolute_altitude_m: 12, relative_altitude_m: 2 },
+      home: {
+        latitude_deg: 37.415,
+        longitude_deg: -122.048,
+        absolute_altitude_m: 0,
+        captured_at: "2026-11-15T10:00:00.000Z",
+      },
     });
     expect(sample.heading_deg).toBeCloseTo(271.25);
     expect(sample.position?.latitude_deg).toBe(37.416);
+    expect(sample.home?.latitude_deg).toBe(37.415);
     expect(sample.target_class).toBe("sitl_verified");
   });
 
@@ -33,12 +40,18 @@ describe("controlRoomMapTelemetry", () => {
     vi.useRealTimers();
   });
 
-  it("anchors home on the first ready fix", () => {
+  it("anchors planning on snapshot.home only", () => {
     const sample = parseMapTelemetry({
       captured_at: new Date().toISOString(),
       position: { latitude_deg: 37.416, longitude_deg: -122.049, absolute_altitude_m: 1, relative_altitude_m: 1 },
+      home: {
+        latitude_deg: 37.415,
+        longitude_deg: -122.048,
+        absolute_altitude_m: 0,
+        captured_at: "2026-11-15T10:00:00.000Z",
+      },
     });
-    const connection = mapTelemetryConnection(sample);
-    expect(chooseHomeAnchor(null, sample, connection)?.latitude_deg).toBe(37.416);
+    expect(mapHomeAnchor(sample)?.latitude_deg).toBe(37.415);
+    expect(mapHomeAnchor(parseMapTelemetry({ position: sample.position }))).toBeNull();
   });
 });

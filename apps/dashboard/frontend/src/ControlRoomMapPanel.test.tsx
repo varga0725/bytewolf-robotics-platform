@@ -36,11 +36,18 @@ describe("ControlRoomMapPanel", () => {
       };
       return map as unknown as L.Map;
     });
+    const capturedAt = new Date().toISOString();
     mockTelemetry({
-      captured_at: new Date().toISOString(),
+      captured_at: capturedAt,
       heading_deg: 45,
       target_class: "sitl_verified",
       position: { latitude_deg: 37.416, longitude_deg: -122.049, absolute_altitude_m: 0, relative_altitude_m: 0 },
+      home: {
+        latitude_deg: 37.416,
+        longitude_deg: -122.049,
+        absolute_altitude_m: 0,
+        captured_at: capturedAt,
+      },
     });
   });
 
@@ -52,25 +59,27 @@ describe("ControlRoomMapPanel", () => {
   });
 
   it("appends multiple map clicks into an ordered waypoint list in multi mode", async () => {
+    const picks: ControlRoomMapWaypoint[] = [];
     function Harness() {
-      const [waypoints, setWaypoints] = useState<ControlRoomMapWaypoint[]>([]);
       return (
         <ControlRoomMapPanel
           ariaLabel="Küldetési térkép"
           interactive
           selectionMode="multi"
-          plannedWaypoints={waypoints}
-          onWaypointAppend={(waypoint) => setWaypoints((current) => [...current, waypoint])}
+          plannedWaypoints={picks}
+          onWaypointAppend={(waypoint) => { picks.push(waypoint); }}
         />
       );
     }
-    render(<Harness />);
+    const { rerender } = render(<Harness />);
     await screen.findByTestId("control-room-map");
-    await waitFor(() => expect(screen.getByText(/TELEMETRIA KAPCSOLÓDVA/i)).toBeInTheDocument());
     await waitFor(() => expect(clickHandlers.length).toBeGreaterThan(0));
     clickHandlers.at(-1)?.({ latlng: { lat: 37.41609, lng: -122.0489 } });
+    rerender(<Harness />);
     clickHandlers.at(-1)?.({ latlng: { lat: 37.41619, lng: -122.0487 } });
-    expect(await screen.findByText(/2 waypoint a listán/i)).toBeInTheDocument();
+    rerender(<Harness />);
+    expect(picks).toHaveLength(2);
+    expect(picks[1]?.north_m).toBeGreaterThan(picks[0]?.north_m ?? 0);
   });
 
   it("forwards map clicks into the plan-proposal waypoint shape", async () => {

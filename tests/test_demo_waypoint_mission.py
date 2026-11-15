@@ -91,7 +91,29 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
         plan_execution._active_execution = None
         self.directory = TemporaryDirectory()
         telemetry = Path(self.directory.name) / "telemetry.json"
-        telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
+        captured_at = "2026-11-15T10:00:00+00:00"
+        telemetry.write_text(
+            json.dumps(
+                {
+                    "position": {
+                        "latitude_deg": 37.416,
+                        "longitude_deg": -122.049,
+                        "absolute_altitude_m": 10.0,
+                        "relative_altitude_m": 0.0,
+                    },
+                    "battery": {"remaining_percent": 90.0, "observed_at": captured_at},
+                    "in_air": False,
+                    "captured_at": captured_at,
+                    "home": {
+                        "latitude_deg": 37.416,
+                        "longitude_deg": -122.049,
+                        "absolute_altitude_m": 0.0,
+                        "captured_at": captured_at,
+                    },
+                },
+            ),
+            encoding="utf-8",
+        )
         self._commands_patch = patch.dict(os.environ, {"BYTEWOLF_COMMANDS_ENABLED": "true"}, clear=False)
         self._commands_patch.start()
         self.client = TestClient(create_app(telemetry))
@@ -105,15 +127,22 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
 
     def test_review_map_waypoints_without_execution(self) -> None:
+        captured_at = "2026-11-15T10:00:00+00:00"
         response = self.client.post(
             "/api/v1/missions/demo-waypoint-mission",
             headers={"X-ByteWolf-Session": SESSION},
             json={
                 "takeoff_altitude_m": 8.0,
                 "goal": "Térképes többpontos teszt",
+                "home": {
+                    "latitude_deg": 37.416,
+                    "longitude_deg": -122.049,
+                    "absolute_altitude_m": 0.0,
+                    "captured_at": captured_at,
+                },
                 "waypoints": [
-                    {"north_m": 5.0, "east_m": 0.0, "relative_altitude_m": 8.0},
-                    {"north_m": 5.0, "east_m": 5.0, "relative_altitude_m": 8.0},
+                    {"latitude_deg": 37.41609, "longitude_deg": -122.0489, "relative_altitude_m": 8.0},
+                    {"latitude_deg": 37.41619, "longitude_deg": -122.0487, "relative_altitude_m": 8.0},
                 ],
             },
         )
@@ -122,6 +151,14 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
         self.assertEqual(body["mission_type"], MISSION_TYPE)
         self.assertEqual(len(body["waypoints"]), 2)
         self.assertIn("GOTO_1", body["steps"])
+
+    def test_empty_map_waypoint_list_rejected(self) -> None:
+        response = self.client.post(
+            "/api/v1/missions/demo-waypoint-mission",
+            headers={"X-ByteWolf-Session": SESSION},
+            json={"waypoints": []},
+        )
+        self.assertEqual(response.status_code, 422)
 
     def test_review_registers_plan_without_execution(self) -> None:
         response = self.client.post(

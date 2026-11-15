@@ -12,10 +12,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const capturedAt = new Date().toISOString();
+
 const mockTelemetry = {
-  captured_at: new Date().toISOString(),
+  captured_at: capturedAt,
   heading_deg: 12,
   position: { latitude_deg: 37.416, longitude_deg: -122.049, absolute_altitude_m: 0, relative_altitude_m: 0 },
+  home: {
+    latitude_deg: 37.416,
+    longitude_deg: -122.049,
+    absolute_altitude_m: 0,
+    captured_at: capturedAt,
+  },
 };
 
 function missionPayload(path: string, overrides: Record<string, unknown> = {}) {
@@ -89,7 +97,7 @@ describe("MissionPage", () => {
       "/api/v1/missions/demo-waypoint-mission",
       expect.objectContaining({
         method: "POST",
-        body: expect.stringContaining('"north_m"'),
+        body: expect.stringContaining('"latitude_deg"'),
       }),
     );
   });
@@ -98,7 +106,9 @@ describe("MissionPage", () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
       path === "/api/v1/missions/point"
         ? { plan_id: "plan-1", summary: "Rövid út", goal: "Teszt", steps: ["TAKEOFF"], waypoints: [] }
-        : missionPayload(path),
+        : path === "/api/v1/plans/approval-token"
+          ? { approval_token: "token-1", plan_hash: "hash-1", expires_in_s: 30 }
+          : missionPayload(path),
     ), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -106,18 +116,19 @@ describe("MissionPage", () => {
     await screen.findByText(/Aktív korlát/);
     fireEvent.click(screen.getByRole("button", { name: "Terv ellenőrzése" }));
 
-    expect(await screen.findByRole("button", { name: /Kifejezett jóváhagyás és indítás/ })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/küldetés még nem indult el/i)).toBeInTheDocument());
     expect(screen.getByText("1. Javaslat elküldve")).toBeInTheDocument();
     expect(screen.getByText("2. SafetyGate ellenőrizte")).toBeInTheDocument();
     expect(screen.getByText("3. Operátori jóváhagyás szükséges")).toBeInTheDocument();
     expect(await screen.findByText(/Terv jóváhagyásra vár: Rövid út/)).toBeInTheDocument();
     expect(screen.getByText("Tervezett lépések")).toBeInTheDocument();
     expect(screen.getByText("TAKEOFF")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenLastCalledWith(
+    expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/missions/point",
       expect.objectContaining({ method: "POST", body: expect.stringContaining('"north_m":5') }),
     );
-    await waitFor(() => expect(screen.getByText(/küldetés még nem indult el/i)).toBeInTheDocument());
+    fireEvent.click(await screen.findByRole("button", { name: "Tovább a terv-hash megerősítéséhez" }));
+    expect(await screen.findByRole("button", { name: /Kifejezett jóváhagyás és indítás/ })).toBeInTheDocument();
   });
 
   it("keeps a rejected proposal out of the approval lifecycle", async () => {

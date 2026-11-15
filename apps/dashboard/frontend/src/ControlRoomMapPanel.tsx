@@ -5,13 +5,13 @@ import "leaflet/dist/leaflet.css";
 import { api } from "./api";
 import {
   appendTrackPoint,
-  chooseHomeAnchor,
+  mapHomeAnchor,
   mapTelemetryConnection,
   parseMapTelemetry,
-  type MapPosition,
   type MapTrackPoint,
 } from "./controlRoomMapTelemetry";
 import { globalOffsetMeters, type GeoPoint } from "./localMissionCoordinates";
+import { MAX_MAP_WAYPOINTS } from "./missionWaypointPlan";
 import { effectiveTargetClassForConnection, type TargetClass } from "./targetClass";
 import { TargetClassBadge } from "./TargetClassBadge";
 
@@ -24,6 +24,8 @@ type Props = {
   selectionMode?: "single" | "multi";
   pendingTarget?: GeoPoint | null;
   plannedWaypoints?: ControlRoomMapWaypoint[];
+  geofenceRadiusM?: number | null;
+  maxWaypoints?: number;
   onWaypointSelect?: (waypoint: ControlRoomMapWaypoint) => void;
   onWaypointAppend?: (waypoint: ControlRoomMapWaypoint) => void;
   onClearPending?: () => void;
@@ -39,6 +41,8 @@ export function ControlRoomMapPanel({
   selectionMode = "single",
   pendingTarget = null,
   plannedWaypoints = [],
+  geofenceRadiusM = null,
+  maxWaypoints = MAX_MAP_WAYPOINTS,
   onWaypointSelect,
   onWaypointAppend,
   onClearPending,
@@ -53,10 +57,12 @@ export function ControlRoomMapPanel({
   const trackLayerRef = useRef<L.Polyline | null>(null);
   const plannedRouteRef = useRef<L.Polyline | null>(null);
   const plannedMarkersRef = useRef<L.LayerGroup | null>(null);
-  const [homeAnchor, setHomeAnchor] = useState<MapPosition | null>(null);
+  const geofenceCircleRef = useRef<L.Circle | null>(null);
+  const centeredOnDroneRef = useRef(false);
   const [track, setTrack] = useState<MapTrackPoint[]>([]);
   const [sample, setSample] = useState(() => parseMapTelemetry(null));
   const connection = mapTelemetryConnection(sample);
+  const homeAnchor = mapHomeAnchor(sample);
   const connectionUi = connection.state === "ready"
     ? "ready"
     : connection.state === "stale"
@@ -84,7 +90,10 @@ export function ControlRoomMapPanel({
       return "Nincs érvényes pozíció a friss telemetriában.";
     }
     if (interactive && homeAnchor === null) {
-      return "Várakozás a kiindulási pozícióra a térképi cél kijelöléséhez.";
+      return "PX4 HOME_POSITION hiányzik a telemetriából; a térképi kijelölés tiltva.";
+    }
+    if (multiSelect && plannedWaypoints.length >= maxWaypoints) {
+      return `Elérted a ${maxWaypoints} waypoint korlátot. Törölj pontot új hozzáadásához.`;
     }
     if (multiSelect) {
       return plannedWaypoints.length
@@ -92,7 +101,15 @@ export function ControlRoomMapPanel({
         : "Kattints a térképre az első waypoint hozzáadásához.";
     }
     return "Élő pozíció, iránytartás és nyomvonal.";
-  }, [connection.state, homeAnchor, interactive, multiSelect, plannedWaypoints.length, sample.position]);
+  }, [
+    connection.state,
+    homeAnchor,
+    interactive,
+    maxWaypoints,
+    multiSelect,
+    plannedWaypoints.length,
+    sample.position,
+  ]);
 
   const refresh = useCallback(async () => {
     try {
@@ -111,7 +128,6 @@ export function ControlRoomMapPanel({
 
   useEffect(() => {
     const connectionState = mapTelemetryConnection(sample);
-    setHomeAnchor((current) => chooseHomeAnchor(current, sample, connectionState));
     setTrack((current) => appendTrackPoint(current, sample, connectionState));
   }, [sample]);
 
@@ -136,8 +152,20 @@ export function ControlRoomMapPanel({
       trackLayerRef.current = null;
       plannedRouteRef.current = null;
       plannedMarkersRef.current = null;
+      geofenceCircleRef.current = null;
     };
   }, []);
+
+  function recenterOnDrone() {
+    const map = mapRef.current;
+    const pos = sample.position;
+    if (!map || pos === null) return;
+    map.setView(
+      L.latLng(pos.latitude_deg, pos.longitude_deg),
+      Math.max(map.getZoom(), 17),
+      { animate: true },
+    );
+  }
 
   useEffect(() => {
     const map = mapRef.current;
@@ -178,10 +206,32 @@ export function ControlRoomMapPanel({
       trackLayerRef.current = null;
     }
 
-    if (!multiSelect && pendingTarget === null && plannedWaypoints.length === 0) {
+    if (!centeredOnDroneRef.current) {
       map.setView(latLng, Math.max(map.getZoom(), 17), { animate: false });
+      centeredOnDroneRef.current = true;
     }
-  }, [connection.state, multiSelect, pendingTarget, plannedWaypoints.length, sample, track]);
+  }, [connection.state, sample, track]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    geofenceCircleRef.current?.remove();
+    geofenceCircleRef.current = null;
+    if (homeAnchor === null || geofenceRadiusM === null || !Number.isFinite(geofenceRadiusM) || geofenceRadiusM <= 0) {
+      return;
+    }
+    geofenceCircleRef.current = L.circle(
+      L.latLng(homeAnchor.latitude_deg, homeAnchor.longitude_deg),
+      {
+        radius: geofenceRadiusM,
+        color: "#f3bd56",
+        weight: 1,
+        dashArray: "4 6",
+        fillOpacity: 0,
+        interactive: false,
+      },
+    ).addTo(map);
+  }, [geofenceRadiusM, homeAnchor]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -243,6 +293,7 @@ export function ControlRoomMapPanel({
 
     const onClick = (event: L.LeafletMouseEvent) => {
       if (homeAnchor === null || connection.state !== "ready") return;
+      if (multiSelect && plannedWaypoints.length >= maxWaypoints) return;
       const point: GeoPoint = { latitude_deg: event.latlng.lat, longitude_deg: event.latlng.lng };
       const offset = globalOffsetMeters(homeAnchor, point);
       const waypoint: ControlRoomMapWaypoint = { ...point, ...offset };
@@ -256,15 +307,30 @@ export function ControlRoomMapPanel({
     return () => {
       map.off("click", onClick);
     };
-  }, [connection.state, homeAnchor, interactive, multiSelect, onWaypointAppend, onWaypointSelect]);
+  }, [
+    connection.state,
+    homeAnchor,
+    interactive,
+    maxWaypoints,
+    multiSelect,
+    onWaypointAppend,
+    onWaypointSelect,
+    plannedWaypoints.length,
+  ]);
 
-  const canPick = interactive && homeAnchor !== null && connection.state === "ready";
+  const canPick = interactive && homeAnchor !== null && connection.state === "ready"
+    && (!multiSelect || plannedWaypoints.length < maxWaypoints);
 
   return (
     <section className="control-room-map-panel">
       <div className="control-room-map-head">
         <p className={`telemetry-sample telemetry-sample--${connection.state}`}>{connection.label}</p>
         {effectiveTarget !== null && <TargetClassBadge targetClass={effectiveTarget} />}
+        {sample.position !== null && (
+          <button type="button" className="control-room-map-clear" onClick={recenterOnDrone}>
+            Drónra központosítás
+          </button>
+        )}
         {multiSelect && plannedWaypoints.length > 0 && (
           <div className="control-room-map-actions">
             {onRemoveLastWaypoint && (

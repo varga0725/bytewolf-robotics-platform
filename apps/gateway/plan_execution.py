@@ -17,6 +17,7 @@ from apps.gateway.telegram_mission_gateway import (
     _execution_lock,
     _release_link_when_finished,
 )
+from apps.api.map_mission_home import validate_plan_home_at_execution
 from brain.mission.demo_reviewed_plan import require_matching_demo_approval
 from brain.mission.sitl_target import TargetClassifier
 from brain.safety.deployment import authorize_readonly_connection
@@ -80,6 +81,13 @@ def _validate_plan_before_spawn(plan_path: Path) -> None:
         from brain.mission.demo_waypoint_reviewed_plan import require_matching_demo_waypoint_approval
 
         require_matching_demo_waypoint_approval(plan_path)
+        telemetry_path = Path(
+            os.environ.get(
+                "BYTEWOLF_TELEMETRY_FILE",
+                "simulation/artifacts/dashboard/live-telemetry.json",
+            )
+        )
+        validate_plan_home_at_execution(plan_path, telemetry_path)
         return
     from brain.cli.fly_nim_mission import _load_approved_plan
     from brain.mission_spec.validation import load_mission_safety_profile
