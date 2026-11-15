@@ -116,6 +116,25 @@ class MapMissionHomeTests(unittest.TestCase):
             snapshot = load_telemetry_snapshot(path)
             self.assertIsNone(snapshot.home)
 
+    def test_map_origin_plan_without_home_refuses_spawn(self) -> None:
+        with TemporaryDirectory() as directory:
+            telemetry_path = Path(directory) / "telemetry.json"
+            telemetry_path.write_text(json.dumps(_telemetry_document()), encoding="utf-8")
+            plan_path = Path(directory) / "demo.demo-waypoint-mission.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "geo_waypoints": [
+                            {"latitude_deg": 37.41609, "longitude_deg": -122.0489, "relative_altitude_m": 8.0},
+                        ],
+                    },
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(DemoWaypointMissionError) as error:
+                validate_plan_home_at_execution(plan_path, telemetry_path)
+            self.assertIn("missing map_home", str(error.exception))
+
     def test_execution_revalidates_stored_home(self) -> None:
         with TemporaryDirectory() as directory:
             telemetry_path = Path(directory) / "telemetry.json"

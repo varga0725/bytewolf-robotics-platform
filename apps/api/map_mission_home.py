@@ -114,12 +114,22 @@ def home_reference_from_plan_document(document: dict[str, Any]) -> MapHomeRefere
         return None
 
 
+def _plan_has_map_origin_waypoints(document: dict[str, Any]) -> bool:
+    geo_waypoints = document.get("geo_waypoints")
+    return isinstance(geo_waypoints, list) and len(geo_waypoints) > 0
+
+
 def validate_plan_home_at_execution(plan_path: Path, telemetry_path: Path) -> None:
     import json
 
     document = json.loads(plan_path.read_text(encoding="utf-8"))
     stored = home_reference_from_plan_document(document)
+    map_origin = _plan_has_map_origin_waypoints(document)
     if stored is None:
+        if map_origin:
+            raise DemoWaypointMissionError(
+                "Map-origin plan is missing map_home; execution refused."
+            )
         return
     current = load_snapshot_home(telemetry_path)
     assert_home_matches(stored, authority=current)
