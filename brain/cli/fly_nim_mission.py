@@ -187,6 +187,8 @@ async def run(arguments: argparse.Namespace) -> None:
         acquire_px4_link("agent-mission")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         await require_sitl_before_arm(system, timeout_s=min(10.0, arguments.connection_timeout))
+        if protected_waypoint is not None:
+            await protected_waypoint.require_lidar_scans()
         relay_stop = asyncio.Event()
         # The same relay the hand-written CLIs use, with the same history sink.
         # It was missing here, so the most convenient way to start a flight —
