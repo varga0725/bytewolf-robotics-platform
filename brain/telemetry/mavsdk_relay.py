@@ -97,6 +97,8 @@ class DashboardTelemetryState:
     autopilot_observed_at: datetime | None = None
     home: DashboardHomePosition | None = None
     vehicle_identity: dict[str, object] | None = None
+    # PX4 GF_MAX_HOR_DIST as read back from the autopilot (0 = PX4 fence disabled).
+    px4_geofence_max_horizontal_m: float | None = None
 
     @property
     def complete(self) -> bool:
@@ -206,6 +208,8 @@ class DashboardTelemetryState:
                 "absolute_altitude_m": self.home.absolute_altitude_m,
                 "captured_at": _format_timestamp(self.home.observed_at),
             }
+        if self.px4_geofence_max_horizontal_m is not None:
+            document["px4_geofence"] = {"max_horizontal_m": self.px4_geofence_max_horizontal_m}
         if self.vehicle_identity is not None:
             document["vehicle_identity"] = dict(self.vehicle_identity)
         return document

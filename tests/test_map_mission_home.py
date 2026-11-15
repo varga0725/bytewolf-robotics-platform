@@ -11,6 +11,8 @@ from tempfile import TemporaryDirectory
 from apps.api.map_mission_home import (
     HOME_MISMATCH_THRESHOLD_M,
     HOME_SNAPSHOT_MAX_AGE_S,
+    PX4_GEOFENCE_MARGIN_M,
+    effective_max_radius_m,
     assert_home_matches,
     load_snapshot_home,
     parse_map_home_reference,
@@ -176,3 +178,12 @@ class MapMissionHomeTests(unittest.TestCase):
                 with self.subTest(offset_s=offset_s), self.assertRaises(DemoWaypointMissionError) as error:
                     load_snapshot_home(path, now=_CAPTURED + timedelta(seconds=offset_s))
                 self.assertIn("relay is not live", str(error.exception))
+
+    def test_effective_radius_combines_twin_and_px4_fence(self) -> None:
+        self.assertEqual(effective_max_radius_m(2000.0, 100.0), 100.0 - PX4_GEOFENCE_MARGIN_M)
+        self.assertEqual(effective_max_radius_m(50.0, 100.0), 50.0)
+        self.assertEqual(effective_max_radius_m(2000.0, 0.0), 2000.0)  # PX4 fence disabled
+        for unusable in (None, PX4_GEOFENCE_MARGIN_M):
+            with self.subTest(px4=unusable), self.assertRaises(DemoWaypointMissionError):
+                effective_max_radius_m(2000.0, unusable)
+
