@@ -3,6 +3,7 @@ import { FormEvent, MouseEvent, useEffect, useRef, useState } from "react";
 import { ControlRoomMapPanel, type ControlRoomMapWaypoint } from "./ControlRoomMapPanel";
 import { api, post } from "./api";
 import { pointFromLocalOffset } from "./localMissionCoordinates";
+import { buildDemoWaypointMissionPayload, type MapMissionWaypoint } from "./missionWaypointPlan";
 
 type Envelope = {
   max_altitude_m: number;
@@ -46,7 +47,7 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
   const [north, setNorth] = useState("5");
   const [east, setEast] = useState("0");
   const [altitude, setAltitude] = useState("2");
-  const [kind, setKind] = useState<"point" | "survey">("point");
+  const [kind, setKind] = useState<"point" | "survey" | "waypoints">("point");
   const [radius, setRadius] = useState("5");
   const [spacing, setSpacing] = useState("3");
   const [goal, setGoal] = useState("Biztonságos pontküldetés a szimulációban");
@@ -57,6 +58,7 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
   const [mapBackground, setMapBackground] = useState<MapBackground | null>(null);
   const [events, setEvents] = useState<string[]>([]);
   const [pendingTarget, setPendingTarget] = useState<{ latitude_deg: number; longitude_deg: number } | null>(null);
+  const [mapWaypoints, setMapWaypoints] = useState<ControlRoomMapWaypoint[]>([]);
   const [homeLatLon, setHomeLatLon] = useState<{ latitude_deg: number; longitude_deg: number } | null>(null);
   const statusTimer = useRef<number | null>(null);
   const mapSize = 400;
@@ -107,6 +109,37 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
     setPendingTarget(null);
     setPlan(null);
     setStatus("A függő térképi cél törölve.");
+  }
+
+  function appendMapWaypoint(waypoint: ControlRoomMapWaypoint) {
+    setMapWaypoints((current) => {
+      const next = [...current, waypoint];
+      setStatus(`Waypoint ${next.length} hozzáadva: É ${waypoint.north_m.toFixed(1)} m, K ${waypoint.east_m.toFixed(1)} m.`);
+      return next;
+    });
+    setNorth(waypoint.north_m.toFixed(1));
+    setEast(waypoint.east_m.toFixed(1));
+    setPlan(null);
+  }
+
+  function removeLastMapWaypoint() {
+    setMapWaypoints((current) => {
+      const next = current.slice(0, -1);
+      const last = next.at(-1);
+      if (last) {
+        setNorth(last.north_m.toFixed(1));
+        setEast(last.east_m.toFixed(1));
+      }
+      return next;
+    });
+    setPlan(null);
+    setStatus("Az utolsó waypoint eltávolítva a listából.");
+  }
+
+  function clearMapWaypoints() {
+    setMapWaypoints([]);
+    setPlan(null);
+    setStatus("A waypoint lista törölve.");
   }
 
   useEffect(() => {
@@ -179,7 +212,12 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
     const altitude_m = Number(altitude);
     const radius_m = Number(radius);
     const spacing_m = Number(spacing);
-    if (![north_m, east_m, altitude_m].every(Number.isFinite) || !goal.trim() || (kind === "survey" && (![radius_m, spacing_m].every(Number.isFinite) || radius_m < 2 || spacing_m < 1 || spacing_m > 15))) {
+    if (kind === "waypoints") {
+      if (!goal.trim() || mapWaypoints.length === 0 || !Number.isFinite(altitude_m) || altitude_m <= 0) {
+        setStatus("A többpontos tervhez legalább egy waypoint, véges magasság és cél szükséges.");
+        return;
+      }
+    } else if (![north_m, east_m, altitude_m].every(Number.isFinite) || !goal.trim() || (kind === "survey" && (![radius_m, spacing_m].every(Number.isFinite) || radius_m < 2 || spacing_m < 1 || spacing_m > 15))) {
       setStatus("Adj meg véges koordinátát, magasságot és célt.");
       return;
     }
@@ -187,11 +225,22 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
     setPlan(null);
     setStatus("SafetyGate ellenőrzés fut…");
     try {
+      const waypointPayload = mapWaypoints.map<MapMissionWaypoint>((waypoint) => ({
+        north_m: waypoint.north_m,
+        east_m: waypoint.east_m,
+        relative_altitude_m: altitude_m,
+      }));
       const nextPlan = await post<Mission>(
-        kind === "survey" ? "/api/v1/missions/survey" : "/api/v1/missions/point",
+        kind === "survey"
+          ? "/api/v1/missions/survey"
+          : kind === "waypoints"
+            ? "/api/v1/missions/demo-waypoint-mission"
+            : "/api/v1/missions/point",
         kind === "survey"
           ? { centre_north_m: north_m, centre_east_m: east_m, radius_m, spacing_m, altitude_m, goal: goal.trim() }
-          : { north_m, east_m, altitude_m, goal: goal.trim() },
+          : kind === "waypoints"
+            ? buildDemoWaypointMissionPayload(waypointPayload, altitude_m, goal)
+            : { north_m, east_m, altitude_m, goal: goal.trim() },
       );
       setPlan(nextPlan);
       setStatus("A terv ellenőrzött; a küldetés még nem indult el.");
@@ -255,15 +304,31 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
       </section>
       {envelope && <p className="envelope">Aktív korlát: max. {envelope.max_altitude_m} m magasság · {envelope.max_radius_m} m sugár · indításhoz min. {envelope.minimum_battery_percent_to_start}% akkumulátor.</p>}
       <form className="mission-form" onSubmit={review}>
-        <fieldset className="mission-kind" disabled={!commandsEnabled}><legend>Küldetéstípus</legend><label><input type="radio" name="mission-kind" checked={kind === "point"} onChange={() => setKind("point")} disabled={!commandsEnabled} /> Pontküldetés</label><label><input type="radio" name="mission-kind" checked={kind === "survey"} onChange={() => setKind("survey")} disabled={!commandsEnabled} /> Terület felderítése</label></fieldset>
+        <fieldset className="mission-kind"><legend>Küldetéstípus</legend><label><input type="radio" name="mission-kind" checked={kind === "point"} onChange={() => setKind("point")} /> Pontküldetés</label><label><input type="radio" name="mission-kind" checked={kind === "waypoints"} onChange={() => setKind("waypoints")} /> Többpontos útvonal</label><label><input type="radio" name="mission-kind" checked={kind === "survey"} onChange={() => setKind("survey")} disabled={!commandsEnabled} /> Terület felderítése</label></fieldset>
         <div className="mission-map-panel">
           <ControlRoomMapPanel
             ariaLabel="Küldetési OpenStreetMap térkép"
             interactive
-            pendingTarget={pendingTarget}
-            onWaypointSelect={applyWaypointSelection}
-            onClearPending={pendingTarget ? clearPendingTarget : undefined}
+            selectionMode={kind === "waypoints" ? "multi" : "single"}
+            pendingTarget={kind === "waypoints" ? null : pendingTarget}
+            plannedWaypoints={kind === "waypoints" ? mapWaypoints : []}
+            onWaypointSelect={kind === "waypoints" ? undefined : applyWaypointSelection}
+            onWaypointAppend={kind === "waypoints" ? appendMapWaypoint : undefined}
+            onClearPending={kind === "waypoints" ? undefined : pendingTarget ? clearPendingTarget : undefined}
+            onRemoveLastWaypoint={kind === "waypoints" && mapWaypoints.length ? removeLastMapWaypoint : undefined}
+            onClearWaypoints={kind === "waypoints" && mapWaypoints.length ? clearMapWaypoints : undefined}
           />
+          {kind === "waypoints" && (
+            <ol className="map-waypoint-list" aria-label="Térképen kijelölt waypoint sorrend">
+              {mapWaypoints.length === 0
+                ? <li className="muted">Még nincs waypoint; kattints a térképre a sorrend felépítéséhez.</li>
+                : mapWaypoints.map((waypoint, index) => (
+                  <li key={`${waypoint.latitude_deg}-${waypoint.longitude_deg}-${index}`}>
+                    {index + 1}. É {waypoint.north_m.toFixed(1)} m, K {waypoint.east_m.toFixed(1)} m
+                  </li>
+                ))}
+            </ol>
+          )}
           <div className="mission-map-head">
             <p className="eyebrow">{envelope ? "KATTINTS A CÉLPONTRA" : "TÉRKÉPI SKÁLA BETÖLTÉSE"}</p>
             <fieldset className="map-range"><legend className="sr-only">Térképi látótávolság</legend>
@@ -292,12 +357,17 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
           {envelopeRadius !== null && envelopeRadius <= mapRange && " A kör a szerver által szolgáltatott sugárkorlát."}
           {" A sárga szaggatott alakzat a geofence; a rózsaszín cellák mért akadálybizonyítékok. A kattintás csak tervez, nem repül; billentyűzettel az alábbi koordinátamezők használhatók."}
         </p></div>
-        <label>Észak (m)<input type="number" value={north} onChange={(event) => setNorth(event.target.value)} /></label>
-        <label>Kelet (m)<input type="number" value={east} onChange={(event) => setEast(event.target.value)} /></label>
+        {kind !== "waypoints" && <label>Észak (m)<input type="number" value={north} onChange={(event) => setNorth(event.target.value)} /></label>}
+        {kind !== "waypoints" && <label>Kelet (m)<input type="number" value={east} onChange={(event) => setEast(event.target.value)} /></label>}
         <label>Magasság (m)<input type="number" min="0" step="0.1" value={altitude} onChange={(event) => setAltitude(event.target.value)} /></label>
         {kind === "survey" && <><label>Sugár (m)<input aria-label="Sugár (m)" type="number" min="2" value={radius} onChange={(event) => setRadius(event.target.value)} /></label><label>Vonal-köz (m)<input type="number" min="1" max="15" value={spacing} onChange={(event) => setSpacing(event.target.value)} /></label></>}
         <label className="wide">Cél<input value={goal} maxLength={240} onChange={(event) => setGoal(event.target.value)} /></label>
-        <button className="primary" disabled={busy || !envelope || !commandsEnabled}>{busy ? "Ellenőrzés…" : "Terv ellenőrzése"}</button>
+        <button
+          className="primary"
+          disabled={busy || !envelope || !commandsEnabled || (kind === "waypoints" && mapWaypoints.length === 0)}
+        >
+          {busy ? "Ellenőrzés…" : "Terv ellenőrzése"}
+        </button>
         {!commandsEnabled && <p className="muted" role="note">A terv-ellenőrzés SITL konzol módban érhető el, ha a szerveren a parancsút szándékosan engedélyezett.</p>}
       </form>
       {commandsEnabled && plan && <div className="approval-panel" aria-labelledby="approval-title"><p className="eyebrow">SAFETYGATE-BIZONYÍTÉK · JÓVÁHAGYÁSRA VÁR</p><strong id="approval-title">Ellenőrzött terv: {plan.summary}</strong><p>{plan.goal}</p>{plan.waypoints && <p className="muted">Útvonal-bizonyíték: {plan.waypoints.length} SafetyGate által összeállított waypoint.</p>}<h3>Tervezett lépések</h3><ol>{plan.steps.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol><p className="muted">Ez a terv még nem indult el. A jóváhagyás ehhez a tervazonosítóhoz kötött, és visszavonható az indítás előtt.</p><button className="primary" type="button" onClick={() => void decide("approve")} disabled={busy}>Kifejezett jóváhagyás és indítás</button><button type="button" onClick={() => void decide("cancel")} disabled={busy}>Terv visszavonása</button></div>}

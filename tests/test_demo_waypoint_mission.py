@@ -24,6 +24,7 @@ from brain.mission.demo_waypoint_mission import (
     authorize_demo_waypoint_mission,
     consecutive_acceptance_summary,
     default_demo_waypoint_loop,
+    demo_waypoint_config_from_map,
     load_demo_waypoint_mission_config,
     validate_demo_waypoint_mission_progress,
 )
@@ -53,6 +54,20 @@ class DemoWaypointMissionValidationTests(unittest.TestCase):
         config = DemoWaypointMissionConfig(takeoff_altitude_m=8.0, waypoints=bad, max_mission_items=20)
         with self.assertRaises(SafetyViolation):
             authorize_demo_waypoint_mission(gate, config, profile=profile)
+
+    def test_map_waypoints_fit_gate(self) -> None:
+        profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
+        gate = SafetyGate(profile.flight_limits())
+        config = demo_waypoint_config_from_map(
+            takeoff_altitude_m=8.0,
+            waypoints=(
+                WaypointCommand(5.0, 0.0, 8.0),
+                WaypointCommand(5.0, 5.0, 8.0),
+            ),
+            profile=profile,
+        )
+        authorize_demo_waypoint_mission(gate, config, profile=profile)
+        self.assertEqual(len(config.waypoints), 2)
 
     def test_altitude_violation_on_one_item_is_refused(self) -> None:
         profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
@@ -88,6 +103,25 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
     def test_missing_session_header_is_rejected(self) -> None:
         response = self.client.post("/api/v1/missions/demo-waypoint-mission")
         self.assertEqual(response.status_code, 422)
+
+    def test_review_map_waypoints_without_execution(self) -> None:
+        response = self.client.post(
+            "/api/v1/missions/demo-waypoint-mission",
+            headers={"X-ByteWolf-Session": SESSION},
+            json={
+                "takeoff_altitude_m": 8.0,
+                "goal": "Térképes többpontos teszt",
+                "waypoints": [
+                    {"north_m": 5.0, "east_m": 0.0, "relative_altitude_m": 8.0},
+                    {"north_m": 5.0, "east_m": 5.0, "relative_altitude_m": 8.0},
+                ],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["mission_type"], MISSION_TYPE)
+        self.assertEqual(len(body["waypoints"]), 2)
+        self.assertIn("GOTO_1", body["steps"])
 
     def test_review_registers_plan_without_execution(self) -> None:
         response = self.client.post(

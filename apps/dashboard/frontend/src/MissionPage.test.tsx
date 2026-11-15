@@ -1,7 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import L from "leaflet";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MissionPage } from "./MissionPage";
+
+const mapClickHandlers: Array<(event: { latlng: { lat: number; lng: number } }) => void> = [];
 
 afterEach(() => {
   cleanup();
@@ -28,6 +31,21 @@ function missionPayload(path: string, overrides: Record<string, unknown> = {}) {
 }
 
 describe("MissionPage", () => {
+  beforeEach(() => {
+    mapClickHandlers.length = 0;
+    vi.mocked(L.map).mockImplementation(() => {
+      const instance = {
+        on: vi.fn((event: string, handler: unknown) => {
+          if (event === "click") mapClickHandlers.push(handler as (event: { latlng: { lat: number; lng: number } }) => void);
+        }),
+        off: vi.fn(),
+        setView: vi.fn(),
+        getZoom: () => 17,
+        remove: vi.fn(),
+      };
+      return instance as unknown as L.Map;
+    });
+  });
   it("hides mission approval controls in ground control room mode", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(missionPayload(path)), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
@@ -38,6 +56,42 @@ describe("MissionPage", () => {
     expect(screen.getByRole("button", { name: "Terv ellenőrzése" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: /Kifejezett jóváhagyás/ })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("/api/v1/missions/"), expect.anything());
+  });
+
+  it("submits ordered map waypoints to the demo-waypoint propose endpoint", async () => {
+    let waypointPosts = 0;
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path === "/api/v1/missions/demo-waypoint-mission") {
+        waypointPosts += 1;
+        return Promise.resolve(new Response(JSON.stringify({
+          plan_id: "plan-wp",
+          summary: "Többpontos",
+          goal: "Útvonal",
+          steps: ["TAKEOFF", "GOTO_1", "GOTO_2", "RTL", "LAND"],
+          waypoints: [],
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify(missionPayload(path)), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MissionPage commandsEnabled />);
+    await screen.findByText(/Aktív korlát/);
+    fireEvent.click(screen.getByRole("radio", { name: "Többpontos útvonal" }));
+    await waitFor(() => expect(mapClickHandlers.length).toBeGreaterThan(0));
+    mapClickHandlers.at(-1)?.({ latlng: { lat: 37.41609, lng: -122.0489 } });
+    mapClickHandlers.at(-1)?.({ latlng: { lat: 37.41619, lng: -122.0487 } });
+    await waitFor(() => expect(screen.getByText(/2\./)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Terv ellenőrzése" }));
+
+    await waitFor(() => expect(waypointPosts).toBe(1));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/missions/demo-waypoint-mission",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"north_m"'),
+      }),
+    );
   });
 
   it("reviews a point mission before it exposes the explicit start control", async () => {

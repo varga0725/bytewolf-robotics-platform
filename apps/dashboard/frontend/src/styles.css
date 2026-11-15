@@ -497,6 +497,10 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .control-room-map-drone-icon, .control-room-map-pending-icon { background: transparent; border: 0; }
 .control-room-map-drone { width: 26px; height: 26px; border: 2px solid var(--color-accent-strong); border-radius: 50% 50% 50% 0; transform-origin: center; background: var(--color-accent-soft); box-shadow: 0 0 10px var(--color-accent-glow); }
 .control-room-map-pending { width: 20px; height: 20px; border: 2px solid var(--color-map-target); border-radius: 50%; background: var(--color-map-target); box-shadow: 0 0 10px rgba(243, 189, 86, .45); }
+.control-room-map-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.control-room-map-waypoint-icon { background: transparent; border: 0; }
+.control-room-map-waypoint { width: 24px; height: 24px; display: grid; place-items: center; border: 2px solid var(--color-surface-input); border-radius: 50%; background: var(--color-map-target); color: var(--color-surface-inset); font: 700 12px var(--mono); box-shadow: 0 0 8px rgba(243, 189, 86, .45); }
+.map-waypoint-list { display: grid; gap: 6px; margin: 10px 0 0; padding-left: 1.2rem; color: var(--color-text-data); font-family: var(--mono); font-size: .82rem; }
 /* Present for a screen reader, absent for the eye: the fieldset needs a name,
    and the three visible buttons already say what it is. */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import L from "leaflet";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ControlRoomMapPanel, type ControlRoomMapWaypoint } from "./ControlRoomMapPanel";
@@ -48,6 +49,28 @@ describe("ControlRoomMapPanel", () => {
     expect(await screen.findByTestId("control-room-map")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText(/TELEMETRIA KAPCSOLÓDVA/i)).toBeInTheDocument());
     expect(screen.getByText(/SITL \(ellenőrzött\)/i)).toBeInTheDocument();
+  });
+
+  it("appends multiple map clicks into an ordered waypoint list in multi mode", async () => {
+    function Harness() {
+      const [waypoints, setWaypoints] = useState<ControlRoomMapWaypoint[]>([]);
+      return (
+        <ControlRoomMapPanel
+          ariaLabel="Küldetési térkép"
+          interactive
+          selectionMode="multi"
+          plannedWaypoints={waypoints}
+          onWaypointAppend={(waypoint) => setWaypoints((current) => [...current, waypoint])}
+        />
+      );
+    }
+    render(<Harness />);
+    await screen.findByTestId("control-room-map");
+    await waitFor(() => expect(screen.getByText(/TELEMETRIA KAPCSOLÓDVA/i)).toBeInTheDocument());
+    await waitFor(() => expect(clickHandlers.length).toBeGreaterThan(0));
+    clickHandlers.at(-1)?.({ latlng: { lat: 37.41609, lng: -122.0489 } });
+    clickHandlers.at(-1)?.({ latlng: { lat: 37.41619, lng: -122.0487 } });
+    expect(await screen.findByText(/2 waypoint a listán/i)).toBeInTheDocument();
   });
 
   it("forwards map clicks into the plan-proposal waypoint shape", async () => {

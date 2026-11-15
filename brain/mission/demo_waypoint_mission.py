@@ -123,6 +123,36 @@ def load_demo_waypoint_mission_config(
     )
 
 
+def demo_waypoint_config_from_map(
+    *,
+    takeoff_altitude_m: float,
+    waypoints: tuple[WaypointCommand, ...],
+    profile: SafetyProfile,
+) -> DemoWaypointMissionConfig:
+    """Reuse demo-waypoint timing defaults while accepting map-picked relative waypoints."""
+    if not waypoints:
+        raise DemoWaypointMissionError("At least one waypoint is required.")
+    template = load_demo_waypoint_mission_config(profile=profile)
+    planned_items = 1 + len(waypoints)
+    if planned_items > template.max_mission_items:
+        raise DemoWaypointMissionError(
+            f"Mission item count {planned_items} exceeds the limit of {template.max_mission_items}."
+        )
+    return DemoWaypointMissionConfig(
+        takeoff_altitude_m=takeoff_altitude_m,
+        waypoints=waypoints,
+        cruise_speed_m_s=template.cruise_speed_m_s,
+        acceptance_radius_m=template.acceptance_radius_m,
+        max_mission_items=template.max_mission_items,
+        upload_timeout_s=template.upload_timeout_s,
+        mission_timeout_s=template.mission_timeout_s,
+        progress_stall_timeout_s=template.progress_stall_timeout_s,
+        landing_timeout_s=template.landing_timeout_s,
+        home_tolerance_m=template.home_tolerance_m,
+        rtl_timeout_s=template.rtl_timeout_s,
+    )
+
+
 def authorize_demo_waypoint_mission(
     gate: SafetyGate,
     config: DemoWaypointMissionConfig,

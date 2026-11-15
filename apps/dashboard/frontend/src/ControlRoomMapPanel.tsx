@@ -21,9 +21,14 @@ type Props = {
   ariaLabel: string;
   interactive?: boolean;
   targetClassHint?: TargetClass | null;
+  selectionMode?: "single" | "multi";
   pendingTarget?: GeoPoint | null;
+  plannedWaypoints?: ControlRoomMapWaypoint[];
   onWaypointSelect?: (waypoint: ControlRoomMapWaypoint) => void;
+  onWaypointAppend?: (waypoint: ControlRoomMapWaypoint) => void;
   onClearPending?: () => void;
+  onRemoveLastWaypoint?: () => void;
+  onClearWaypoints?: () => void;
   pollMs?: number;
 };
 
@@ -31,9 +36,14 @@ export function ControlRoomMapPanel({
   ariaLabel,
   interactive = false,
   targetClassHint = null,
+  selectionMode = "single",
   pendingTarget = null,
+  plannedWaypoints = [],
   onWaypointSelect,
+  onWaypointAppend,
   onClearPending,
+  onRemoveLastWaypoint,
+  onClearWaypoints,
   pollMs = 2_000,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -41,6 +51,8 @@ export function ControlRoomMapPanel({
   const droneMarkerRef = useRef<L.Marker | null>(null);
   const pendingMarkerRef = useRef<L.Marker | null>(null);
   const trackLayerRef = useRef<L.Polyline | null>(null);
+  const plannedRouteRef = useRef<L.Polyline | null>(null);
+  const plannedMarkersRef = useRef<L.LayerGroup | null>(null);
   const [homeAnchor, setHomeAnchor] = useState<MapPosition | null>(null);
   const [track, setTrack] = useState<MapTrackPoint[]>([]);
   const [sample, setSample] = useState(() => parseMapTelemetry(null));
@@ -50,6 +62,7 @@ export function ControlRoomMapPanel({
     : connection.state === "stale"
       ? "stale"
       : "unavailable";
+  const multiSelect = selectionMode === "multi";
 
   const effectiveTarget = effectiveTargetClassForConnection(
     connectionUi,
@@ -73,8 +86,13 @@ export function ControlRoomMapPanel({
     if (interactive && homeAnchor === null) {
       return "Várakozás a kiindulási pozícióra a térképi cél kijelöléséhez.";
     }
-  return "Élő pozíció, iránytartás és nyomvonal.";
-  }, [connection.state, homeAnchor, interactive, sample.position]);
+    if (multiSelect) {
+      return plannedWaypoints.length
+        ? `${plannedWaypoints.length} waypoint a listán; kattints további pont hozzáadásához.`
+        : "Kattints a térképre az első waypoint hozzáadásához.";
+    }
+    return "Élő pozíció, iránytartás és nyomvonal.";
+  }, [connection.state, homeAnchor, interactive, multiSelect, plannedWaypoints.length, sample.position]);
 
   const refresh = useCallback(async () => {
     try {
@@ -108,6 +126,7 @@ export function ControlRoomMapPanel({
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(map);
+    plannedMarkersRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
     return () => {
       map.remove();
@@ -115,6 +134,8 @@ export function ControlRoomMapPanel({
       droneMarkerRef.current = null;
       pendingMarkerRef.current = null;
       trackLayerRef.current = null;
+      plannedRouteRef.current = null;
+      plannedMarkersRef.current = null;
     };
   }, []);
 
@@ -157,14 +178,46 @@ export function ControlRoomMapPanel({
       trackLayerRef.current = null;
     }
 
-    if (pendingTarget === null) {
+    if (!multiSelect && pendingTarget === null && plannedWaypoints.length === 0) {
       map.setView(latLng, Math.max(map.getZoom(), 17), { animate: false });
     }
-  }, [connection.state, pendingTarget, sample, track]);
+  }, [connection.state, multiSelect, pendingTarget, plannedWaypoints.length, sample, track]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    const layerGroup = plannedMarkersRef.current;
+    if (!map || !layerGroup) return;
+
+    layerGroup.clearLayers();
+    plannedRouteRef.current?.remove();
+    plannedRouteRef.current = null;
+
+    if (multiSelect && plannedWaypoints.length > 0) {
+      const latlngs = plannedWaypoints.map((waypoint) => L.latLng(waypoint.latitude_deg, waypoint.longitude_deg));
+      plannedRouteRef.current = L.polyline(latlngs, {
+        color: "#f3bd56",
+        weight: 3,
+        dashArray: "6 4",
+        opacity: 0.9,
+      }).addTo(map);
+      plannedWaypoints.forEach((waypoint, index) => {
+        const marker = L.marker(L.latLng(waypoint.latitude_deg, waypoint.longitude_deg), {
+          interactive: false,
+          icon: L.divIcon({
+            className: "control-room-map-waypoint-icon",
+            html: `<div class="control-room-map-waypoint" aria-hidden="true">${index + 1}</div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
+          }),
+        });
+        layerGroup.addLayer(marker);
+      });
+    }
+  }, [multiSelect, plannedWaypoints]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || multiSelect) return;
     if (pendingTarget === null) {
       pendingMarkerRef.current?.remove();
       pendingMarkerRef.current = null;
@@ -182,23 +235,28 @@ export function ControlRoomMapPanel({
     } else {
       pendingMarkerRef.current = L.marker(latLng, { icon, interactive: false }).addTo(map);
     }
-  }, [pendingTarget]);
+  }, [multiSelect, pendingTarget]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !interactive || !onWaypointSelect) return;
+    if (!map || !interactive) return;
 
     const onClick = (event: L.LeafletMouseEvent) => {
       if (homeAnchor === null || connection.state !== "ready") return;
       const point: GeoPoint = { latitude_deg: event.latlng.lat, longitude_deg: event.latlng.lng };
       const offset = globalOffsetMeters(homeAnchor, point);
-      onWaypointSelect({ ...point, ...offset });
+      const waypoint: ControlRoomMapWaypoint = { ...point, ...offset };
+      if (multiSelect) {
+        onWaypointAppend?.(waypoint);
+      } else {
+        onWaypointSelect?.(waypoint);
+      }
     };
     map.on("click", onClick);
     return () => {
       map.off("click", onClick);
     };
-  }, [connection.state, homeAnchor, interactive, onWaypointSelect]);
+  }, [connection.state, homeAnchor, interactive, multiSelect, onWaypointAppend, onWaypointSelect]);
 
   const canPick = interactive && homeAnchor !== null && connection.state === "ready";
 
@@ -207,7 +265,21 @@ export function ControlRoomMapPanel({
       <div className="control-room-map-head">
         <p className={`telemetry-sample telemetry-sample--${connection.state}`}>{connection.label}</p>
         {effectiveTarget !== null && <TargetClassBadge targetClass={effectiveTarget} />}
-        {pendingTarget && onClearPending && (
+        {multiSelect && plannedWaypoints.length > 0 && (
+          <div className="control-room-map-actions">
+            {onRemoveLastWaypoint && (
+              <button type="button" className="control-room-map-clear" onClick={onRemoveLastWaypoint}>
+                Utolsó waypoint törlése
+              </button>
+            )}
+            {onClearWaypoints && (
+              <button type="button" className="control-room-map-clear" onClick={onClearWaypoints}>
+                Waypoint lista törlése
+              </button>
+            )}
+          </div>
+        )}
+        {!multiSelect && pendingTarget && onClearPending && (
           <button type="button" className="control-room-map-clear" onClick={onClearPending}>
             Függő cél törlése
           </button>
