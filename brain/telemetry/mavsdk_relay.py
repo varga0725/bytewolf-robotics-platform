@@ -87,6 +87,7 @@ class DashboardTelemetryState:
     sysid_observed_at: datetime | None = None
     autopilot: str | None = None
     autopilot_observed_at: datetime | None = None
+    vehicle_identity: dict[str, object] | None = None
 
     @property
     def complete(self) -> bool:
@@ -144,6 +145,9 @@ class DashboardTelemetryState:
             autopilot_observed_at=observed_at,
         )
 
+    def with_vehicle_identity(self, identity: dict[str, object] | None) -> DashboardTelemetryState:
+        return replace(self, vehicle_identity=identity)
+
     def as_dashboard_document(self, captured_at: datetime) -> dict[str, object]:
         if not self.complete:
             raise ValueError("A complete telemetry snapshot requires position, battery, and flight state.")
@@ -186,6 +190,8 @@ class DashboardTelemetryState:
             document["autopilot"] = self.autopilot
             if self.autopilot_observed_at is not None:
                 document["autopilot_observed_at"] = _format_timestamp(self.autopilot_observed_at)
+        if self.vehicle_identity is not None:
+            document["vehicle_identity"] = dict(self.vehicle_identity)
         return document
 
 

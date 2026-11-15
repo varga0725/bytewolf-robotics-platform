@@ -18,6 +18,10 @@ from brain.telemetry.domain import (
 )
 from brain.telemetry.link_lease import link_is_leased
 from brain.telemetry.mavsdk_relay import DashboardTelemetryState, write_atomic_json
+from brain.telemetry.pymavlink_passive_params import (
+    PassiveVehicleIdentityTracker,
+    request_param_read,
+)
 
 
 _TOPIC_POSITION = "telemetry/position"
@@ -176,6 +180,10 @@ def _apply_vehicle_heartbeat(
     )
 
 
+def vehicle_identity_pending_write(before: DashboardTelemetryState, after: DashboardTelemetryState) -> bool:
+    return before.vehicle_identity != after.vehicle_identity
+
+
 def heartbeat_pending_write(before: DashboardTelemetryState, after: DashboardTelemetryState) -> bool:
     """Whether a HEARTBEAT should schedule a snapshot write (armed/mode/sysid changed)."""
     vehicle_fields = (
@@ -268,9 +276,12 @@ def run_pymavlink_relay(
     mavlink = mavlink_factory(connection)
     close = getattr(mavlink, "close", None)
     state = DashboardTelemetryState(relay_source="pymavlink")
+    identity_tracker = PassiveVehicleIdentityTracker()
     last_write_monotonic: float | None = None
     pending_core_write = False
     last_lease_check = 0.0
+    target_system = 0
+    target_component = 0
 
     def stop_requested() -> bool:
         nonlocal last_lease_check
@@ -298,6 +309,17 @@ def run_pymavlink_relay(
         last_write_monotonic = now
         pending_core_write = False
 
+    def issue_identity_requests() -> None:
+        if target_system <= 0:
+            return
+        for param_name in identity_tracker.pop_follow_up_requests():
+            request_param_read(
+                mavlink,
+                target_system=target_system,
+                target_component=target_component,
+                param_name=param_name,
+            )
+
     try:
         while True:
             if stop_requested():
@@ -306,12 +328,33 @@ def run_pymavlink_relay(
             now = monotonic()
             if message is not None:
                 before = state
+                message_type = message.get_type()
+                if message_type == "HEARTBEAT":
+                    sysid = int(getattr(message, "get_srcSystem", lambda: 0)())
+                    if sysid > 0:
+                        target_system = sysid
+                        target_component = int(getattr(message, "get_srcComponent", lambda: 0)())
+                        if identity_tracker.on_vehicle_sysid(sysid, monotonic=now):
+                            state = state.with_vehicle_identity(None)
+                        issue_identity_requests()
+                elif message_type == "PARAM_VALUE":
+                    if identity_tracker.apply_param_value(message):
+                        issue_identity_requests()
+                    updated = state.with_vehicle_identity(identity_tracker.identity_block())
+                    if vehicle_identity_pending_write(state, updated):
+                        pending_core_write = True
+                    state = updated
                 state = apply_mavlink_message(state, message, observed_at=clock())
-                if core_message_pending_write(message.get_type(), before, state):
+                if core_message_pending_write(message_type, before, state):
+                    pending_core_write = True
+                if message_type == "HEARTBEAT" and heartbeat_pending_write(before, state):
                     pending_core_write = True
                 flush_snapshot()
                 continue
 
+            if target_system > 0:
+                identity_tracker.on_vehicle_sysid(target_system, monotonic=now)
+                issue_identity_requests()
             if pending_core_write:
                 flush_snapshot()
     finally:
@@ -327,4 +370,5 @@ __all__ = [
     "heartbeat_pending_write",
     "mavlink_autopilot_label",
     "run_pymavlink_relay",
+    "vehicle_identity_pending_write",
 ]

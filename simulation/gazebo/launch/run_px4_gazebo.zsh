@@ -120,6 +120,8 @@ if [[ "$PROFILE" == "full-sensors" ]]; then
   trap cleanup_full_sensors EXIT INT TERM
   sleep 2
   # shellcheck source=/dev/null
+  source "${SCRIPT_DIR}/apply_sitl_loopback_mavlink.zsh"
+  # shellcheck source=/dev/null
   source "${SCRIPT_DIR}/apply_sitl_failsafe_profile.zsh"
   cd "$PX4_BUILD_DIR"
   PX4_GZ_STANDALONE=1 PX4_SYS_AUTOSTART=4014 PX4_SIM_MODEL="$TARGET" GZ_IP=127.0.0.1 \
@@ -145,5 +147,7 @@ if [[ "$PROFILE" == "full-sensors" ]]; then
   exit "$px4_status"
 fi
 
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/apply_sitl_loopback_mavlink.zsh"
 cd "$PX4_ROOT"
 exec make px4_sitl "$TARGET"

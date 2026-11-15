@@ -222,6 +222,8 @@ fi
 
 print "Headless PX4 SITL indítása: $TARGET a(z) $WORLD worldben"
 # shellcheck source=/dev/null
+source "${SCRIPT_DIR}/apply_sitl_loopback_mavlink.zsh"
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/apply_sitl_failsafe_profile.zsh"
 # The launcher itself is run with stdout/stderr pipes by the regression runner.
 # PX4's normal interactive pxh shell continuously writes prompts to such a pipe;

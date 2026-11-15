@@ -26,10 +26,11 @@ from brain.safety.deployment import add_deployment_arguments, authorize_readonly
 from brain.telemetry.link_lease import default_lease_path, link_is_leased
 from brain.telemetry.loopback_endpoint import LoopbackEndpointError, require_loopback_udpin_endpoint
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
+from brain.telemetry.dashboard_snapshot_path import default_dashboard_snapshot_path
 from brain.telemetry.pymavlink_relay import run_pymavlink_relay
 
 
-DEFAULT_SNAPSHOT_PATH = Path("simulation/artifacts/dashboard/live-telemetry.json")
+DEFAULT_SNAPSHOT_PATH = default_dashboard_snapshot_path()
 DEFAULT_BACKEND = "pymavlink"
 BACKEND_CHOICES = ("pymavlink", "mavsdk")
 
