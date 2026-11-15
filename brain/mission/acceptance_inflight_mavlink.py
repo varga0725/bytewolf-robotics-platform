@@ -9,8 +9,7 @@ from typing import Literal
 
 from brain.mission.acceptance_inflight_px4_mode import px4_flight_mode_from_custom_mode
 from brain.preflight_params.mavlink import MavlinkReadError, normalize_connection_url
-from brain.navigation.relative import horizontal_distance_m
-from brain.navigation.waypoints import GlobalPosition
+from brain.navigation.waypoints import GlobalPosition, horizontal_distance_m
 
 MAV_CMD_COMPONENT_ARM_DISARM = 400
 EMERGENCY_DISARM_MAGIC = 21196
