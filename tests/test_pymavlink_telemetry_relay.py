@@ -51,6 +51,26 @@ def _complete_core_messages() -> list[_Message]:
 
 
 class PymavlinkMappingTests(unittest.TestCase):
+    def test_geofence_param_only_from_locked_autopilot(self) -> None:
+        now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+        locked = DashboardTelemetryState(relay_source="pymavlink", sysid=1)
+        ignored = {
+            "no heartbeat yet": (DashboardTelemetryState(relay_source="pymavlink"), {}),
+            "other system": (locked, {"_src_system": 255}),
+            "other param": (locked, {"param_id": "GF_MAX_VER_DIST"}),
+            "negative": (locked, {"param_value": -1.0}),
+        }
+        for name, (state, overrides) in ignored.items():
+            fields = {"param_id": "GF_MAX_HOR_DIST", "param_value": 100.0, **overrides}
+            with self.subTest(name):
+                after = apply_mavlink_message(state, _Message("PARAM_VALUE", **fields), observed_at=now)
+                self.assertIsNone(after.px4_geofence_max_horizontal_m)
+        accepted = apply_mavlink_message(
+            locked, _Message("PARAM_VALUE", param_id="GF_MAX_HOR_DIST", param_value=100.0), observed_at=now
+        )
+        self.assertEqual(accepted.px4_geofence_max_horizontal_m, 100.0)
+        self.assertFalse(core_message_pending_write("PARAM_VALUE", locked, accepted))
+
     def test_home_position_only_from_locked_autopilot_and_in_range(self) -> None:
         now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
         locked = DashboardTelemetryState(relay_source="pymavlink", sysid=1)

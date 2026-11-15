@@ -145,6 +145,9 @@ def apply_mavlink_message(
     if message_type == "HOME_POSITION":
         return _apply_home_position_message(state, message, timestamp)
 
+    if message_type == "PARAM_VALUE":
+        return _apply_geofence_param(state, message)
+
     if message_type == "HEARTBEAT":
         return _apply_vehicle_heartbeat(state, message, timestamp)
 
@@ -175,6 +178,26 @@ def _apply_home_position_message(
         observed_at=timestamp,
     )
     return replace(state, home=home)
+
+
+PX4_GEOFENCE_PARAM = "GF_MAX_HOR_DIST"
+# Params can change at runtime (the failsafe acceptance profile sets them), so re-read.
+GEOFENCE_REFRESH_S = 30.0
+
+
+def _apply_geofence_param(state: DashboardTelemetryState, message: object) -> DashboardTelemetryState:
+    """Record GF_MAX_HOR_DIST only from the heartbeat-locked autopilot."""
+    name = str(getattr(message, "param_id", "")).rstrip("\x00")
+    if name != PX4_GEOFENCE_PARAM or state.sysid is None:
+        return state
+    sysid = int(getattr(message, "get_srcSystem", lambda: 0)())
+    component = int(getattr(message, "get_srcComponent", lambda: 0)())
+    if sysid != state.sysid or component not in (0, _MAV_COMP_ID_AUTOPILOT1):
+        return state
+    value = float(getattr(message, "param_value", float("nan")))
+    if not isfinite(value) or value < 0:
+        return state
+    return replace(state, px4_geofence_max_horizontal_m=value)
 
 
 def _apply_vehicle_heartbeat(
@@ -313,6 +336,7 @@ def run_pymavlink_relay(
     last_write_monotonic: float | None = None
     pending_core_write = False
     last_lease_check = 0.0
+    last_geofence_request: float | None = None
 
     def stop_requested() -> bool:
         nonlocal last_lease_check
@@ -341,10 +365,20 @@ def run_pymavlink_relay(
         pending_core_write = False
 
     def issue_identity_requests() -> None:
+        nonlocal last_geofence_request
         target = identity_collector.target
         if target is None:
             return
         target_system, target_component = target
+        now = monotonic()
+        if last_geofence_request is None or now - last_geofence_request >= GEOFENCE_REFRESH_S:
+            last_geofence_request = now
+            request_param_read(
+                mavlink,
+                target_system=target_system,
+                target_component=target_component,
+                param_name=PX4_GEOFENCE_PARAM,
+            )
         for param_name in identity_collector.pop_follow_up_requests():
             request_param_read(
                 mavlink,

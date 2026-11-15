@@ -27,6 +27,7 @@ from apps.api.telemetry import TelemetryFormatError, load_telemetry_snapshot
 from apps.gateway.telegram_mission_gateway import _DEFAULT_PLAN_DIRECTORY
 from apps.gateway.memory_store import MemoryStoreError, delete_memory_fact, list_memory, update_memory_fact
 from apps.api.demo_point_mission import DemoPointRtlError, review_demo_point_rtl
+from apps.api.map_mission_home import effective_max_radius_m, load_snapshot_px4_geofence_m
 from apps.api.demo_waypoint_mission import (
     DemoWaypointMissionError,
     DemoWaypointMissionMapRequest,
@@ -213,10 +214,17 @@ def create_app(
         except SafetyProfileError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
         fence = profile.allowed_geofence
+        px4_fence_m = load_snapshot_px4_geofence_m(telemetry_path)
+        try:
+            effective_radius_m: float | None = effective_max_radius_m(profile.max_radius_m, px4_fence_m)
+        except DemoWaypointMissionError:
+            effective_radius_m = None
         return {
             "max_altitude_m": profile.max_altitude_m,
             "max_speed_m_s": profile.max_speed_m_s,
             "max_radius_m": profile.max_radius_m,
+            "px4_geofence_max_horizontal_m": px4_fence_m,
+            "effective_max_radius_m": effective_radius_m,
             "minimum_battery_percent_to_start": profile.minimum_battery_percent_to_start,
             "geofence_vertices_m": (
                 [{"north_m": north, "east_m": east} for north, east in fence.vertices_m]

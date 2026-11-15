@@ -55,6 +55,7 @@ class TelemetrySnapshot:
     in_air_observed_at: str | None = None
     target_class: TargetVerdict = "unknown"
     home: HomePosition | None = None
+    px4_geofence_max_horizontal_m: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -87,6 +88,8 @@ class TelemetrySnapshot:
         for key, value in optional.items():
             if value is not None:
                 payload[key] = value
+        if self.px4_geofence_max_horizontal_m is not None:
+            payload["px4_geofence"] = {"max_horizontal_m": self.px4_geofence_max_horizontal_m}
         if self.home is not None:
             payload["home"] = {
                 "latitude_deg": self.home.latitude_deg,
@@ -142,6 +145,7 @@ def _snapshot_from_telemetry_dict(telemetry: dict[str, Any]) -> TelemetrySnapsho
     autopilot = _optional_string(telemetry.get("autopilot"), "autopilot")
     sysid = _optional_sysid(telemetry.get("sysid"))
     home = _parse_home(telemetry.get("home"))
+    px4_geofence = _parse_px4_geofence(telemetry.get("px4_geofence"))
     return TelemetrySnapshot(
         position,
         battery_percent,
@@ -162,7 +166,16 @@ def _snapshot_from_telemetry_dict(telemetry: dict[str, Any]) -> TelemetrySnapsho
         in_air_observed_at=_optional_observed_at(telemetry.get("in_air_observed_at")),
         target_class=classify_telemetry_document(telemetry),
         home=home,
+        px4_geofence_max_horizontal_m=px4_geofence,
     )
+
+
+def _parse_px4_geofence(value: Any) -> float | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TelemetryFormatError("px4_geofence must be an object when present.")
+    return _required_bounded_number(value, "max_horizontal_m", minimum=0.0, maximum=1.0e7)
 
 
 def _parse_home(value: Any) -> HomePosition | None:

@@ -33,6 +33,7 @@ function rememberActivePlan(planId: string | null) {
 type Envelope = {
   max_altitude_m: number;
   max_radius_m: number;
+  effective_max_radius_m?: number | null;
   minimum_battery_percent_to_start: number;
   geofence_vertices_m: Array<{ north_m: number; east_m: number }>;
 };
@@ -103,7 +104,8 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
   // typecheck and CI never builds the frontend.
   const [mapRange, setMapRange] = useState<(typeof MAP_RANGES_M)[number]>(MAP_RANGES_M[0]);
   const mapScale = (mapSize / 2) / mapRange;
-  const envelopeRadius = envelope?.max_radius_m ?? null;
+  // The server combines twin.yaml with PX4's own fence; fall back to twin.yaml alone.
+  const envelopeRadius = envelope ? envelope.effective_max_radius_m ?? envelope.max_radius_m : null;
   const proposalState = plan ? "ellenőrizve" : busy ? "ellenőrzés alatt" : "előkészítés alatt";
 
   function logEvent(text: string) {
@@ -447,7 +449,7 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
           <ControlRoomMapPanel
             ariaLabel="Küldetési OpenStreetMap térkép"
             interactive
-            geofenceRadiusM={envelope?.max_radius_m ?? null}
+            geofenceRadiusM={envelopeRadius}
             maxWaypoints={MAX_MAP_WAYPOINTS}
             selectionMode={kind === "waypoints" ? "multi" : "single"}
             pendingTarget={kind === "waypoints" ? null : pendingTarget}

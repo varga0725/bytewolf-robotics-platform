@@ -106,6 +106,7 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
                     "battery": {"remaining_percent": 90.0, "observed_at": captured_at},
                     "in_air": False,
                     "captured_at": captured_at,
+                    "px4_geofence": {"max_horizontal_m": 100.0},
                     "home": {
                         "latitude_deg": 37.416,
                         "longitude_deg": -122.049,
@@ -159,6 +160,30 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
         self.assertEqual(body["mission_type"], MISSION_TYPE)
         self.assertEqual(len(body["waypoints"]), 2)
         self.assertIn("GOTO_1", body["steps"])
+
+    def test_map_waypoint_beyond_px4_geofence_rejected(self) -> None:
+        # 0.0012 deg of latitude is about 133 m: inside twin.yaml, outside PX4's 100 m fence.
+        response = self.client.post(
+            "/api/v1/missions/demo-waypoint-mission",
+            headers={"X-ByteWolf-Session": SESSION},
+            json={
+                "takeoff_altitude_m": 8.0,
+                "home": {
+                    "latitude_deg": 37.416,
+                    "longitude_deg": -122.049,
+                    "absolute_altitude_m": 0.0,
+                    "captured_at": datetime.now(UTC).isoformat(),
+                },
+                "waypoints": [{"latitude_deg": 37.4172, "longitude_deg": -122.049, "relative_altitude_m": 8.0}],
+            },
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("GF_MAX_HOR_DIST", response.json()["detail"])
+
+    def test_safety_envelope_reports_effective_radius(self) -> None:
+        body = self.client.get("/api/v1/safety-envelope").json()
+        self.assertEqual(body["px4_geofence_max_horizontal_m"], 100.0)
+        self.assertEqual(body["effective_max_radius_m"], 95.0)
 
     def test_empty_map_waypoint_list_rejected(self) -> None:
         response = self.client.post(

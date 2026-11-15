@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from math import isfinite
+from math import hypot, isfinite
 from pathlib import Path
 from uuid import uuid4
 
 from apps.api.map_mission_home import (
     assert_home_matches,
+    effective_max_radius_m,
     load_snapshot_home,
+    load_snapshot_px4_geofence_m,
     parse_map_home_reference,
     waypoint_commands_from_geographic,
 )
@@ -180,6 +182,16 @@ def review_demo_waypoint_mission_from_map(
     )
 
     profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
+    # PX4 refuses to arm when a mission item lies outside its own fence (COMMAND_DENIED
+    # with no reason the console can show), so refuse here with one it can.
+    radius_m = effective_max_radius_m(profile.max_radius_m, load_snapshot_px4_geofence_m(telemetry_path))
+    for index, (north_m, east_m, _altitude_m) in enumerate(converted):
+        distance_m = hypot(north_m, east_m)
+        if distance_m > radius_m:
+            raise DemoWaypointMissionError(
+                f"Waypoint {index + 1} is {distance_m:.1f} m from PX4 home; "
+                f"the active limit is {radius_m:g} m (twin.yaml and PX4 GF_MAX_HOR_DIST)."
+            )
     config = demo_waypoint_config_from_map(
         takeoff_altitude_m=request.takeoff_altitude_m,
         waypoints=commands,

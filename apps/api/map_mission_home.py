@@ -13,6 +13,8 @@ from brain.mission.demo_errors import DemoWaypointMissionError
 from brain.navigation.waypoints import GlobalPosition, global_position_to_local_offset, horizontal_distance_m
 
 HOME_MISMATCH_THRESHOLD_M = 2.0
+# Acceptance radius (2 m) plus overshoot: stay clear of the line where PX4 triggers GF_ACTION.
+PX4_GEOFENCE_MARGIN_M = 5.0
 # Same budget the dashboard uses to call telemetry stale; an older snapshot means a dead relay.
 HOME_SNAPSHOT_MAX_AGE_S = 10.0
 
@@ -80,6 +82,40 @@ def load_snapshot_home(telemetry_path: Path, *, now: datetime | None = None) -> 
         absolute_altitude_m=home.absolute_altitude_m,
         captured_at=home.captured_at,
     )
+
+
+def load_snapshot_px4_geofence_m(telemetry_path: Path) -> float | None:
+    """PX4 GF_MAX_HOR_DIST as the relay last read it back, or None when unknown."""
+    try:
+        return load_telemetry_snapshot(telemetry_path).px4_geofence_max_horizontal_m
+    except (TelemetryFormatError, OSError):
+        return None
+
+
+def effective_max_radius_m(twin_radius_m: float, px4_max_horizontal_m: float | None) -> float:
+    """Horizontal radius a map waypoint may reach: twin.yaml and PX4's own fence combined.
+
+    ``px4_max_horizontal_m`` is GF_MAX_HOR_DIST read back from PX4: ``None`` when the
+    relay has not read it (or the bridge is the MAVSDK backend), ``0`` when PX4's
+    horizontal fence is disabled, otherwise PX4's limit in metres. Raise
+    DemoWaypointMissionError to refuse planning outright.
+    """
+    if px4_max_horizontal_m is None:
+        # Fail closed: an unknown PX4 fence is exactly how today's 115 m plan passed
+        # the gate and was then refused at arm time.
+        raise DemoWaypointMissionError(
+            "PX4 GF_MAX_HOR_DIST is not in the telemetry snapshot yet; map planning is "
+            "disabled until the pymavlink relay has read it back from PX4."
+        )
+    if px4_max_horizontal_m == 0:
+        return twin_radius_m  # PX4's horizontal fence is disabled.
+    px4_usable_m = px4_max_horizontal_m - PX4_GEOFENCE_MARGIN_M
+    if px4_usable_m <= 0:
+        raise DemoWaypointMissionError(
+            f"PX4 GF_MAX_HOR_DIST is {px4_max_horizontal_m:g} m, too small for any waypoint "
+            f"after the {PX4_GEOFENCE_MARGIN_M:g} m margin."
+        )
+    return min(twin_radius_m, px4_usable_m)
 
 
 def assert_home_matches(
