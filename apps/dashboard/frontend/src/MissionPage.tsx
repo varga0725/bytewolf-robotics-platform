@@ -10,6 +10,26 @@ import {
   type MapMissionWaypoint,
 } from "./missionWaypointPlan";
 
+// sessionStorage, like the operator session id in api.ts: per tab, survives reload.
+const ACTIVE_PLAN_KEY = "bytewolfActivePlan";
+
+function readActivePlan(): string | null {
+  try {
+    return window.sessionStorage.getItem(ACTIVE_PLAN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberActivePlan(planId: string | null) {
+  try {
+    if (planId === null) window.sessionStorage.removeItem(ACTIVE_PLAN_KEY);
+    else window.sessionStorage.setItem(ACTIVE_PLAN_KEY, planId);
+  } catch {
+    // Storage blocked: monitoring still works until the next reload.
+  }
+}
+
 type Envelope = {
   max_altitude_m: number;
   max_radius_m: number;
@@ -174,6 +194,20 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
     void api<Envelope>("/api/v1/safety-envelope")
       .then((value) => { setEnvelope(value); setStatus("Jelölj ki egy célpontot és kérj tervet."); })
       .catch((error: Error) => setStatus(`A safety-profil nem olvasható: ${error.message}`));
+  }, []);
+
+  useEffect(() => {
+    // The mission runs server-side and survives a reload; only this page's polling did not.
+    const planId = readActivePlan();
+    if (planId !== null) {
+      setStatus(`Futó küldetés követése folytatódik: ${planId}`);
+      logEvent(`Újratöltés után a küldetés követése folytatódik: ${planId}`);
+      monitor(planId);
+    }
+    return () => {
+      if (statusTimer.current !== null) window.clearInterval(statusTimer.current);
+      statusTimer.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -354,18 +388,21 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
 
   function monitor(planId: string) {
     if (statusTimer.current !== null) window.clearInterval(statusTimer.current);
+    rememberActivePlan(planId);
     statusTimer.current = window.setInterval(() => {
       void api<{ status: string; message: string }>(`/api/v1/plans/${encodeURIComponent(planId)}/status`)
         .then((result) => {
           if (result.status !== "completed" && result.status !== "failed") return;
           if (statusTimer.current !== null) window.clearInterval(statusTimer.current);
           statusTimer.current = null;
+          rememberActivePlan(null);
           setStatus(result.message);
           logEvent(result.message);
         })
         .catch(() => {
           if (statusTimer.current !== null) window.clearInterval(statusTimer.current);
           statusTimer.current = null;
+          rememberActivePlan(null);
           setStatus("A végrehajtási állapot nem ellenőrizhető. A naplót vagy a Visszajátszás nézetet ellenőrizd.");
           logEvent("A végrehajtási állapot figyelése megszakadt.");
         });

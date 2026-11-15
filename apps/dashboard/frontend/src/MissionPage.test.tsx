@@ -54,6 +54,23 @@ describe("MissionPage", () => {
       return instance as unknown as L.Map;
     });
   });
+  it("resumes monitoring an approved mission after a page reload", async () => {
+    const planId = "e006e612-bc67-4ae2-927f-dc0e88f174e9.demo-waypoint-mission.json";
+    window.sessionStorage.setItem("bytewolfActivePlan", planId);
+    const statusPath = `/api/v1/plans/${encodeURIComponent(planId)}/status`;
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === statusPath ? { status: "completed", message: "Küldetés befejezve." } : missionPayload(path),
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MissionPage commandsEnabled />);
+
+    expect(await screen.findByText(`Futó küldetés követése folytatódik: ${planId}`)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Küldetés befejezve.")).toBeInTheDocument(), { timeout: 2500 });
+    expect(fetchMock.mock.calls.some(([path]) => path === statusPath)).toBe(true);
+    expect(window.sessionStorage.getItem("bytewolfActivePlan")).toBeNull();
+  });
+
   it("hides mission approval controls in ground control room mode", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(missionPayload(path)), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
