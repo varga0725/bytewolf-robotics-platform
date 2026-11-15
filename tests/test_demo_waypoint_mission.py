@@ -423,5 +423,35 @@ class TrajectoryPlotTests(unittest.TestCase):
             self.assertGreater(output.stat().st_size, 100)
 
 
+
+class ArmFromGroundTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _drone(mode_name: str, calls: list[str]) -> SimpleNamespace:
+        async def modes():
+            yield SimpleNamespace(name=mode_name)
+
+        async def record(name: str) -> None:
+            calls.append(name)
+
+        return SimpleNamespace(
+            telemetry=SimpleNamespace(flight_mode=modes),
+            action=SimpleNamespace(hold=lambda: record("hold"), arm=lambda: record("arm")),
+        )
+
+    async def test_leaves_land_mode_before_arming(self) -> None:
+        from brain.adapters.mavsdk_adapter import arm_from_ground
+
+        for mode in ("LAND", "RETURN_TO_LAUNCH"):
+            calls: list[str] = []
+            await arm_from_ground(self._drone(mode, calls))
+            self.assertEqual(calls, ["hold", "arm"], mode)
+
+    async def test_arms_directly_when_mode_allows_it(self) -> None:
+        from brain.adapters.mavsdk_adapter import arm_from_ground
+
+        calls: list[str] = []
+        await arm_from_ground(self._drone("HOLD", calls))
+        self.assertEqual(calls, ["arm"])
+
 if __name__ == "__main__":
     unittest.main()
