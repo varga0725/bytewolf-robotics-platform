@@ -1,3 +1,4 @@
 # Full local/CI unittest gate (vision + dashboard API dependencies).
 -r requirements.txt
 -r requirements-vision-research.txt
+psutil>=6,<8

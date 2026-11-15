@@ -192,7 +192,7 @@ class MavsdkTelemetryRelay:
             await asyncio.to_thread(self._on_event, event)
         if not isinstance(event, SupplementalTelemetryEvent) and self._state.complete:
             document = self._state.as_dashboard_document(self._clock())
-            await asyncio.to_thread(_write_atomic_json, self._destination, document)
+            await asyncio.to_thread(write_atomic_json, self._destination, document)
 
     def _stream_tasks(self) -> tuple[tuple[str, asyncio.Task[None], bool], ...]:
         streams: list[tuple[str, AsyncIterator[object], bool]] = [
@@ -225,7 +225,7 @@ def _format_timestamp(timestamp: datetime) -> str:
     return timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _write_atomic_json(destination: Path, document: dict[str, object]) -> None:
+def write_atomic_json(destination: Path, document: dict[str, object]) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(document, separators=(",", ":"), allow_nan=False)
     file_descriptor, temporary_name = tempfile.mkstemp(
