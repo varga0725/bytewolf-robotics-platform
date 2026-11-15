@@ -17,6 +17,7 @@ from brain.cli import (
     fly_waypoint_square_land,
 )
 from brain.mission.demo_point_rtl import DemoPointRtlError
+from brain.mission.flight import InterruptionAction
 
 from tests.test_cli_mission_artifacts import _mission, _profile
 
@@ -53,6 +54,8 @@ class CliSitlArmGuardTests(unittest.TestCase):
                 mission = _mission()
                 if module is fly_controlled_interruption:
                     mission.interrupt_after_s = 2.0
+                    mission.interruption_action = InterruptionAction.LAND
+                    mission.hold_cleanup_s = 1.0
                 with (
                     patch.dict(sys.modules, {"mavsdk": mavsdk}),
                     patch.object(module, "load_safety_profile", return_value=_profile()),
