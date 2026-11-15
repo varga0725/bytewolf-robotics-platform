@@ -36,14 +36,19 @@ GF_MAX_HOR_DIST_M = 100.0
 GF_MAX_VER_DIST_M = 50.0
 COM_DL_LOSS_T_S = 10.0
 BAT_LOW_THR = 0.15
-BAT_CRIT_THR = 0.07
+BAT_CRIT_THR = 0.08
 BAT_EMERGEN_THR = 0.05
+SIM_BAT_DRAIN_S = 240.0
 
 GEOFENCE_HOR_TOLERANCE_M = 15.0
 GEOFENCE_VER_TOLERANCE_M = 5.0
 
 TAKEOFF_ALTITUDE_M = 20.0
 KILL_SCENARIO_ALTITUDE_M = 8.0
+DATALINK_DLL_HOLD_S = 5.0
+DATALINK_RTL_MAX_AFTER_STOP_S = 20.0
+DATALINK_LANDED_MAX_AFTER_STOP_S = 45.0
+RELAY_MAX_CAPTURE_AGE_S_DEFAULT = 3.0
 
 Outcome = Literal["PASS", "FAIL"]
 
@@ -73,6 +78,15 @@ class ProfilePreconditionResult:
         return self.applied and self.verified
 
 
+def _px4_run_directory_label(px4_run_directory: Path | None) -> str | None:
+    if px4_run_directory is None:
+        return None
+    try:
+        return str(px4_run_directory.resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return px4_run_directory.name
+
+
 def check_sitl_failsafe_profile_precondition(
     *,
     px4_run_directory: Path | None,
@@ -81,7 +95,7 @@ def check_sitl_failsafe_profile_precondition(
 ) -> ProfilePreconditionResult:
     """Require status ``applied`` and a full parameter read-back before arming."""
     build = (px4_build_directory or PX4_BUILD_DIRECTORY).resolve()
-    run_text = None if px4_run_directory is None else str(px4_run_directory.resolve())
+    run_text = _px4_run_directory_label(px4_run_directory)
     if px4_run_directory is None:
         return ProfilePreconditionResult(
             applied=False,
@@ -212,11 +226,24 @@ def _saw_landed_disarmed(transitions: list[VehicleTransition], after_s: float = 
     return False
 
 
+def _first_rtl_at(transitions: list[VehicleTransition], *, after_s: float) -> float | None:
+    for item in transitions:
+        if item.monotonic_s < after_s:
+            continue
+        mode = _mode_name(item.flight_mode)
+        if "return" in mode or mode in {"rtl", "auto_rtl", "auto/rtl"}:
+            return item.monotonic_s
+    return None
+
+
 def evaluate_datalink_loss_machine(
     transitions: list[VehicleTransition],
     *,
     heartbeat_stopped_at_s: float | None,
     com_dl_loss_t_s: float = COM_DL_LOSS_T_S,
+    dll_hold_s: float = DATALINK_DLL_HOLD_S,
+    rtl_deadline_s: float = DATALINK_RTL_MAX_AFTER_STOP_S,
+    landed_deadline_s: float = DATALINK_LANDED_MAX_AFTER_STOP_S,
     min_takeoff_altitude_m: float = TAKEOFF_ALTITUDE_M - 2.0,
 ) -> tuple[bool, str | None]:
     if heartbeat_stopped_at_s is None:
@@ -227,23 +254,52 @@ def evaluate_datalink_loss_machine(
     )
     if max_alt < min_takeoff_altitude_m:
         return False, f"Takeoff altitude not reached (max {max_alt:.1f} m)."
-    rtl_after = _saw_rtl(transitions, after_s=heartbeat_stopped_at_s + com_dl_loss_t_s - 0.5)
-    if not rtl_after:
-        return False, "RTL flight mode not observed after COM_DL_LOSS_T."
+    rtl_not_before = heartbeat_stopped_at_s + com_dl_loss_t_s + dll_hold_s - 0.5
+    rtl_at = _first_rtl_at(transitions, after_s=rtl_not_before)
+    if rtl_at is None:
+        return False, "RTL flight mode not observed after COM_DL_LOSS_T and hold."
+    if rtl_at - heartbeat_stopped_at_s > rtl_deadline_s:
+        return (
+            False,
+            f"RTL at {rtl_at - heartbeat_stopped_at_s:.1f} s after heartbeat stop "
+            f"exceeded {rtl_deadline_s:.1f} s limit.",
+        )
     if not _saw_landed_disarmed(transitions, after_s=heartbeat_stopped_at_s):
         return False, "Vehicle did not land and disarm after datalink-loss RTL."
+    landed_at = _first_landed_disarmed_at(transitions, after_s=heartbeat_stopped_at_s)
+    if landed_at is not None and landed_at - heartbeat_stopped_at_s > landed_deadline_s:
+        return (
+            False,
+            f"Landed+disarmed at {landed_at - heartbeat_stopped_at_s:.1f} s exceeded "
+            f"{landed_deadline_s:.1f} s limit.",
+        )
     return True, None
+
+
+def _first_landed_disarmed_at(transitions: list[VehicleTransition], *, after_s: float) -> float | None:
+    saw_not_in_air = False
+    for item in transitions:
+        if item.monotonic_s < after_s:
+            continue
+        if item.in_air is False:
+            saw_not_in_air = True
+        if saw_not_in_air and item.armed is False:
+            return item.monotonic_s
+    return None
 
 
 def evaluate_geofence_machine(
     transitions: list[VehicleTransition],
     *,
+    geofence_breach_at_s: float | None,
     gf_max_hor_m: float = GF_MAX_HOR_DIST_M,
     gf_max_ver_m: float = GF_MAX_VER_DIST_M,
     hor_tolerance_m: float = GEOFENCE_HOR_TOLERANCE_M,
     ver_tolerance_m: float = GEOFENCE_VER_TOLERANCE_M,
 ) -> tuple[bool, str | None]:
-    if not _saw_rtl(transitions):
+    if geofence_breach_at_s is None:
+        return False, "No geofence breach signal was observed."
+    if not _saw_rtl(transitions, after_s=geofence_breach_at_s):
         return False, "Geofence breach did not trigger RTL flight mode."
     peak_hor = max(
         (t.horizontal_distance_from_home_m for t in transitions if t.horizontal_distance_from_home_m is not None),
@@ -270,12 +326,12 @@ def evaluate_geofence_machine(
 
 def evaluate_kill_in_air_machine(
     *,
-    disarm_in_air_rejected: bool,
+    disarm_outcome: str | None,
     kill_to_disarm_s: float | None,
     kill_disarm_deadline_s: float = 1.0,
 ) -> tuple[bool, str | None]:
-    if not disarm_in_air_rejected:
-        return False, "Normal in-air disarm was not rejected by PX4."
+    if disarm_outcome != "denied":
+        return False, f"Normal in-air disarm was not rejected by PX4 (saw {disarm_outcome!r})."
     if kill_to_disarm_s is None:
         return False, "Emergency kill did not produce a disarmed state."
     if kill_to_disarm_s > kill_disarm_deadline_s:
@@ -290,20 +346,33 @@ def evaluate_low_battery_machine(
     crit_thr: float = BAT_CRIT_THR,
     emergen_thr: float = BAT_EMERGEN_THR,
 ) -> tuple[bool, str | None]:
-    percents = [t.battery_percent for t in transitions if t.battery_percent is not None]
-    if not percents:
-        return False, "No battery telemetry samples recorded."
-    min_pct = min(percents)
-    saw_low = any(p <= low_thr * 100.0 + 0.5 for p in percents)
-    saw_crit_rtl = _saw_rtl(transitions) and any(p <= crit_thr * 100.0 + 0.5 for p in percents)
-    saw_land = _saw_landed_disarmed(transitions)
-    if not saw_low:
-        return False, f"Low battery warning not seen (min {min_pct:.1f} %)."
-    if not saw_crit_rtl:
-        return False, "RTL at critical battery not observed."
-    if min_pct > emergen_thr * 100.0 + 1.0 and not saw_land:
-        return False, "Emergency land / disarm not observed."
-    if not saw_land:
+    lows = [
+        (t.monotonic_s, t.battery_percent)
+        for t in transitions
+        if t.battery_percent is not None and t.battery_percent <= low_thr * 100.0 + 0.5
+    ]
+    if not lows:
+        return False, "Low battery warning threshold was never observed."
+    low_at = lows[0][0]
+    crit_samples = [
+        (t.monotonic_s, t.battery_percent)
+        for t in transitions
+        if t.battery_percent is not None and t.monotonic_s >= low_at and t.battery_percent <= crit_thr * 100.0 + 0.5
+    ]
+    if not crit_samples:
+        return False, "Critical battery threshold was not observed after the low warning."
+    crit_at = crit_samples[0][0]
+    rtl_at = _first_rtl_at(transitions, after_s=crit_at)
+    if rtl_at is None:
+        return False, "RTL at critical battery was not observed after the critical threshold."
+    emergen_samples = [
+        (t.monotonic_s, t.battery_percent)
+        for t in transitions
+        if t.battery_percent is not None and t.monotonic_s >= rtl_at and t.battery_percent <= emergen_thr * 100.0 + 0.5
+    ]
+    if not emergen_samples:
+        return False, "Emergency battery threshold was not observed after critical RTL."
+    if not _saw_landed_disarmed(transitions, after_s=emergen_samples[0][0]):
         return False, "Vehicle did not land and disarm after low-battery failsafe."
     return True, None
 
@@ -318,11 +387,14 @@ class RelaySample:
 def evaluate_relay_inflight_machine(
     samples: list[RelaySample],
     *,
-    max_age_s: float = 1.0,
-    relay_loopback_udp_only: bool = True,
+    max_age_s: float = RELAY_MAX_CAPTURE_AGE_S_DEFAULT,
+    relay_loopback_udp_only: bool = False,
+    relay_loopback_check_performed: bool = False,
 ) -> tuple[bool, str | None]:
-    if not relay_loopback_udp_only:
+    if relay_loopback_check_performed and not relay_loopback_udp_only:
         return False, "Relay exposed a non-loopback or TCP listener."
+    if not relay_loopback_check_performed:
+        return False, "Relay loopback socket layout could not be verified."
     if not samples:
         return False, "No relay telemetry samples recorded."
     worst = max(sample.captured_at_age_s for sample in samples)

@@ -12,12 +12,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from brain.cli.mavsdk_lifecycle import acquire_px4_link, stop_owned_mavsdk_server
-from brain.mission.acceptance_inflight_runner import (
-    connect_adapter,
-    disconnect_adapter,
-    run_one_scenario,
+from brain.mission.acceptance_inflight_ports import DEFAULT_MAVLINK_ENDPOINT, mavlink_endpoint_for_gcs
+from brain.mission.acceptance_inflight_runner import connect_adapter, run_one_scenario
+from brain.mission.acceptance_inflight_sitl import (
+    ALL_SCENARIOS,
+    OPERATION,
+    RELAY_MAX_CAPTURE_AGE_S_DEFAULT,
+    check_sitl_failsafe_profile_precondition,
 )
-from brain.mission.acceptance_inflight_sitl import ALL_SCENARIOS, OPERATION, check_sitl_failsafe_profile_precondition
 from brain.mission.simulation_target import require_simulation_target
 from brain.safety.deployment import add_deployment_arguments, actuation_request_sha256, file_sha256
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
@@ -33,10 +35,21 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--scenario",
         action="append",
         choices=[*ALL_SCENARIOS, "all"],
-        default=["all"],
-        help="Scenario to run (repeatable). Default: all.",
+        default=None,
+        help="Scenario to run (repeatable). Default: all when omitted.",
     )
     parser.add_argument("--endpoint", default="udpin://127.0.0.1:14540")
+    parser.add_argument(
+        "--mavlink-endpoint",
+        default=None,
+        help="Separate loopback MAVLink URL for pymavlink (default: 14550 when --endpoint is 14540).",
+    )
+    parser.add_argument(
+        "--relay-max-capture-age-s",
+        type=float,
+        default=RELAY_MAX_CAPTURE_AGE_S_DEFAULT,
+        help="Maximum allowed live-telemetry captured_at age for relay-inflight (default 3.0 s).",
+    )
     parser.add_argument("--connection-timeout", type=float, default=30.0)
     parser.add_argument("--preflight-wait-seconds", type=float, default=120.0)
     parser.add_argument("--mavsdk-server-port", type=int, default=50051)
@@ -65,7 +78,9 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     return parser.parse_args(arguments)
 
 
-def _resolve_scenarios(selected: list[str]) -> list[str]:
+def _resolve_scenarios(selected: list[str] | None) -> list[str]:
+    if not selected:
+        return list(ALL_SCENARIOS)
     if "all" in selected:
         return list(ALL_SCENARIOS)
     return list(dict.fromkeys(selected))
@@ -76,9 +91,25 @@ def _write_evidence(path: Path, document: dict[str, object]) -> None:
     path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _resolve_mavlink_endpoint(arguments: argparse.Namespace) -> str:
+    if arguments.mavlink_endpoint is not None:
+        return str(arguments.mavlink_endpoint)
+    return mavlink_endpoint_for_gcs(mavsdk_endpoint=arguments.endpoint)
+
+
+def _resolve_px4_run_directory(arguments: argparse.Namespace) -> Path | None:
+    if arguments.px4_run_directory is not None:
+        return arguments.px4_run_directory
+    env_run = os.environ.get("PX4_RUN_DIR", "").strip()
+    return Path(env_run) if env_run else None
+
+
 async def run(arguments: argparse.Namespace) -> int:
     require_mission_execution_enabled()
-    scenarios = _resolve_scenarios(list(arguments.scenario))
+    scenarios = _resolve_scenarios(arguments.scenario)
+    mavsdk_endpoint = arguments.endpoint
+    mavlink_endpoint = _resolve_mavlink_endpoint(arguments)
+
     profile = load_safety_profile(arguments.safety_profile)
     request_sha256 = actuation_request_sha256(
         {
@@ -89,7 +120,7 @@ async def run(arguments: argparse.Namespace) -> int:
     )
     require_simulation_target(
         deployment_mode=arguments.deployment_mode,
-        endpoint=arguments.endpoint,
+        endpoint=mavsdk_endpoint,
         profile=profile,
         operation=OPERATION,
         request_sha256=request_sha256,
@@ -97,68 +128,79 @@ async def run(arguments: argparse.Namespace) -> int:
         permit_path=arguments.physical_actuation_permit,
     )
 
-    px4_run = arguments.px4_run_directory
-    if px4_run is None:
-        env_run = os.environ.get("PX4_RUN_DIR", "").strip()
-        if env_run:
-            px4_run = Path(env_run)
-
-    profile_check = check_sitl_failsafe_profile_precondition(
-        px4_run_directory=px4_run,
-        px4_build_directory=arguments.px4_build_directory,
-    )
-
+    px4_run = _resolve_px4_run_directory(arguments)
     artifact_dir = arguments.artifact_dir
     artifact_dir.mkdir(parents=True, exist_ok=True)
     summary_path = artifact_dir / "summary.json"
     snapshot_path = artifact_dir / "relay-live-telemetry.json"
 
     results: list[dict[str, object]] = []
-    system = None
-    adapter = None
+    passed = True
 
     try:
-        if profile_check.ok:
-            acquire_px4_link(OPERATION)
-            system, adapter = await connect_adapter(
-                arguments.endpoint,
-                connection_timeout_s=arguments.connection_timeout,
-                preflight_wait_s=arguments.preflight_wait_seconds,
-                mavsdk_server_port=arguments.mavsdk_server_port,
-            )
-
         for scenario in scenarios:
-            document = await run_one_scenario(
-                scenario,
-                adapter,
-                endpoint=arguments.endpoint,
-                profile_check=profile_check,
-                snapshot_path=snapshot_path,
-            )
+            system = None
+            adapter = None
+            try:
+                profile_check = check_sitl_failsafe_profile_precondition(
+                    px4_run_directory=px4_run,
+                    px4_build_directory=arguments.px4_build_directory,
+                )
+                if profile_check.ok:
+                    acquire_px4_link(f"{OPERATION}:{scenario}")
+                    system, adapter = await connect_adapter(
+                        mavsdk_endpoint,
+                        connection_timeout_s=arguments.connection_timeout,
+                        preflight_wait_s=arguments.preflight_wait_seconds,
+                        mavsdk_server_port=arguments.mavsdk_server_port,
+                    )
+                document = await run_one_scenario(
+                    scenario,
+                    adapter,
+                    system=system,
+                    mavsdk_endpoint=mavsdk_endpoint,
+                    mavlink_endpoint=mavlink_endpoint,
+                    profile_check=profile_check,
+                    snapshot_path=snapshot_path,
+                    relay_max_age_s=arguments.relay_max_capture_age_s,
+                    px4_run_directory=px4_run,
+                    px4_build_directory=arguments.px4_build_directory,
+                )
+            except Exception as error:
+                document = {
+                    "version": "acceptance-inflight-sitl.v1",
+                    "scenario": scenario,
+                    "outcome": "FAIL",
+                    "failure_reason": str(error) or error.__class__.__name__,
+                    "transitions": [],
+                    "timings": {},
+                }
+            finally:
+                stop_owned_mavsdk_server(system)
+
             evidence_path = artifact_dir / f"{scenario}.json"
             _write_evidence(evidence_path, document)
+            outcome = document.get("outcome")
+            if outcome != "PASS":
+                passed = False
             results.append(
                 {
                     "scenario": scenario,
-                    "outcome": document.get("outcome"),
-                    "evidence": str(evidence_path),
+                    "outcome": outcome,
+                    "evidence": evidence_path.name,
                     "failure_reason": document.get("failure_reason"),
                 }
             )
-            print(f"{scenario}: {document.get('outcome')} -> {evidence_path}")
+            print(f"{scenario}: {outcome} -> {evidence_path}")
     finally:
-        if system is not None:
-            await disconnect_adapter(system)
-        stop_owned_mavsdk_server()
+        summary = {
+            "recorded_at": datetime.now(UTC).isoformat(),
+            "operation": OPERATION,
+            "scenarios": results,
+            "outcome": "PASS" if passed else "FAIL",
+        }
+        _write_evidence(summary_path, summary)
 
-    passed = all(item.get("outcome") == "PASS" for item in results)
-    summary = {
-        "recorded_at": datetime.now(UTC).isoformat(),
-        "operation": OPERATION,
-        "scenarios": results,
-        "outcome": "PASS" if passed else "FAIL",
-    }
-    _write_evidence(summary_path, summary)
     return 0 if passed else 1
 
 
