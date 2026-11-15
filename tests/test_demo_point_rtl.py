@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from apps.api.server import create_app
+from tests.command_approval_helpers import issue_and_approve
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.mission.demo_point_rtl import (
     MISSION_TYPE,
@@ -76,9 +77,14 @@ class DemoPointRtlApiTests(unittest.TestCase):
             "/api/v1/missions/demo-point-rtl",
             headers={"X-ByteWolf-Session": SESSION},
         ).json()["plan_id"]
+        token_response = self.client.post(
+            "/api/v1/plans/approval-token",
+            json={"plan_id": plan_id},
+            headers={"X-ByteWolf-Session": SESSION},
+        )
         response = self.client.post(
             "/api/v1/plans/approve",
-            json={"plan_id": plan_id},
+            json={"plan_id": plan_id, "approval_token": token_response.json()["approval_token"]},
             headers={"X-ByteWolf-Session": SESSION},
         )
         self.assertEqual(response.status_code, 403)
@@ -104,11 +110,7 @@ class DemoPointRtlApiTests(unittest.TestCase):
         ).json()["plan_id"]
         process = MagicMock(pid=99, poll=MagicMock(return_value=None))
         popen.return_value = process
-        approved = self.client.post(
-            "/api/v1/plans/approve",
-            json={"plan_id": plan_id},
-            headers={"X-ByteWolf-Session": SESSION},
-        )
+        _, approved = issue_and_approve(self.client, SESSION, plan_id)
         self.assertEqual(approved.status_code, 200)
         command = popen.call_args.args[0]
         self.assertIn("brain.cli.fly_demo_point_rtl", command)

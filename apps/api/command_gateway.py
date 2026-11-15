@@ -27,6 +27,7 @@ class DashboardReply:
     text: str
     status: str
     plan_id: str | None = None
+    plan_hash: str | None = None
     approval_required: bool = False
     # Diagnostics only: whether the isolated post-turn hook stored anything.
     # It never carries a remembered fact, and it never gates the reply.
@@ -90,9 +91,17 @@ class DashboardCommandGateway:
             approval_required=True,
         )
 
-    def approve(self, session_id: str, plan_id: str) -> DashboardReply:
+    def pending_plan(self, session_id: str) -> str | None:
+        return self._pending_by_session.get(session_id)
+
+    def ensure_pending(self, session_id: str, plan_id: str) -> None:
+        self._require_pending(session_id, plan_id)
+
+    def approve(self, session_id: str, plan_id: str, *, approved_by: str) -> DashboardReply:
         from shared.safety.execution_gate import require_mission_execution_enabled
 
+        if not approved_by.strip():
+            raise PermissionError("Human approval requires a server-issued token.")
         self._require_pending(session_id, plan_id)
         require_mission_execution_enabled()
         self._pending_by_session.pop(session_id)

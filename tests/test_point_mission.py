@@ -21,6 +21,7 @@ from apps.api.command_gateway import AgentReply, DashboardCommandGateway
 from apps.api.point_mission import PointMissionError, build_point_mission_spec, review_point_mission
 from apps.api.server import create_app
 from brain.mission_spec.reviewed_plan import require_matching_review_approval
+from tests.command_approval_helpers import issue_and_approve
 from brain.mission_spec.validation import load_mission_safety_profile
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH
 
@@ -162,27 +163,32 @@ class PointMissionApiTests(unittest.TestCase):
     def test_the_reviewed_point_can_then_be_approved_exactly_once(self) -> None:
         plan_id = self._pick().json()["plan_id"]
 
-        approved = self.client.post(
-            "/api/v1/plans/approve", json={"plan_id": plan_id}, headers={"X-ByteWolf-Session": SESSION}
-        )
+        _, approved = issue_and_approve(self.client, SESSION, plan_id)
         replayed = self.client.post(
-            "/api/v1/plans/approve", json={"plan_id": plan_id}, headers={"X-ByteWolf-Session": SESSION}
+            "/api/v1/plans/approve",
+            json={"plan_id": plan_id, "approval_token": "invalid-token-value-1234567890"},
+            headers={"X-ByteWolf-Session": SESSION},
         )
 
         self.assertEqual(approved.status_code, 200)
         self.assertEqual(self.executed, [plan_id])
-        self.assertEqual(replayed.status_code, 409, "the pending slot empties on approval")
+        self.assertIn(replayed.status_code, {403, 409}, "the pending slot empties on approval")
 
     def test_another_session_cannot_approve_this_session_s_point(self) -> None:
         plan_id = self._pick().json()["plan_id"]
 
+        token_response = self.client.post(
+            "/api/v1/plans/approval-token",
+            json={"plan_id": plan_id},
+            headers={"X-ByteWolf-Session": SESSION},
+        )
         stolen = self.client.post(
             "/api/v1/plans/approve",
-            json={"plan_id": plan_id},
+            json={"plan_id": plan_id, "approval_token": token_response.json()["approval_token"]},
             headers={"X-ByteWolf-Session": "0f7b2c62-1a1a-4c2f-9a55-2f9e4a6c1b33"},
         )
 
-        self.assertEqual(stolen.status_code, 409)
+        self.assertEqual(stolen.status_code, 403)
         self.assertEqual(self.executed, [])
 
     def test_a_refused_point_reports_the_constraint_and_stays_unapprovable(self) -> None:

@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from apps.api.server import create_app
+from tests.command_approval_helpers import issue_and_approve
 from brain.adapters.demo_waypoint_mission_adapter import execute_demo_waypoint_mission
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 from brain.mission.commands import WaypointCommand
@@ -118,11 +119,7 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
             headers={"X-ByteWolf-Session": SESSION},
         ).json()["plan_id"]
         popen.return_value = MagicMock(pid=42, poll=MagicMock(return_value=None))
-        approved = self.client.post(
-            "/api/v1/plans/approve",
-            json={"plan_id": plan_id},
-            headers={"X-ByteWolf-Session": SESSION},
-        )
+        _, approved = issue_and_approve(self.client, SESSION, plan_id)
         self.assertEqual(approved.status_code, 200)
         command = popen.call_args.args[0]
         self.assertIn("brain.cli.fly_demo_waypoint_mission", command)
