@@ -303,6 +303,24 @@ class MavsdkTelemetryRelay:
             document = self._state.as_dashboard_document(self._clock())
             await asyncio.to_thread(write_atomic_json, self._destination, document)
 
+    async def _consume_home(self, stream: AsyncIterator[object]) -> None:
+        """Track PX4 home (MAVSDK Position) so map planning has an anchor."""
+        async for sample in stream:
+            try:
+                latitude = float(getattr(sample, "latitude_deg"))
+                longitude = float(getattr(sample, "longitude_deg"))
+                altitude = float(getattr(sample, "absolute_altitude_m"))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if not (isfinite(altitude) and -90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0):
+                continue
+            # No write here: a home-only write would advance captured_at while core
+            # telemetry is stale. The next core write carries home to disk.
+            self._state = replace(
+                self._state,
+                home=DashboardHomePosition(latitude, longitude, altitude, observed_at=self._clock()),
+            )
+
     def _stream_tasks(self) -> tuple[tuple[str, asyncio.Task[None], bool], ...]:
         streams: list[tuple[str, AsyncIterator[object], bool]] = [
             ("MAVSDK telemetry.position", self._telemetry.position(), True),
@@ -313,10 +331,14 @@ class MavsdkTelemetryRelay:
             stream_factory = getattr(self._telemetry, name, None)
             if callable(stream_factory):
                 streams.append((f"MAVSDK telemetry.{name}", stream_factory(), False))
-        return tuple(
+        tasks = [
             (source, asyncio.create_task(self._consume(source, stream)), mandatory)
             for source, stream, mandatory in streams
-        )
+        ]
+        home_factory = getattr(self._telemetry, "home", None)
+        if callable(home_factory):
+            tasks.append(("MAVSDK telemetry.home", asyncio.create_task(self._consume_home(home_factory())), False))
+        return tuple(tasks)
 
 
 _OPTIONAL_STREAMS = (

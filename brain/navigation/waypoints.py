@@ -35,6 +35,21 @@ def relative_waypoint_to_global(
     )
 
 
+def global_position_to_local_offset(
+    origin: GlobalPosition,
+    point: GlobalPosition,
+) -> tuple[float, float]:
+    """Inverse of relative_waypoint_to_global: (north_m, east_m) from origin to point."""
+    north_m = (point.latitude_deg - origin.latitude_deg) / _DEGREES_PER_RADIAN * _EARTH_RADIUS_M
+    east_m = (
+        (point.longitude_deg - origin.longitude_deg)
+        / _DEGREES_PER_RADIAN
+        * _EARTH_RADIUS_M
+        * cos(radians(origin.latitude_deg))
+    )
+    return north_m, east_m
+
+
 def horizontal_distance_m(first: GlobalPosition, second: GlobalPosition) -> float:
     """Return the WGS84 great-circle horizontal separation in metres."""
     latitude_delta = radians(second.latitude_deg - first.latitude_deg)

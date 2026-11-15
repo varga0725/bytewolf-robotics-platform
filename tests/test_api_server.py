@@ -175,6 +175,21 @@ class ApiServerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "completed")
 
+    def test_demo_plan_status_reads_the_gateway_execution_record(self) -> None:
+        artifacts = Path(self.directory.name) / "agent-missions"
+        artifacts.mkdir()
+        plan_id = "b3b9c777-4860-4b6d-bf59-1a4a98c31ea3.demo-waypoint-mission.json"
+        client = TestClient(create_app(self.telemetry, agent_artifact_dir=artifacts))
+        path = f"/api/v1/plans/{plan_id}/status"
+        self.assertEqual(client.get(path).json()["status"], "unknown")
+        status_file = artifacts / f"{plan_id}.execution.json"
+        for status in ("submitted", "completed", "failed"):
+            with self.subTest(status=status):
+                status_file.write_text(json.dumps({"status": status}), encoding="utf-8")
+                response = client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["status"], status)
+
     @patch.dict(
         os.environ,
         {"BYTEWOLF_COMMANDS_ENABLED": "true", "BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"},

@@ -51,8 +51,33 @@ def _complete_core_messages() -> list[_Message]:
 
 
 class PymavlinkMappingTests(unittest.TestCase):
+    def test_home_position_only_from_locked_autopilot_and_in_range(self) -> None:
+        now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+        locked = DashboardTelemetryState(relay_source="pymavlink", sysid=1)
+        cases = {
+            "no heartbeat yet": (DashboardTelemetryState(relay_source="pymavlink"), {}),
+            "other system": (locked, {"_src_system": 255}),
+            "companion component": (locked, {"_src_component": 191}),
+            "latitude out of range": (locked, {"latitude": 2_000_000_000}),
+        }
+        for name, (state, overrides) in cases.items():
+            fields = {"latitude": 474000000, "longitude": 190500000, "altitude": 500, **overrides}
+            with self.subTest(name):
+                after = apply_mavlink_message(state, _Message("HOME_POSITION", **fields), observed_at=now)
+                self.assertIsNone(after.home)
+                self.assertFalse(core_message_pending_write("HOME_POSITION", state, after))
+        accepted = apply_mavlink_message(
+            locked,
+            _Message("HOME_POSITION", latitude=474000000, longitude=190500000, altitude=500),
+            observed_at=now,
+        )
+        self.assertIsNotNone(accepted.home)
+        # Home alone must not refresh captured_at; it is written with the next core message.
+        self.assertFalse(core_message_pending_write("HOME_POSITION", locked, accepted))
+
     def test_messages_build_the_dashboard_snapshot_contract(self) -> None:
-        state = DashboardTelemetryState(relay_source="pymavlink")
+        # sysid comes from the autopilot HEARTBEAT; HOME_POSITION is accepted only from it.
+        state = DashboardTelemetryState(relay_source="pymavlink", sysid=1)
         now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
         for message in _complete_core_messages():
             state = apply_mavlink_message(state, message, observed_at=now)

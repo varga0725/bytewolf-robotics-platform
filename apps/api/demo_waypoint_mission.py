@@ -37,7 +37,7 @@ MAX_MAP_WAYPOINTS = 11
 class MapWaypointInput:
     latitude_deg: float
     longitude_deg: float
-    relative_altitude_m: float | None = None
+    relative_altitude_m: float
 
 
 @dataclass(frozen=True)
@@ -48,7 +48,13 @@ class DemoWaypointMissionMapRequest:
     goal: str = ""
 
     @staticmethod
-    def from_dict(document: dict[str, object], *, default_altitude_m: float) -> "DemoWaypointMissionMapRequest":
+    def from_dict(
+        document: dict[str, object], *, default_altitude_m: float | None = None
+    ) -> "DemoWaypointMissionMapRequest":
+        if default_altitude_m is None:
+            default_altitude_m = load_demo_waypoint_mission_config(
+                profile=load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
+            ).takeoff_altitude_m
         takeoff_raw = document.get("takeoff_altitude_m", default_altitude_m)
         if not isinstance(takeoff_raw, (int, float)) or not isfinite(float(takeoff_raw)) or float(takeoff_raw) <= 0:
             raise DemoWaypointMissionError("takeoff_altitude_m must be a positive finite number.")
@@ -155,17 +161,17 @@ def review_demo_waypoint_mission_from_map(
     authority_home = load_snapshot_home(telemetry_path)
     assert_home_matches(proposed_home, authority=authority_home)
 
-    waypoint_docs = tuple(
+    geo_waypoints = [
         {
             "latitude_deg": item.latitude_deg,
             "longitude_deg": item.longitude_deg,
-            "relative_altitude_m": item.relative_altitude_m or request.takeoff_altitude_m,
+            "relative_altitude_m": item.relative_altitude_m,
         }
         for item in request.waypoints
-    )
+    ]
     converted = waypoint_commands_from_geographic(
         home=authority_home,
-        waypoints=waypoint_docs,
+        waypoints=tuple(geo_waypoints),
         default_altitude_m=request.takeoff_altitude_m,
     )
     commands = tuple(
@@ -192,14 +198,6 @@ def review_demo_waypoint_mission_from_map(
         "absolute_altitude_m": authority_home.absolute_altitude_m,
         "captured_at": authority_home.captured_at,
     }
-    geo_waypoints = [
-        {
-            "latitude_deg": item.latitude_deg,
-            "longitude_deg": item.longitude_deg,
-            "relative_altitude_m": item.relative_altitude_m or request.takeoff_altitude_m,
-        }
-        for item in request.waypoints
-    ]
     write_reviewed_demo_waypoint_plan(
         plan_path,
         config,

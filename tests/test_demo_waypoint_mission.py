@@ -92,7 +92,8 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
         plan_execution._active_execution = None
         self.directory = TemporaryDirectory()
         telemetry = Path(self.directory.name) / "telemetry.json"
-        captured_at = "2026-11-15T10:00:00+00:00"
+        # The map route refuses a snapshot older than HOME_SNAPSHOT_MAX_AGE_S.
+        captured_at = datetime.now(UTC).isoformat()
         telemetry.write_text(
             json.dumps(
                 {

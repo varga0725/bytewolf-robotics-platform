@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import json
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from tempfile import TemporaryDirectory
 
 from apps.api.map_mission_home import (
     HOME_MISMATCH_THRESHOLD_M,
+    HOME_SNAPSHOT_MAX_AGE_S,
     assert_home_matches,
     load_snapshot_home,
     parse_map_home_reference,
@@ -17,8 +19,10 @@ from apps.api.map_mission_home import (
 )
 from apps.api.telemetry import load_telemetry_snapshot
 from brain.mission.demo_errors import DemoWaypointMissionError
-from brain.navigation.local_offset import global_position_to_local_offset
-from brain.navigation.waypoints import GlobalPosition
+from brain.navigation.waypoints import GlobalPosition, global_position_to_local_offset
+
+
+_CAPTURED = datetime(2026, 11, 15, 10, 0, tzinfo=UTC)
 
 
 def _telemetry_document() -> dict[str, object]:
@@ -153,5 +157,22 @@ class MapMissionHomeTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with self.assertRaises(DemoWaypointMissionError):
-                validate_plan_home_at_execution(plan_path, telemetry_path)
+            with self.assertRaises(DemoWaypointMissionError) as error:
+                validate_plan_home_at_execution(plan_path, telemetry_path, now=_CAPTURED)
+            self.assertIn("differs from PX4 home", str(error.exception))
+
+    def test_fresh_snapshot_home_is_accepted(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "telemetry.json"
+            path.write_text(json.dumps(_telemetry_document()), encoding="utf-8")
+            home = load_snapshot_home(path, now=_CAPTURED + timedelta(seconds=3))
+            self.assertAlmostEqual(home.latitude_deg, 37.416)
+
+    def test_stale_snapshot_home_is_refused(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "telemetry.json"
+            path.write_text(json.dumps(_telemetry_document()), encoding="utf-8")
+            for offset_s in (HOME_SNAPSHOT_MAX_AGE_S + 1, -(HOME_SNAPSHOT_MAX_AGE_S + 1)):
+                with self.subTest(offset_s=offset_s), self.assertRaises(DemoWaypointMissionError) as error:
+                    load_snapshot_home(path, now=_CAPTURED + timedelta(seconds=offset_s))
+                self.assertIn("relay is not live", str(error.exception))
