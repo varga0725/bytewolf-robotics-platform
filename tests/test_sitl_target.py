@@ -13,6 +13,7 @@ from brain.mission.demo_point_rtl import DemoPointRtlError
 from brain.mission.sitl_target import (
     TargetClassifier,
     _DEFAULT_CLASSIFIER_MAVSDK_PORT,
+    classify_telemetry_document,
     default_target_classifier_mavsdk_port,
     require_px4_sitl_indication,
 )
@@ -234,6 +235,56 @@ class TargetClassifierTests(unittest.IsolatedAsyncioTestCase):
         result = await TargetClassifier.classify(drone, timeout_s=0.05)
         self.assertEqual(result.verdict, "unknown")
         self.assertIn("SYS_AUTOSTART", result.reason)
+
+
+class TelemetryDocumentClassifierTests(unittest.TestCase):
+    def test_empty_document_is_unknown(self) -> None:
+        self.assertEqual(classify_telemetry_document({}), "unknown")
+
+    def test_verified_sitl_identity_in_snapshot(self) -> None:
+        document = {
+            "vehicle_identity": {
+                "product_name": "PX4 SITL",
+                "vendor_name": "undefined",
+                "flight_sw_version_type": "RELEASE",
+                "sys_autostart": 4001,
+                "sim_gz_en": 1,
+            }
+        }
+        self.assertEqual(classify_telemetry_document(document), "sitl_verified")
+
+    def test_pixhawk_like_identity_in_snapshot_is_real_suspected(self) -> None:
+        document = {
+            "vehicle_identity": {
+                "product_name": "PX4 Pixhawk 6X",
+                "vendor_name": "Holybro",
+                "flight_sw_version_type": "RELEASE",
+                "sys_autostart": 0,
+            }
+        }
+        self.assertEqual(classify_telemetry_document(document), "real_suspected")
+
+    def test_never_defaults_to_sitl_verified_without_proof(self) -> None:
+        document = {"autopilot": "px4", "source": "pymavlink"}
+        self.assertEqual(classify_telemetry_document(document), "unknown")
+
+    def test_top_level_identity_fields_are_ignored_without_vehicle_identity(self) -> None:
+        document = {
+            "product_name": "PX4 SITL",
+            "sys_autostart": 4001,
+            "sim_gz_en": 1,
+        }
+        self.assertEqual(classify_telemetry_document(document), "unknown")
+
+    def test_partial_release_identity_without_sys_autostart_is_unknown(self) -> None:
+        document = {
+            "vehicle_identity": {
+                "product_name": "undefined",
+                "vendor_name": "undefined",
+                "flight_sw_version_type": "RELEASE",
+            }
+        }
+        self.assertEqual(classify_telemetry_document(document), "unknown")
 
 
 if __name__ == "__main__":
