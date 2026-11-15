@@ -40,6 +40,27 @@ describe("controlRoomMapTelemetry", () => {
     vi.useRealTimers();
   });
 
+  it("uses the position observation rather than a newer snapshot timestamp", () => {
+    const now = new Date("2026-11-15T10:00:20.000Z");
+    const oldPosition = parseMapTelemetry({
+      captured_at: now.toISOString(),
+      position_observed_at: "2026-11-15T10:00:00.000Z",
+      position: { latitude_deg: 1, longitude_deg: 2 },
+    });
+    const connection = mapTelemetryConnection(oldPosition, now);
+    expect(connection.state).toBe("stale");
+    expect(appendTrackPoint([], oldPosition, connection)).toEqual([]);
+
+    const freshPosition = {
+      ...oldPosition,
+      position_observed_at: "2026-11-15T10:00:18.000Z",
+    };
+    const ready = mapTelemetryConnection(freshPosition, now);
+    const track = appendTrackPoint([], freshPosition, ready);
+    expect(track).toEqual([{ latitude_deg: 1, longitude_deg: 2, captured_at: freshPosition.position_observed_at }]);
+    expect(appendTrackPoint(track, { ...freshPosition, captured_at: now.toISOString() }, ready)).toBe(track);
+  });
+
   it("anchors planning on snapshot.home only", () => {
     const sample = parseMapTelemetry({
       captured_at: new Date().toISOString(),

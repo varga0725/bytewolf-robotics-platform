@@ -69,6 +69,8 @@ export function ControlRoomMapPanel({
       ? "stale"
       : "unavailable";
   const multiSelect = selectionMode === "multi";
+  const canPick = interactive && homeAnchor !== null && sample.position !== null
+    && connection.state === "ready" && (!multiSelect || plannedWaypoints.length < maxWaypoints);
 
   const effectiveTarget = effectiveTargetClassForConnection(
     connectionUi,
@@ -292,8 +294,7 @@ export function ControlRoomMapPanel({
     if (!map || !interactive) return;
 
     const onClick = (event: L.LeafletMouseEvent) => {
-      if (homeAnchor === null || connection.state !== "ready") return;
-      if (multiSelect && plannedWaypoints.length >= maxWaypoints) return;
+      if (!canPick || homeAnchor === null) return;
       const point: GeoPoint = { latitude_deg: event.latlng.lat, longitude_deg: event.latlng.lng };
       const offset = globalOffsetMeters(homeAnchor, point);
       const waypoint: ControlRoomMapWaypoint = { ...point, ...offset };
@@ -308,18 +309,13 @@ export function ControlRoomMapPanel({
       map.off("click", onClick);
     };
   }, [
-    connection.state,
+    canPick,
     homeAnchor,
     interactive,
-    maxWaypoints,
     multiSelect,
     onWaypointAppend,
     onWaypointSelect,
-    plannedWaypoints.length,
   ]);
-
-  const canPick = interactive && homeAnchor !== null && connection.state === "ready"
-    && (!multiSelect || plannedWaypoints.length < maxWaypoints);
 
   return (
     <section className="control-room-map-panel">

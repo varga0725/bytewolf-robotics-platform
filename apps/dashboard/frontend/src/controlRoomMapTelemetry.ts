@@ -12,6 +12,7 @@ export type MapTelemetrySample = {
   position: MapPosition | null;
   home: MapHomePosition | null;
   heading_deg: number | null;
+  position_observed_at: string | null;
   captured_at: string | null;
   target_class: TargetClass | null;
 };
@@ -48,7 +49,7 @@ function parseHome(value: unknown): MapHomePosition | null {
 
 export function parseMapTelemetry(value: unknown): MapTelemetrySample {
   if (!isRecord(value)) {
-    return { position: null, home: null, heading_deg: null, captured_at: null, target_class: null };
+    return { position: null, home: null, heading_deg: null, position_observed_at: null, captured_at: null, target_class: null };
   }
   const positionRaw = value.position;
   let position: MapPosition | null = null;
@@ -66,13 +67,14 @@ export function parseMapTelemetry(value: unknown): MapTelemetrySample {
     position,
     home: parseHome(value.home),
     heading_deg,
+    position_observed_at: typeof value.position_observed_at === "string" ? value.position_observed_at : null,
     captured_at,
     target_class: parseTargetClass(value.target_class),
   };
 }
 
 export function mapTelemetryConnection(sample: MapTelemetrySample, now: Date = new Date()): TelemetryConnection {
-  return telemetryConnection(sample.captured_at, now);
+  return telemetryConnection(sample.position_observed_at ?? sample.captured_at, now);
 }
 
 export function mapHomeAnchor(sample: MapTelemetrySample): MapHomePosition | null {
@@ -84,12 +86,13 @@ export function appendTrackPoint(
   sample: MapTelemetrySample,
   connection: TelemetryConnection,
 ): MapTrackPoint[] {
-  if (connection.state !== "ready" || sample.position === null || sample.captured_at === null) {
+  const observedAt = sample.position_observed_at ?? sample.captured_at;
+  if (connection.state !== "ready" || sample.position === null || observedAt === null) {
     return track;
   }
   const next: MapTrackPoint = {
     ...sample.position,
-    captured_at: sample.captured_at,
+    captured_at: observedAt,
   };
   const last = track.at(-1);
   if (last

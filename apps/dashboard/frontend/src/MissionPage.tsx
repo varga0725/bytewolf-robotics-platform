@@ -3,7 +3,7 @@ import { FormEvent, MouseEvent, useEffect, useRef, useState } from "react";
 import { ControlRoomMapPanel, type ControlRoomMapWaypoint } from "./ControlRoomMapPanel";
 import { api, post } from "./api";
 import { pointFromLocalOffset } from "./localMissionCoordinates";
-import { mapHomeAnchor, parseMapTelemetry, type MapHomePosition } from "./controlRoomMapTelemetry";
+import { mapHomeAnchor, mapTelemetryConnection, parseMapTelemetry, type MapHomePosition } from "./controlRoomMapTelemetry";
 import {
   buildDemoWaypointMissionPayload,
   MAX_MAP_WAYPOINTS,
@@ -89,7 +89,7 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
   const [pendingTarget, setPendingTarget] = useState<{ latitude_deg: number; longitude_deg: number } | null>(null);
   const [mapWaypoints, setMapWaypoints] = useState<ControlRoomMapWaypoint[]>([]);
   const [mapHome, setMapHome] = useState<MapHomePosition | null>(null);
-  const statusTimer = useRef<number | null>(null);
+  const statusMonitor = useRef<AbortController | null>(null);
   const mapSize = 400;
   // The view is chosen, not derived from the safety radius. Deriving it meant
   // the envelope's widening to 2 km silently made this map useless: one screen
@@ -192,7 +192,7 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
 
   useEffect(() => {
     void api<Envelope>("/api/v1/safety-envelope")
-      .then((value) => { setEnvelope(value); setStatus("Jelölj ki egy célpontot és kérj tervet."); })
+      .then((value) => { setEnvelope(value); if (!statusMonitor.current) setStatus("Jelölj ki egy célpontot és kérj tervet."); })
       .catch((error: Error) => setStatus(`A safety-profil nem olvasható: ${error.message}`));
   }, []);
 
@@ -205,8 +205,8 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
       monitor(planId);
     }
     return () => {
-      if (statusTimer.current !== null) window.clearInterval(statusTimer.current);
-      statusTimer.current = null;
+      statusMonitor.current?.abort();
+      statusMonitor.current = null;
     };
   }, []);
 
@@ -217,7 +217,9 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
         const payload = await api<unknown>("/api/v1/telemetry");
         if (!active) return;
         const sample = parseMapTelemetry(payload);
-        setMapHome(mapHomeAnchor(sample));
+        setMapHome(sample.position !== null && mapTelemetryConnection(sample).state === "ready"
+          ? mapHomeAnchor(sample)
+          : null);
       } catch {
         if (active) setMapHome(null);
       }
@@ -269,10 +271,6 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
     void refreshWorldMap();
     const interval = window.setInterval(() => void refreshWorldMap(), 5000);
     return () => { active = false; window.clearInterval(interval); };
-  }, []);
-
-  useEffect(() => () => {
-    if (statusTimer.current !== null) window.clearInterval(statusTimer.current);
   }, []);
 
   async function review(event: FormEvent) {
@@ -387,26 +385,42 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
   }
 
   function monitor(planId: string) {
-    if (statusTimer.current !== null) window.clearInterval(statusTimer.current);
+    statusMonitor.current?.abort();
+    const controller = new AbortController();
+    statusMonitor.current = controller;
+    const { signal } = controller;
+    const path = `/api/v1/plans/${encodeURIComponent(planId)}/status`;
     rememberActivePlan(planId);
-    statusTimer.current = window.setInterval(() => {
-      void api<{ status: string; message: string }>(`/api/v1/plans/${encodeURIComponent(planId)}/status`)
-        .then((result) => {
-          if (result.status !== "completed" && result.status !== "failed") return;
-          if (statusTimer.current !== null) window.clearInterval(statusTimer.current);
-          statusTimer.current = null;
+
+    let timer: number;
+    let disconnected = false;
+    async function poll() {
+      try {
+        const result = await api<{ status: string; message: string }>(path, { signal });
+        if (signal.aborted) return;
+        if (result.status === "completed" || result.status === "failed") {
+          statusMonitor.current = null;
           rememberActivePlan(null);
           setStatus(result.message);
           logEvent(result.message);
-        })
-        .catch(() => {
-          if (statusTimer.current !== null) window.clearInterval(statusTimer.current);
-          statusTimer.current = null;
-          rememberActivePlan(null);
-          setStatus("A végrehajtási állapot nem ellenőrizhető. A naplót vagy a Visszajátszás nézetet ellenőrizd.");
-          logEvent("A végrehajtási állapot figyelése megszakadt.");
-        });
-    }, 1000);
+          return;
+        }
+        if (disconnected) {
+          disconnected = false;
+          setStatus(result.message);
+        }
+      } catch {
+        if (signal.aborted) return;
+        if (!disconnected) {
+          disconnected = true;
+          setStatus("A végrehajtási állapot átmenetileg nem elérhető. Újrapróbálkozás…");
+        }
+      }
+      timer = window.setTimeout(() => void poll(), 1000);
+    }
+
+    timer = window.setTimeout(() => void poll(), 1000);
+    signal.addEventListener("abort", () => window.clearTimeout(timer), { once: true });
   }
 
   return (

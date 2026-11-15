@@ -54,20 +54,26 @@ describe("MissionPage", () => {
       return instance as unknown as L.Map;
     });
   });
-  it("resumes monitoring an approved mission after a page reload", async () => {
+  it("resumes monitoring after a reload and retries a transient status failure", async () => {
     const planId = "e006e612-bc67-4ae2-927f-dc0e88f174e9.demo-waypoint-mission.json";
     window.sessionStorage.setItem("bytewolfActivePlan", planId);
     const statusPath = `/api/v1/plans/${encodeURIComponent(planId)}/status`;
-    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
-      path === statusPath ? { status: "completed", message: "Küldetés befejezve." } : missionPayload(path),
-    ), { status: 200 })));
+    let statusRequests = 0;
+    const fetchMock = vi.fn(async (path: string) => {
+      if (path !== statusPath) return new Response(JSON.stringify(missionPayload(path)), { status: 200 });
+      statusRequests += 1;
+      if (statusRequests === 1) return new Response(null, { status: 503 });
+      return new Response(JSON.stringify({ status: "completed", message: "Küldetés befejezve." }), { status: 200 });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<MissionPage commandsEnabled />);
 
     expect(await screen.findByText(`Futó küldetés követése folytatódik: ${planId}`)).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("Küldetés befejezve.")).toBeInTheDocument(), { timeout: 2500 });
-    expect(fetchMock.mock.calls.some(([path]) => path === statusPath)).toBe(true);
+    expect(await screen.findByText(/átmenetileg nem elérhető/, {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(window.sessionStorage.getItem("bytewolfActivePlan")).toBe(planId);
+    expect(await screen.findByText("Küldetés befejezve.", {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(statusRequests).toBe(2);
     expect(window.sessionStorage.getItem("bytewolfActivePlan")).toBeNull();
   });
 
