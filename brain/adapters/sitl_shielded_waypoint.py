@@ -55,6 +55,32 @@ class SitlShieldedWaypointNavigator:
     def __init__(self, drone, profile: SafetyProfile, *, scan_path: Path = Path("var/runtime/lidar-scans.json")) -> None:
         self.drone, self.profile, self.scan_path = drone, profile, scan_path
 
+    async def require_lidar_scans(self, *, timeout_s: float = 5.0) -> str:
+        """Refuse before takeoff unless a 2D lidar scan actually arrives.
+
+        The shield treats a bearing with no scan as unobserved and stops every
+        motion. Without scans the route therefore hovered in place until its 120 s
+        timeout (a `base` airframe carries no lidar), which looked like a hung
+        mission rather than the refusal it was.
+        """
+        topic = discover_scan_topic()
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ("gz", "topic", "-e", "-t", topic, "-n", "1", "--json-output"),
+                capture_output=True, text=True, timeout=timeout_s, check=False,
+                env=dict(os.environ, GZ_IP="127.0.0.1"),
+            )
+            received = bool(result.stdout.strip())
+        except subprocess.TimeoutExpired:
+            received = False
+        if not received:
+            raise RuntimeError(
+                f"No 2D lidar scan arrived on {topic} within {timeout_s:g} s. The obstacle "
+                "shield would block every motion, so the mission is refused before takeoff."
+            )
+        return topic
+
     async def __call__(self, command: WaypointCommand) -> GlobalPosition:
         self.scan_path.parent.mkdir(parents=True, exist_ok=True)
         stream = self.scan_path.open("w", encoding="utf-8")
