@@ -127,12 +127,22 @@ if [[ "$PROFILE" == "full-sensors" ]]; then
   PX4_PID=$!
   (
     sleep 3
-    apply_bytewolf_sitl_failsafe_profile "$PROJECT_ROOT" "$PX4_BUILD_DIR" || exit 1
+    if ! apply_bytewolf_sitl_failsafe_profile "$PROJECT_ROOT" "$PX4_BUILD_DIR" "$PX4_RUN_DIR"; then
+      print -u2 "BYTEWOLF_SITL_FAILSAFE_PROFILE_FAILED: ${PX4_RUN_DIR}/sitl-failsafe-profile.status"
+      exit 1
+    fi
   ) &
   FAILSAFE_APPLY_PID=$!
   wait "$PX4_PID"
-  wait "$FAILSAFE_APPLY_PID" 2>/dev/null || true
-  exit $?
+  px4_status=$?
+  if [[ -n "${FAILSAFE_APPLY_PID:-}" ]]; then
+    wait "$FAILSAFE_APPLY_PID" 2>/dev/null
+    failsafe_apply_status=$?
+    if (( failsafe_apply_status != 0 )); then
+      print -u2 "BYTEWOLF_SITL_FAILSAFE_PROFILE_FAILED: ${PX4_RUN_DIR}/sitl-failsafe-profile.status"
+    fi
+  fi
+  exit "$px4_status"
 fi
 
 cd "$PX4_ROOT"

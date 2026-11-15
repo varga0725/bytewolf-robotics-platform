@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
@@ -10,12 +11,17 @@ from brain.preflight_params.evaluate import evaluate_params
 from brain.preflight_params.param_value import MAV_PARAM_TYPE_INT32, MAV_PARAM_TYPE_REAL32, ParamValue
 from brain.preflight_params.rules import RULES
 from brain.preflight_params.sources import parse_qgc_params_file
+from simulation.px4 import apply_sitl_failsafe_profile as apply_cli
 from simulation.px4.sitl_failsafe_profile import (
     SitlFailsafeProfileError,
     apply_sitl_failsafe_profile,
+    profile_applied_in_run_directory,
     refuse_apply_without_sitl_indicators,
     sitl_failsafe_parameter_tuples,
     sitl_failsafe_params_file,
+    sitl_failsafe_status_path,
+    verify_sitl_failsafe_profile,
+    write_sitl_failsafe_status,
 )
 
 
@@ -69,6 +75,47 @@ class SitlFailsafeApplyTests(unittest.TestCase):
         apply_mock.assert_called_once()
         parameters = apply_mock.call_args.args[0]
         self.assertEqual(parameters, sitl_failsafe_parameter_tuples())
+
+
+class SitlFailsafeStatusAndVerifyTests(unittest.TestCase):
+    def test_status_file_records_applied_and_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            write_sitl_failsafe_status(run_dir, "applied", reason="count=11")
+            self.assertTrue(profile_applied_in_run_directory(run_dir))
+            text = sitl_failsafe_status_path(run_dir).read_text(encoding="utf-8")
+            self.assertIn("applied", text)
+            write_sitl_failsafe_status(run_dir, "failed", reason="gate")
+            self.assertFalse(profile_applied_in_run_directory(run_dir))
+
+    def test_verify_detects_mismatched_values(self) -> None:
+        expected = dict(sitl_failsafe_parameter_tuples())
+
+        def read(name: str, _directory: Path) -> float:
+            return expected[name]
+
+        verify_sitl_failsafe_profile(px4_build_directory=Path("build"), read_px4_parameter=read)
+
+        def bad_read(name: str, _directory: Path) -> float:
+            value = expected[name]
+            return value + (1.0 if name == "GF_MAX_HOR_DIST" else 0.0)
+
+        with self.assertRaises(SitlFailsafeProfileError):
+            verify_sitl_failsafe_profile(px4_build_directory=Path("build"), read_px4_parameter=bad_read)
+
+    def test_cli_verify_requires_applied_status_when_run_dir_set(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            code = apply_cli.main(["--verify", "--px4-run-directory", str(run_dir)])
+            self.assertEqual(code, 3)
+            self.assertIn("failed", sitl_failsafe_status_path(run_dir).read_text(encoding="utf-8"))
+
+    def test_apply_helper_stops_retry_on_exit_code_two(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        helper = (root / "simulation/gazebo/launch/apply_sitl_failsafe_profile.zsh").read_text(encoding="utf-8")
+        self.assertIn("exit_code=$?", helper)
+        self.assertIn("(( exit_code == 2 ))", helper)
+        self.assertRegex(helper, r"exit_code == 2.*\n.*return 2", flags=0)
 
 
 class SitlFailsafePreflightTests(unittest.TestCase):

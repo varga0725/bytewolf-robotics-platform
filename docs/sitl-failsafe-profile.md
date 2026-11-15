@@ -33,6 +33,33 @@ sees at least two independent indicators (e.g. `SYS_AUTOSTART` in the gz/SIH POS
 
 Skip with `BYTEWOLF_SKIP_SITL_FAILSAFE_PROFILE=1` (debug only).
 
+## Status file and verify
+
+Each disposable PX4 run directory (`PX4_RUN_DIR`, or the scenario runner’s `px4-sitl-run/`)
+receives **`sitl-failsafe-profile.status`**:
+
+- First line: `applied`, `failed`, or `skipped`
+- Further lines: human-readable reason (gate refusal, px4-param error, etc.)
+
+**Consumers must check this before flight or parameter review** — for example the BYT-66
+in-flight harness and the preflight checker on a live SITL URL should confirm `applied` (or run
+verify below) before treating geofence/failsafe rows as meaningful.
+
+Verify read-back without writing:
+
+```bash
+.venv/bin/python -m simulation.px4.apply_sitl_failsafe_profile \
+  --px4-build-directory PX4-Autopilot/build/px4_sitl_default \
+  --px4-run-directory "$PX4_RUN_DIR" \
+  --verify
+```
+
+Exit codes: `0` verified, `1` client/transport, `2` gate or parameter mismatch, `3` status file
+missing or not `applied`.
+
+Launcher failures print `BYTEWOLF_SITL_FAILSAFE_PROFILE_FAILED` on stderr and leave the status
+file under `PX4_RUN_DIR`.
+
 ## Guard
 
 [`simulation/px4/sitl_failsafe_profile.py`](../simulation/px4/sitl_failsafe_profile.py) reads `SYS_AUTOSTART`, `SIM_GZ_EN`, and/or `SIH_VEHICLE_TYPE` through PX4's local client, reuses `collect_param_based_sitl_signals`, and raises `SitlFailsafeProfileError` when fewer than two indicators match. No MAVLink parameter write happens without that check.
