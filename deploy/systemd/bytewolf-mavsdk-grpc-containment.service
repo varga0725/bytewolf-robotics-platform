@@ -1,0 +1,21 @@
+[Unit]
+Description=ByteWolf mavsdk_server gRPC firewall containment (oneshot)
+Documentation=file:///home/bytewolf/bytewolf-robotics/platform/docs/mavsdk-server-grpc-listen-address.md
+Before=bytewolf.target
+PartOf=bytewolf.target
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/bytewolf/bytewolf-robotics/platform
+ExecStart=/home/bytewolf/bytewolf-robotics/platform/deploy/systemd/apply-mavsdk-grpc-containment.sh
+ProtectHome=read-only
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+PrivateTmp=yes
+
+[Install]
+WantedBy=bytewolf.target multi-user.target

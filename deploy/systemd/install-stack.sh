@@ -48,6 +48,8 @@ for unit in "$UNIT_ROOT"/bytewolf-*.service; do
 done
 
 sudo systemctl daemon-reload
+sudo systemctl enable bytewolf-mavsdk-grpc-containment.service
+sudo systemctl start bytewolf-mavsdk-grpc-containment.service
 sudo systemctl enable bytewolf.target
 sudo systemctl restart bytewolf.target
 

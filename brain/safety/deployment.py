@@ -26,6 +26,8 @@ from urllib.parse import urlparse
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from brain.safety.connection_policy import ConnectionPolicyError, require_local_sitl_udp_endpoint
+
 
 _PERMIT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[2]
@@ -338,16 +340,13 @@ def _validate_endpoint(endpoint: str) -> None:
 
 
 def _require_local_simulation_endpoint(endpoint: str) -> None:
-    parsed = urlparse(endpoint)
-    if parsed.scheme not in {"udpin", "udpout"} or parsed.hostname not in {
-        "127.0.0.1",
-        "localhost",
-        "::1",
-    }:
+    try:
+        require_local_sitl_udp_endpoint(endpoint)
+    except ConnectionPolicyError as error:
         raise DeploymentAuthorizationError(
             "Simulation mode only permits a local UDP SITL endpoint; serial and remote "
-            "vehicle endpoints require an explicit physical read-only mode."
-        )
+            f"vehicle endpoints require an explicit physical read-only mode. ({error})"
+        ) from error
 
 
 def _parse_timestamp(value: Any) -> datetime:

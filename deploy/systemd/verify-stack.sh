@@ -11,6 +11,7 @@ units=(
   bytewolf-world-map.service
   bytewolf-yolo.service
   bytewolf-controlroom.service
+  bytewolf-mavsdk-grpc-containment.service
   bytewolf.target
 )
 
@@ -20,6 +21,13 @@ for unit in "${units[@]}"; do
 done
 
 cd "$PROJECT_ROOT"
+
+if ! ss -ltnp | .venv/bin/python -m brain.deploy.mavsdk_grpc_containment verify-posture; then
+  echo "Refusing stack verification: mavsdk_server gRPC firewall containment is missing or incomplete." >&2
+  echo "Run: sudo systemctl start bytewolf-mavsdk-grpc-containment.service" >&2
+  exit 1
+fi
+
 .venv/bin/python - "$API_ROOT" <<'PY'
 from datetime import datetime, timezone
 import json
