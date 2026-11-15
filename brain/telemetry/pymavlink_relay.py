@@ -347,8 +347,6 @@ def run_pymavlink_relay(
                 state = apply_mavlink_message(state, message, observed_at=clock())
                 if core_message_pending_write(message_type, before, state):
                     pending_core_write = True
-                if message_type == "HEARTBEAT" and heartbeat_pending_write(before, state):
-                    pending_core_write = True
                 flush_snapshot()
                 continue
 

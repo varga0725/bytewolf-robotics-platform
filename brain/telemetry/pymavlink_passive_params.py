@@ -22,7 +22,7 @@ def request_param_read(mavlink: object, *, target_system: int, target_component:
     param_id = encode_param_id(param_name)
     send = getattr(getattr(mavlink, "mav", None), "param_request_read_send", None)
     if not callable(send):
-        raise RuntimeError("pymavlink connection cannot issue PARAM_REQUEST_READ.")
+        return
     send(target_system, target_component, param_id, -1)
 
 

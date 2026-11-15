@@ -30,10 +30,10 @@ def follow_up_param_reads(sys_autostart: int | None) -> tuple[str, ...]:
         return ()
     gz_low, gz_high = _GZ_AUTOSTART_RANGE
     if gz_low <= sys_autostart <= gz_high:
-        return (_PARAM_SIM_GZ_EN,)
+        return ("SIM_GZ_EN",)
     sih_low, sih_high = _SIH_AUTOSTART_RANGE
     if sih_low <= sys_autostart <= sih_high:
-        return (_PARAM_SIH_VEHICLE_TYPE,)
+        return ("SIH_VEHICLE_TYPE",)
     return ()
 
 
