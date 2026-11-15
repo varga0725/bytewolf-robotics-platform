@@ -52,7 +52,7 @@ from brain.telemetry.domain import (
     SupplementalTelemetryEvent,
 )
 from brain.telemetry.persistence import ObservationHistoryEvent, TelemetryHistoryEvent
-from apps.gateway.plan_execution import execute_reviewed_plan, validate_px4_endpoint_for_server
+from apps.gateway.plan_execution import read_demo_plan_status, execute_reviewed_plan, validate_px4_endpoint_for_server
 from apps.gateway.telegram_mission_gateway import _review_with_cli
 from shared.safety.commands_gate import capabilities_document, commands_enabled
 
@@ -275,7 +275,19 @@ def create_app(
 
     @app.get("/api/v1/plans/{plan_id}/status")
     def plan_status(plan_id: str) -> dict[str, str]:
-        return _execution_status(agent_artifact_dir, _mission_id(plan_id))
+        mission_id = _mission_id(plan_id)
+        for suffix in (".demo-point-rtl.json", ".demo-waypoint-mission.json"):
+            if plan_id.endswith(suffix):
+                status = read_demo_plan_status(agent_artifact_dir / f"{mission_id}{suffix}")
+                messages = {
+                    "submitted": "A PX4 előellenőrzése és a küldetés fut.",
+                    "completed": "A küldetés sikeresen befejeződött.",
+                    "failed": "A küldetés hibával zárult. Ellenőrizd a végrehajtási naplót.",
+                    "unknown": "A küldetés végrehajtási állapota nem ismert.",
+                }
+                status = status or "unknown"
+                return {"status": status, "message": messages[status]}
+        return _execution_status(agent_artifact_dir, mission_id)
 
     @app.get("/api/v1/missions/replays")
     def mission_replays() -> dict[str, object]:
@@ -952,8 +964,10 @@ def _detections_response(path: Path | None) -> Response:
 
 
 def _mission_id(value: str) -> str:
-    if value.endswith(".mission-spec.json"):
-        value = value.removesuffix(".mission-spec.json")
+    for suffix in (".mission-spec.json", ".demo-point-rtl.json", ".demo-waypoint-mission.json"):
+        if value.endswith(suffix):
+            value = value.removesuffix(suffix)
+            break
     try:
         return str(UUID(value))
     except ValueError as error:

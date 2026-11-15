@@ -104,6 +104,21 @@ class PlanExecutionSitlGateTests(unittest.TestCase):
 
 
 class WaypointPlanHomeSnapshotPathTests(unittest.TestCase):
+    def test_demo_exit_writes_terminal_status_and_releases_link(self) -> None:
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "test.demo-waypoint-mission.json"
+            lease = Path(directory) / "link.lease"
+            for returncode, status in ((0, "completed"), (1, "failed")):
+                with self.subTest(returncode=returncode):
+                    lease.touch()
+                    process = MagicMock(returncode=returncode)
+                    log = MagicMock()
+                    plan_execution._finish_demo_execution(process, log, lease, plan_path)
+                    process.wait.assert_called_once_with()
+                    log.close.assert_called_once_with()
+                    self.assertFalse(lease.exists())
+                    self.assertEqual(plan_execution.read_demo_plan_status(plan_path), status)
+
     @patch("apps.gateway.plan_execution.validate_plan_home_at_execution")
     @patch("brain.mission.demo_waypoint_reviewed_plan.require_matching_demo_waypoint_approval")
     def test_home_check_reads_the_snapshot_the_server_was_given(self, _approval, validate_home) -> None:

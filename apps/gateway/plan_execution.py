@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -23,8 +24,13 @@ from brain.mission.demo_reviewed_plan import require_matching_demo_approval
 from brain.mission.sitl_target import TargetClassifier
 from brain.safety.connection_policy import validate_local_sitl_udp_endpoint
 from brain.safety.deployment import authorize_readonly_connection
+from brain.telemetry.mavsdk_relay import write_atomic_json
 from brain.telemetry.link_lease import claim_link, default_lease_path, release_link, wait_for_free_link
 from shared.safety.execution_gate import MissionExecutionQuarantinedError, require_mission_execution_enabled
+
+
+_LOG = logging.getLogger(__name__)
+_DEMO_PLAN_SUFFIXES = (".demo-point-rtl.json", ".demo-waypoint-mission.json")
 
 
 def px4_endpoint_from_environment() -> str:
@@ -79,12 +85,42 @@ def execute_reviewed_plan(plan_name: str, *, telemetry_path: Path | None = None)
             env=dict(os.environ),
         )
         claim_link("mission", pid=_active_execution.pid, path=lease_path)
-        threading.Thread(
-            target=_release_link_when_finished,
-            args=(_active_execution, log, lease_path),
-            daemon=True,
-        ).start()
+        if plan_path.name.endswith(_DEMO_PLAN_SUFFIXES):
+            _write_demo_status(plan_path, "submitted")
+            target = _finish_demo_execution
+            args = (_active_execution, log, lease_path, plan_path)
+        else:
+            target = _release_link_when_finished
+            args = (_active_execution, log, lease_path)
+        threading.Thread(target=target, args=args, daemon=True).start()
     return "submitted after local safety validation"
+
+
+def _demo_status_path(plan_path: Path) -> Path:
+    return plan_path.with_name(f"{plan_path.name}.execution.json")
+
+
+def _write_demo_status(plan_path: Path, status: str) -> None:
+    try:
+        write_atomic_json(_demo_status_path(plan_path), {"status": status})
+    except OSError:
+        _LOG.exception("Could not persist the demo mission execution status.")
+
+
+def _finish_demo_execution(process: subprocess.Popen[bytes], log, lease_path: Path, plan_path: Path) -> None:
+    _release_link_when_finished(process, log, lease_path)
+    _write_demo_status(plan_path, "completed" if process.returncode == 0 else "failed")
+
+
+def read_demo_plan_status(plan_path: Path) -> str | None:
+    try:
+        status = json.loads(_demo_status_path(plan_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if isinstance(status, dict) and status.get("status") in ("submitted", "completed", "failed"):
+        return status["status"]
+    return None
+
 
 
 def _validate_plan_before_spawn(plan_path: Path, telemetry_path: Path | None = None) -> None:
