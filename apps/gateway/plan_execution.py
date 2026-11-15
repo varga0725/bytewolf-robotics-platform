@@ -38,13 +38,14 @@ def validate_px4_endpoint_for_server() -> None:
     px4_endpoint_from_environment()
 
 
-def execute_reviewed_plan(plan_name: str) -> str:
+def execute_reviewed_plan(plan_name: str, *, telemetry_path: Path | None = None) -> str:
+    """Spawn a reviewed plan; ``telemetry_path`` must be the snapshot the plan was anchored to."""
     require_mission_execution_enabled()
 
     plan_path = _DEFAULT_PLAN_DIRECTORY / plan_name
     if not _PLAN_NAME.fullmatch(plan_name) or not plan_path.is_file():
         raise RuntimeError("Reviewed plan does not exist.")
-    _validate_plan_before_spawn(plan_path)
+    _validate_plan_before_spawn(plan_path, telemetry_path)
 
     global _active_execution
     with _execution_lock:
@@ -86,7 +87,7 @@ def execute_reviewed_plan(plan_name: str) -> str:
     return "submitted after local safety validation"
 
 
-def _validate_plan_before_spawn(plan_path: Path) -> None:
+def _validate_plan_before_spawn(plan_path: Path, telemetry_path: Path | None = None) -> None:
     if plan_path.name.endswith(".demo-point-rtl.json"):
         require_matching_demo_approval(plan_path)
         return
@@ -94,7 +95,7 @@ def _validate_plan_before_spawn(plan_path: Path) -> None:
         from brain.mission.demo_waypoint_reviewed_plan import require_matching_demo_waypoint_approval
 
         require_matching_demo_waypoint_approval(plan_path)
-        validate_plan_home_at_execution(plan_path, resolve_dashboard_snapshot_path(None))
+        validate_plan_home_at_execution(plan_path, resolve_dashboard_snapshot_path(telemetry_path))
         return
     from brain.cli.fly_nim_mission import _load_approved_plan
     from brain.mission_spec.validation import load_mission_safety_profile

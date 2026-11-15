@@ -105,13 +105,25 @@ export function MissionPage({ commandsEnabled }: MissionPageProps) {
     if (!box.width || !box.height) return;
     const east_m = ((event.clientX - box.left) / box.width * mapSize - mapSize / 2) / mapScale;
     const north_m = (mapSize / 2 - (event.clientY - box.top) / box.height * mapSize) / mapScale;
-    const pending = mapHome === null ? null : pointFromLocalOffset(mapHome, { north_m, east_m });
-    applyWaypointSelection({
-      north_m,
-      east_m,
-      latitude_deg: pending?.latitude_deg ?? 0,
-      longitude_deg: pending?.longitude_deg ?? 0,
-    });
+    const point = mapHome === null ? null : pointFromLocalOffset(mapHome, { north_m, east_m });
+    if (kind === "waypoints") {
+      if (point === null) {
+        setStatus("PX4 HOME_POSITION hiányzik; waypoint nem vehető fel.");
+        return;
+      }
+      appendMapWaypoint({ north_m, east_m, ...point });
+      return;
+    }
+    if (point === null) {
+      // No home yet: keep the N/E pick, but never invent a 0°,0° map marker.
+      setNorth(north_m.toFixed(1));
+      setEast(east_m.toFixed(1));
+      setPendingTarget(null);
+      setPlan(null);
+      setStatus(`Térképi cél kijelölve: É ${north_m.toFixed(1)} m, K ${east_m.toFixed(1)} m. A SafetyGate ellenőrzi a tervet.`);
+      return;
+    }
+    applyWaypointSelection({ north_m, east_m, ...point });
   }
 
   function clearPendingTarget() {

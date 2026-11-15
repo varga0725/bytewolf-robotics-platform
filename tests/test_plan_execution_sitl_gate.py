@@ -102,5 +102,14 @@ class PlanExecutionSitlGateTests(unittest.TestCase):
         self.assertEqual(call_order, ["classify", "popen"])
 
 
+
+class WaypointPlanHomeSnapshotPathTests(unittest.TestCase):
+    @patch("apps.gateway.plan_execution.validate_plan_home_at_execution")
+    @patch("brain.mission.demo_waypoint_reviewed_plan.require_matching_demo_waypoint_approval")
+    def test_home_check_reads_the_snapshot_the_server_was_given(self, _approval, validate_home) -> None:
+        plan_path = Path("x.demo-waypoint-mission.json")
+        plan_execution._validate_plan_before_spawn(plan_path, Path("/srv/live.json"))
+        validate_home.assert_called_once_with(plan_path, Path("/srv/live.json"))
+
 if __name__ == "__main__":
     unittest.main()

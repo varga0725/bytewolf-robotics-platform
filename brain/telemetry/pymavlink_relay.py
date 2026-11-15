@@ -39,6 +39,7 @@ _CORE_MESSAGE_TYPES = frozenset(
         "SYS_STATUS",
         "BATTERY_STATUS",
         "EXTENDED_SYS_STATE",
+        "HOME_POSITION",
     }
 )
 # MAV_COMP_ID_AUTOPILOT1 — vehicle heartbeat, not companion/GCS component heartbeats.
@@ -156,10 +157,17 @@ def _apply_home_position_message(
     message: object,
     timestamp: datetime,
 ) -> DashboardTelemetryState:
+    # Only the autopilot whose HEARTBEAT set state.sysid may define home; a GCS or
+    # companion HOME_POSITION on the same link is ignored.
+    sysid = int(getattr(message, "get_srcSystem", lambda: 0)())
+    component = int(getattr(message, "get_srcComponent", lambda: 0)())
+    if state.sysid is None or sysid != state.sysid or component not in (0, _MAV_COMP_ID_AUTOPILOT1):
+        return state
     latitude_deg = message.latitude / 1.0e7
     longitude_deg = message.longitude / 1.0e7
     absolute_altitude_m = message.altitude / 1000.0
-    if not all(isfinite(value) for value in (latitude_deg, longitude_deg, absolute_altitude_m)):
+    # Out-of-range home would make the API reject the whole snapshot, not just home.
+    if not (-90.0 <= latitude_deg <= 90.0 and -180.0 <= longitude_deg <= 180.0):
         return state
     home = DashboardHomePosition(
         latitude_deg=latitude_deg,
@@ -236,6 +244,8 @@ def core_message_pending_write(
         return False
     if message_type in ("SYS_STATUS", "BATTERY_STATUS"):
         return before.battery is not after.battery
+    if message_type == "HOME_POSITION":
+        return before.home is not after.home
     return True
 
 

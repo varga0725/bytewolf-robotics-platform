@@ -160,7 +160,8 @@ def create_app(
             down_detections_path,
         ),
         review=_review_with_cli,
-        execute=execute_reviewed_plan,
+        # Execution must re-check home against the same snapshot the proposal used.
+        execute=lambda plan_name: execute_reviewed_plan(plan_name, telemetry_path=telemetry_path),
     )
 
     @app.get("/api/v1/telemetry")
@@ -603,7 +604,7 @@ def create_app(
             try:
                 if isinstance(request, dict) and "waypoints" in request:
                     mission = review_demo_waypoint_mission_from_map(
-                        DemoWaypointMissionMapRequest.from_dict(request, default_altitude_m=8.0),
+                        DemoWaypointMissionMapRequest.from_dict(request),
                         telemetry_path=telemetry_path,
                     )
                 else:
