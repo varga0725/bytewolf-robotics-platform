@@ -70,3 +70,49 @@ Manual apply (with SITL already running):
 .venv/bin/python -m simulation.px4.apply_sitl_failsafe_profile \
   --px4-build-directory PX4-Autopilot/build/px4_sitl_default
 ```
+
+## In-flight acceptance harness (BYT-66)
+
+After headless or GUI SITL is running with the profile **applied**, run the
+selectable scenario harness:
+
+```bash
+export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
+export PX4_RUN_DIR=/path/to/px4-sitl-run   # must contain sitl-failsafe-profile.status
+
+.venv/bin/python -m brain.cli.acceptance_inflight_sitl --scenario all
+```
+
+Scenarios (`--scenario` is repeatable; default is `all`):
+
+| Scenario | What it checks |
+|----------|----------------|
+| `datalink-loss` | ~20 m takeoff, GCS heartbeat stop, RTL after `COM_DL_LOSS_T`, land + disarm |
+| `geofence` | Goto beyond `GF_MAX_HOR_DIST`, RTL within fence + documented SITL tolerance |
+| `kill-in-air` | Normal disarm rejected in air; QGC-style emergency kill disarms within 1 s (**SITL only**) |
+| `low-battery` | Sim drain from profile: warning, RTL at critical, land at emergency (bounded timeout) |
+| `relay-inflight` | pymavlink relay: `captured_at` age &lt; 1 s, `in_air` false→true→false, loopback UDP only |
+
+Evidence JSON per scenario is written under `simulation/artifacts/acceptance-inflight-sitl/`
+(`<scenario>.json` plus `summary.json`). Each file records `outcome` (`PASS`/`FAIL`),
+`profile_check`, `timings`, `transitions` (flight mode / armed / in_air samples), and
+`failure_reason` when present. Exit code is non-zero if any selected scenario fails.
+
+**Precondition (mandatory):** the harness reads `PX4_RUN_DIR/sitl-failsafe-profile.status`
+(first line `applied`) and read-backs every profile parameter (same checks as
+`apply_sitl_failsafe_profile --verify`). If either step fails, it writes `FAIL` evidence and
+never arms.
+
+Unit tests (no network):
+
+```bash
+.venv/bin/python -m unittest tests.test_acceptance_inflight_sitl -v
+```
+
+Opt-in live relay scenario (requires SITL URL and applied profile):
+
+```bash
+export BYTEWOLF_SITL_CONNECTION=udpin://127.0.0.1:14540
+export BYTEWOLF_MISSION_EXECUTION_ENABLED=true
+.venv/bin/python -m unittest tests.test_acceptance_inflight_sitl.AcceptanceInflightSitlLiveTests -v
+```
