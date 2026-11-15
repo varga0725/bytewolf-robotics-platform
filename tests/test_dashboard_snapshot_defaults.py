@@ -30,6 +30,7 @@ _READERS_WRITERS = (
     "brain/cli/ros2_telemetry_bridge.py",
     "simulation/perception/survey_recorder.py",
     "apps/api/server.py",
+    "apps/gateway/plan_execution.py",
 )
 
 
@@ -61,6 +62,12 @@ class DashboardSnapshotDefaultUnityTests(unittest.TestCase):
                     "effective_dashboard_snapshot_path" in text or "resolve_dashboard_snapshot_path" in text,
                     f"{relative} must resolve the default through the shared helper",
                 )
+
+    def test_spawn_home_check_uses_shared_default_path(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "apps/gateway/plan_execution.py").read_text(encoding="utf-8")
+        self.assertIn("resolve_dashboard_snapshot_path", text)
+        self.assertIn("validate_plan_home_at_execution", text)
 
     def test_api_server_resolves_telemetry_file_in_main(self) -> None:
         tree = ast.parse(

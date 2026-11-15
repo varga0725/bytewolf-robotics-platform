@@ -20,6 +20,10 @@ var/pi-agent/
 var/world-memory/
 var/fleet/
 var/command-audit/
+var/runtime/
+
+# Timestamped local demo-waypoint run dumps (latest.json and committed fixtures stay tracked).
+simulation/artifacts/demo-waypoint-mission/demo-waypoint-mission-*.json
 apps/pi_agent/var/
 apps/pi_agent/models-store.json
 apps/pi_agent/apps/pi_agent/models-store.json

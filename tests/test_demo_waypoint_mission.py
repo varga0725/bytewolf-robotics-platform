@@ -25,6 +25,7 @@ from brain.mission.demo_waypoint_mission import (
     authorize_demo_waypoint_mission,
     consecutive_acceptance_summary,
     default_demo_waypoint_loop,
+    demo_waypoint_config_from_map,
     load_demo_waypoint_mission_config,
     validate_demo_waypoint_mission_progress,
 )
@@ -55,6 +56,20 @@ class DemoWaypointMissionValidationTests(unittest.TestCase):
         with self.assertRaises(SafetyViolation):
             authorize_demo_waypoint_mission(gate, config, profile=profile)
 
+    def test_map_waypoints_fit_gate(self) -> None:
+        profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
+        gate = SafetyGate(profile.flight_limits())
+        config = demo_waypoint_config_from_map(
+            takeoff_altitude_m=8.0,
+            waypoints=(
+                WaypointCommand(5.0, 0.0, 8.0),
+                WaypointCommand(5.0, 5.0, 8.0),
+            ),
+            profile=profile,
+        )
+        authorize_demo_waypoint_mission(gate, config, profile=profile)
+        self.assertEqual(len(config.waypoints), 2)
+
     def test_altitude_violation_on_one_item_is_refused(self) -> None:
         profile = load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)
         gate = SafetyGate(profile.flight_limits())
@@ -77,7 +92,29 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
         plan_execution._active_execution = None
         self.directory = TemporaryDirectory()
         telemetry = Path(self.directory.name) / "telemetry.json"
-        telemetry.write_text(json.dumps({"in_air": False}), encoding="utf-8")
+        captured_at = "2026-11-15T10:00:00+00:00"
+        telemetry.write_text(
+            json.dumps(
+                {
+                    "position": {
+                        "latitude_deg": 37.416,
+                        "longitude_deg": -122.049,
+                        "absolute_altitude_m": 10.0,
+                        "relative_altitude_m": 0.0,
+                    },
+                    "battery": {"remaining_percent": 90.0, "observed_at": captured_at},
+                    "in_air": False,
+                    "captured_at": captured_at,
+                    "home": {
+                        "latitude_deg": 37.416,
+                        "longitude_deg": -122.049,
+                        "absolute_altitude_m": 0.0,
+                        "captured_at": captured_at,
+                    },
+                },
+            ),
+            encoding="utf-8",
+        )
         from tests.command_approval_helpers import IDENTITY_TEST_ENV
 
         self._commands_patch = patch.dict(
@@ -94,6 +131,40 @@ class DemoWaypointMissionApiTests(unittest.TestCase):
 
     def test_missing_session_header_is_rejected(self) -> None:
         response = self.client.post("/api/v1/missions/demo-waypoint-mission")
+        self.assertEqual(response.status_code, 422)
+
+    def test_review_map_waypoints_without_execution(self) -> None:
+        captured_at = "2026-11-15T10:00:00+00:00"
+        response = self.client.post(
+            "/api/v1/missions/demo-waypoint-mission",
+            headers={"X-ByteWolf-Session": SESSION},
+            json={
+                "takeoff_altitude_m": 8.0,
+                "goal": "Térképes többpontos teszt",
+                "home": {
+                    "latitude_deg": 37.416,
+                    "longitude_deg": -122.049,
+                    "absolute_altitude_m": 0.0,
+                    "captured_at": captured_at,
+                },
+                "waypoints": [
+                    {"latitude_deg": 37.41609, "longitude_deg": -122.0489, "relative_altitude_m": 8.0},
+                    {"latitude_deg": 37.41619, "longitude_deg": -122.0487, "relative_altitude_m": 8.0},
+                ],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["mission_type"], MISSION_TYPE)
+        self.assertEqual(len(body["waypoints"]), 2)
+        self.assertIn("GOTO_1", body["steps"])
+
+    def test_empty_map_waypoint_list_rejected(self) -> None:
+        response = self.client.post(
+            "/api/v1/missions/demo-waypoint-mission",
+            headers={"X-ByteWolf-Session": SESSION},
+            json={"waypoints": []},
+        )
         self.assertEqual(response.status_code, 422)
 
     def test_review_registers_plan_without_execution(self) -> None:

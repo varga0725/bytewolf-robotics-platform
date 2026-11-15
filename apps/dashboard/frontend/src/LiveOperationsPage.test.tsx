@@ -16,6 +16,8 @@ function mockOperationsApi(overrides: Record<string, unknown> = {}) {
       captured_at: fresh,
       in_air: true,
       battery_percent: 76,
+      heading_deg: 132,
+      target_class: "sitl_verified",
       position: { latitude_deg: 47.4979, longitude_deg: 19.0402, absolute_altitude_m: 120, relative_altitude_m: 8.5 },
     },
     "/api/v1/safety-envelope": { max_altitude_m: 20, max_radius_m: 50, minimum_battery_percent_to_start: 40 },
@@ -35,6 +37,7 @@ describe("LiveOperationsPage", () => {
     expect(screen.getByRole("region", { name: "Robot és küldetési összefoglaló" })).toHaveTextContent("LEVEGŐBEN");
     expect(screen.getByRole("region", { name: "Élő helyzetkép" })).toHaveTextContent("raklap");
     expect(screen.getByRole("region", { name: "Telemetria, safety és parancsidővonal" })).toHaveTextContent("Nincs végrehajtási parancs");
+    expect(screen.getByRole("application", { name: "Élő OpenStreetMap pozíció és nyomvonal" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Élő akadálytérkép" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Elülső kamera élőkép előnézet" })).toHaveAttribute("src", "/api/v1/cameras/front/stream");
     expect(screen.queryByRole("button", { name: /jóváhagy|indít|visszatérés|leszállás/i })).not.toBeInTheDocument();

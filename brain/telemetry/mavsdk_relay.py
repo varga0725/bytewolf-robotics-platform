@@ -67,6 +67,14 @@ class TelemetryVehicle(Protocol):
 
 
 @dataclass(frozen=True)
+class DashboardHomePosition:
+    latitude_deg: float
+    longitude_deg: float
+    absolute_altitude_m: float
+    observed_at: datetime
+
+
+@dataclass(frozen=True)
 class DashboardTelemetryState:
     """Immutable dashboard state collected from declared telemetry sources."""
 
@@ -87,6 +95,7 @@ class DashboardTelemetryState:
     sysid_observed_at: datetime | None = None
     autopilot: str | None = None
     autopilot_observed_at: datetime | None = None
+    home: DashboardHomePosition | None = None
     vehicle_identity: dict[str, object] | None = None
 
     @property
@@ -190,6 +199,13 @@ class DashboardTelemetryState:
             document["autopilot"] = self.autopilot
             if self.autopilot_observed_at is not None:
                 document["autopilot_observed_at"] = _format_timestamp(self.autopilot_observed_at)
+        if self.home is not None:
+            document["home"] = {
+                "latitude_deg": self.home.latitude_deg,
+                "longitude_deg": self.home.longitude_deg,
+                "absolute_altitude_m": self.home.absolute_altitude_m,
+                "captured_at": _format_timestamp(self.home.observed_at),
+            }
         if self.vehicle_identity is not None:
             document["vehicle_identity"] = dict(self.vehicle_identity)
         return document

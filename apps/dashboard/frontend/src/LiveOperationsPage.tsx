@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "./api";
+import { ControlRoomMapPanel } from "./ControlRoomMapPanel";
 
 type Telemetry = { capturedAt: string; inAir: boolean | null; battery: number | null; altitude: number | null; position: string | null };
 type SafetyEnvelope = { maxAltitude: number; maxRadius: number; minBattery: number };
@@ -186,6 +187,7 @@ export function LiveOperationsPage() {
 
       <section className="live-operations-zone" aria-labelledby="live-situation-title">
         <p className="eyebrow">02 · BIZONYÍTÉK-ALAPÚ HELYZETKÉP</p><h3 id="live-situation-title">Élő helyzetkép</h3>
+        <ControlRoomMapPanel ariaLabel="Élő OpenStreetMap pozíció és nyomvonal" />
         <OccupancyPreview verified={state.occupancyVerified} cells={state.cells} />
         <div className="camera-stream-frame">
           <img src="/api/v1/cameras/front/stream" alt="Elülső kamera élőkép előnézet" />
