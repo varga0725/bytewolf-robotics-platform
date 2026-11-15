@@ -9,6 +9,8 @@ Requires=bytewolf-sitl.service bytewolf-telemetry.service bytewolf-controlroom.s
 # late or an encoder fails. They remain part of the target lifecycle, but are
 # deliberately soft dependencies of the flight-independent core.
 Wants=bytewolf-camera-front.service bytewolf-camera-down.service bytewolf-world-map.service bytewolf-yolo.service
+Wants=bytewolf-mavsdk-grpc-containment.service
+After=bytewolf-mavsdk-grpc-containment.service
 After=bytewolf-sitl.service bytewolf-telemetry.service bytewolf-controlroom.service
 After=bytewolf-camera-front.service bytewolf-camera-down.service bytewolf-world-map.service
 After=bytewolf-yolo.service
