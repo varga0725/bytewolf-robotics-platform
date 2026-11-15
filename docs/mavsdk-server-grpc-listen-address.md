@@ -72,4 +72,5 @@ The dashboard telemetry relay (`brain.cli.dashboard_telemetry`) now defaults to
 ```
 
 `--backend mavsdk` still spawns `mavsdk_server` with gRPC on `0.0.0.0` as
-documented above.
+documented above. The pymavlink backend sends no GCS heartbeat; PX4 may warn
+about a missing GCS link in SITL while the dashboard relay is passive-only.

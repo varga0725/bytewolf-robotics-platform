@@ -15,6 +15,7 @@ from brain.telemetry.domain import (
     PositionTelemetryEvent,
     SupplementalTelemetryEvent,
 )
+from brain.telemetry.link_lease import link_is_leased
 from brain.telemetry.mavsdk_relay import DashboardTelemetryState, write_atomic_json
 
 
@@ -107,6 +108,24 @@ def apply_mavlink_message(
     return state
 
 
+def core_snapshot_fingerprint(state: DashboardTelemetryState) -> tuple[float, ...] | None:
+    """Hash the three mandatory dashboard fields; heading changes are excluded."""
+
+    if not state.complete:
+        return None
+    assert state.position is not None
+    assert state.battery is not None
+    assert state.flight_state is not None
+    return (
+        state.position.latitude_deg,
+        state.position.longitude_deg,
+        state.position.absolute_altitude_m,
+        state.position.relative_altitude_m,
+        state.battery.remaining_percent,
+        float(state.flight_state.in_air),
+    )
+
+
 def _normalize_heading_deg(yaw_deg: float) -> float:
     wrapped = yaw_deg % 360.0
     if wrapped < 0:
@@ -118,8 +137,10 @@ def run_pymavlink_relay(
     connection: str,
     destination: Path,
     *,
-    stale_timeout_s: float,
     recv_timeout_s: float = 1.0,
+    write_interval_s: float = 0.2,
+    lease_poll_s: float = 0.5,
+    link_lease: Path | None = None,
     clock: Callable[[], datetime] | None = None,
     mavlink_factory: Callable[[str], object] | None = None,
     should_stop: Callable[[], bool] | None = None,
@@ -128,8 +149,8 @@ def run_pymavlink_relay(
 ) -> None:
     """Receive MAVLink on a passive connection and atomically update the snapshot."""
 
-    if stale_timeout_s <= 0:
-        raise ValueError("stale_timeout_s must be positive.")
+    if write_interval_s <= 0:
+        raise ValueError("write_interval_s must be positive.")
 
     clock = clock or (lambda: datetime.now(timezone.utc))
     url = normalize_connection_url(connection)
@@ -147,41 +168,68 @@ def run_pymavlink_relay(
     mavlink = mavlink_factory(url)
     close = getattr(mavlink, "close", None)
     state = DashboardTelemetryState()
-    last_message_at: float | None = None
-    last_snapshot_captured: datetime | None = None
-    stale_marked = False
+    last_core_fingerprint: tuple[float, ...] | None = None
+    last_write_monotonic: float | None = None
+    pending_core_write = False
+    last_lease_check = 0.0
+
+    def stop_requested() -> bool:
+        nonlocal last_lease_check
+        if should_stop is not None and should_stop():
+            return True
+        if link_lease is None:
+            return False
+        now = monotonic()
+        if now - last_lease_check < lease_poll_s:
+            return False
+        last_lease_check = now
+        return link_is_leased(link_lease)
+
+    def flush_snapshot(*, force: bool) -> None:
+        nonlocal last_write_monotonic, pending_core_write, last_core_fingerprint
+        if not state.complete:
+            return
+        now = monotonic()
+        fingerprint = core_snapshot_fingerprint(state)
+        if fingerprint is None:
+            return
+        if not force:
+            if not pending_core_write:
+                return
+            if last_write_monotonic is not None and now - last_write_monotonic < write_interval_s:
+                return
+        captured_at = clock()
+        write_atomic_json(destination, state.as_dashboard_document(captured_at))
+        last_write_monotonic = now
+        pending_core_write = False
+        last_core_fingerprint = fingerprint
+
     try:
         while True:
-            if should_stop is not None and should_stop():
+            if stop_requested():
                 return
             message = mavlink.recv_match(blocking=True, timeout=recv_timeout_s)
             now = monotonic()
             if message is not None:
-                updated = apply_mavlink_message(state, message, observed_at=clock())
-                if updated != state:
-                    state = updated
-                    last_message_at = now
-                    stale_marked = False
-                    if state.complete:
-                        captured_at = clock()
-                        document = state.as_dashboard_document(captured_at)
-                        write_atomic_json(destination, document)
-                        last_snapshot_captured = captured_at
+                previous = state
+                state = apply_mavlink_message(state, message, observed_at=clock())
+                if state != previous:
+                    fingerprint = core_snapshot_fingerprint(state)
+                    if fingerprint is not None and fingerprint != last_core_fingerprint:
+                        pending_core_write = True
+                    flush_snapshot(force=False)
                 continue
 
-            if (
-                state.complete
-                and last_message_at is not None
-                and now - last_message_at >= stale_timeout_s
-                and not stale_marked
-                and last_snapshot_captured is not None
-            ):
-                document = state.as_dashboard_document(last_snapshot_captured)
-                write_atomic_json(destination, document)
-                stale_marked = True
+            if pending_core_write:
+                flush_snapshot(force=False)
     finally:
+        flush_snapshot(force=True)
         if callable(close):
             close()
 
 
-__all__ = ["apply_mavlink_message", "run_pymavlink_relay"]
+__all__ = [
+    "apply_mavlink_message",
+    "core_snapshot_fingerprint",
+    "run_pymavlink_relay",
+]

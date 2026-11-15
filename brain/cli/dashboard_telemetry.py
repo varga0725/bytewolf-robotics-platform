@@ -53,7 +53,16 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--stale-timeout",
         type=float,
         default=10.0,
-        help="Seconds without MAVLink before the snapshot stops advancing captured_at (default 10).",
+        help=(
+            "Documented dashboard staleness window (default 10). The relay does not write on "
+            "silence; consumers derive stale from captured_at age."
+        ),
+    )
+    parser.add_argument(
+        "--write-interval",
+        type=float,
+        default=0.2,
+        help="Minimum seconds between snapshot disk writes for core telemetry (default 0.2).",
     )
     parser.add_argument("--connection-timeout", type=float, default=30.0)
     parser.add_argument(
@@ -129,16 +138,13 @@ def _stream_pymavlink_once(arguments: argparse.Namespace, seconds: float | None)
     deadline = None if seconds is None else time.monotonic() + seconds
 
     def should_stop() -> bool:
-        if link_is_leased(arguments.link_lease):
-            return True
-        if deadline is not None and time.monotonic() >= deadline:
-            return True
-        return False
+        return deadline is not None and time.monotonic() >= deadline
 
     run_pymavlink_relay(
         arguments.endpoint,
         arguments.snapshot_file,
-        stale_timeout_s=arguments.stale_timeout,
+        write_interval_s=arguments.write_interval,
+        link_lease=arguments.link_lease,
         should_stop=should_stop,
     )
 
