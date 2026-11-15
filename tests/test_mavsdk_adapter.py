@@ -1,8 +1,10 @@
 import asyncio
 from dataclasses import replace
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter, MissionPreflightError
+from brain.mission.demo_errors import DemoPointRtlError
 from brain.safety.profile import SafetyProfile, load_safety_profile
 from brain.mission.runtime_policy import RuntimePolicy
 from brain.mission.commands import TakeoffCommand, WaypointCommand
@@ -326,6 +328,39 @@ class FailingArmDrone(FakeDrone):
 
 
 class MavsdkMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self._sitl_patcher = patch(
+            "brain.mission.sitl_target.require_px4_sitl_indication",
+            new_callable=AsyncMock,
+        )
+        self._sitl_mock = self._sitl_patcher.start()
+        self._sitl_mock.return_value = {
+            "status": "verified",
+            "matched_signals": ["sys_autostart_posix_sitl", "sim_gz_en"],
+        }
+        self.addCleanup(self._sitl_patcher.stop)
+
+    async def test_sitl_gate_refusal_never_calls_arm(self) -> None:
+        drone = FakeDrone()
+        adapter = MavsdkMissionAdapter(drone, sleep=asyncio.sleep)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.01)
+        self._sitl_mock.side_effect = DemoPointRtlError("PX4 did not present enough independent SITL indicators")
+
+        with self.assertRaises(DemoPointRtlError):
+            await adapter.execute(mission)
+
+        self.assertNotIn("arm", drone.events)
+
+    async def test_sitl_gate_must_pass_before_arm_on_hover_mission(self) -> None:
+        drone = FakeDrone()
+        adapter = MavsdkMissionAdapter(drone, sleep=asyncio.sleep)
+        mission = TakeoffHoverLandMission(TakeoffCommand(2.0), hover_duration_s=0.0)
+
+        await adapter.execute(mission)
+
+        self._sitl_mock.assert_awaited()
+        self.assertIn("arm", drone.events)
+
     async def test_unreadable_battery_fails_closed_before_arming(self) -> None:
         """The X500 profile no longer permits an unknown battery: PX4 SITL does model one."""
         drone = UnknownBatteryThenZeroDrone()

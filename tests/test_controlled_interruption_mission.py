@@ -67,6 +67,9 @@ class _Adapter(MavsdkMissionAdapter):
     async def _require_preflight(self) -> None:
         return None
 
+    async def _require_px4_sitl_before_arm(self, *, timeout_s: float = 10.0) -> None:
+        return None
+
     async def _normal_land(
         self, execution: MissionExecution, _timeout_s: float
     ) -> MissionExecution:

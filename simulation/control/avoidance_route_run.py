@@ -21,6 +21,7 @@ from brain.adapters.offboard_route_executor import (
 )
 from brain.adapters.offboard_velocity_adapter import MavsdkVelocityAdapter
 from brain.navigation.local_replanner import LocalReplanner
+from brain.mission.sitl_target import require_px4_sitl_indication
 from brain.safety.profile import load_safety_profile
 from simulation.control.avoidance_route_scenario import (
     AvoidanceGroundTruthSample,
@@ -221,6 +222,7 @@ async def _fly_avoidance_route(
         ground_truth_task = asyncio.create_task(monitor_ground_truth())
         armed_at_s = time.monotonic() - started
         arm_attempted = True
+        await require_px4_sitl_indication(drone)
         await drone.action.arm()
         await drone.action.takeoff()
         await asyncio.sleep(9.0)

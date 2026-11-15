@@ -23,6 +23,7 @@ from brain.adapters.offboard_route_executor import (
     RouteTick,
 )
 from brain.adapters.offboard_velocity_adapter import MavsdkVelocityAdapter
+from brain.mission.sitl_target import require_px4_sitl_indication
 from brain.safety.profile import load_safety_profile
 from simulation.control.mission_route_scenario import (
     MissionGroundTruthSample,
@@ -311,6 +312,7 @@ async def _fly_route(
         ground_truth_task = asyncio.create_task(monitor_ground_truth())
         armed_at_s = time.monotonic() - route_started
         arm_attempted = True
+        await require_px4_sitl_indication(drone)
         await drone.action.arm()
         await drone.action.takeoff()
         await asyncio.sleep(9.0)
