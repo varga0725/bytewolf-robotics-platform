@@ -442,6 +442,8 @@ def classify_telemetry_document(document: dict[str, object]) -> TargetVerdict:
     identity = _read_vehicle_identity(document)
     if identity is None:
         return "unknown"
+    if identity.get("stale") is True:
+        return "unknown"
 
     product_name = str(identity.get("product_name", "")).strip()
     vendor_name = str(identity.get("vendor_name", "")).strip()

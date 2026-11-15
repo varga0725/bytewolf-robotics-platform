@@ -18,6 +18,11 @@ from brain.telemetry.domain import (
 )
 from brain.telemetry.link_lease import link_is_leased
 from brain.telemetry.mavsdk_relay import DashboardTelemetryState, write_atomic_json
+from brain.telemetry.autopilot_identity import (
+    AutopilotIdentityCollector,
+    qualifying_autopilot_heartbeat,
+)
+from brain.telemetry.pymavlink_passive_params import request_param_read
 
 
 _TOPIC_POSITION = "telemetry/position"
@@ -176,6 +181,10 @@ def _apply_vehicle_heartbeat(
     )
 
 
+def vehicle_identity_pending_write(before: DashboardTelemetryState, after: DashboardTelemetryState) -> bool:
+    return before.vehicle_identity != after.vehicle_identity
+
+
 def heartbeat_pending_write(before: DashboardTelemetryState, after: DashboardTelemetryState) -> bool:
     """Whether a HEARTBEAT should schedule a snapshot write (armed/mode/sysid changed)."""
     vehicle_fields = (
@@ -268,6 +277,7 @@ def run_pymavlink_relay(
     mavlink = mavlink_factory(connection)
     close = getattr(mavlink, "close", None)
     state = DashboardTelemetryState(relay_source="pymavlink")
+    identity_collector = AutopilotIdentityCollector()
     last_write_monotonic: float | None = None
     pending_core_write = False
     last_lease_check = 0.0
@@ -298,6 +308,26 @@ def run_pymavlink_relay(
         last_write_monotonic = now
         pending_core_write = False
 
+    def issue_identity_requests() -> None:
+        target = identity_collector.target
+        if target is None:
+            return
+        target_system, target_component = target
+        for param_name in identity_collector.pop_follow_up_requests():
+            request_param_read(
+                mavlink,
+                target_system=target_system,
+                target_component=target_component,
+                param_name=param_name,
+            )
+
+    def sync_identity_snapshot(before: DashboardTelemetryState) -> DashboardTelemetryState:
+        updated = before.with_vehicle_identity(identity_collector.identity_block())
+        if vehicle_identity_pending_write(before, updated):
+            nonlocal pending_core_write
+            pending_core_write = True
+        return updated
+
     try:
         while True:
             if stop_requested():
@@ -306,12 +336,34 @@ def run_pymavlink_relay(
             now = monotonic()
             if message is not None:
                 before = state
+                message_type = message.get_type()
+                if message_type == "HEARTBEAT":
+                    lock = qualifying_autopilot_heartbeat(message)
+                    if lock is not None:
+                        sysid, compid = lock
+                        if identity_collector.observe_autopilot_heartbeat(sysid, compid, monotonic=now):
+                            state = sync_identity_snapshot(state)
+                        issue_identity_requests()
+                elif message_type == "SYSTEM_TIME":
+                    time_boot_ms = int(getattr(message, "time_boot_ms", -1))
+                    if time_boot_ms >= 0 and identity_collector.observe_system_time(time_boot_ms):
+                        state = sync_identity_snapshot(state)
+                        issue_identity_requests()
+                elif message_type == "PARAM_VALUE":
+                    if identity_collector.apply_param_value(message):
+                        issue_identity_requests()
+                    state = sync_identity_snapshot(state)
                 state = apply_mavlink_message(state, message, observed_at=clock())
-                if core_message_pending_write(message.get_type(), before, state):
+                if core_message_pending_write(message_type, before, state):
                     pending_core_write = True
                 flush_snapshot()
                 continue
 
+            if identity_collector.observe_link_quiet(monotonic=now):
+                state = sync_identity_snapshot(state)
+            else:
+                identity_collector.maybe_schedule_refresh(monotonic=now)
+                issue_identity_requests()
             if pending_core_write:
                 flush_snapshot()
     finally:
@@ -327,4 +379,5 @@ __all__ = [
     "heartbeat_pending_write",
     "mavlink_autopilot_label",
     "run_pymavlink_relay",
+    "vehicle_identity_pending_write",
 ]

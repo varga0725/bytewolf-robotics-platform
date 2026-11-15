@@ -59,7 +59,14 @@ class BridgeArgumentTests(unittest.TestCase):
     def test_the_bridge_defaults_to_the_dashboard_snapshot_the_ui_reads(self) -> None:
         parsed = dashboard_telemetry.parse_arguments([])
 
-        self.assertEqual(parsed.snapshot_file, dashboard_telemetry.DEFAULT_SNAPSHOT_PATH)
+        from brain.cli.live_telemetry_snapshot import effective_dashboard_snapshot_path
+        from brain.telemetry.dashboard_snapshot_path import default_dashboard_snapshot_path
+
+        self.assertIsNone(parsed.snapshot_file)
+        self.assertEqual(
+            effective_dashboard_snapshot_path(parsed.snapshot_file),
+            default_dashboard_snapshot_path(),
+        )
         self.assertEqual(parsed.endpoint, "udpin://127.0.0.1:14540")
         self.assertEqual(parsed.backend, "pymavlink")
         self.assertIsNone(parsed.seconds, "without a limit it runs until interrupted")

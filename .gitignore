@@ -14,6 +14,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 PX4-Autopilot
+var/dashboard/
 var/mission-runs/
 var/pi-agent/
 var/world-memory/
@@ -58,3 +59,4 @@ graphify-out/
 # that matters is written up in docs/hardware-bringup-x500v2.md without either.
 # Committing one of these needs the position redacted first, deliberately.
 simulation/artifacts/hardware-bench/
+var/runtime/

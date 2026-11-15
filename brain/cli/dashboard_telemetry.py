@@ -26,10 +26,8 @@ from brain.safety.deployment import add_deployment_arguments, authorize_readonly
 from brain.telemetry.link_lease import default_lease_path, link_is_leased
 from brain.telemetry.loopback_endpoint import LoopbackEndpointError, require_loopback_udpin_endpoint
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
+from brain.cli.live_telemetry_snapshot import effective_dashboard_snapshot_path
 from brain.telemetry.pymavlink_relay import run_pymavlink_relay
-
-
-DEFAULT_SNAPSHOT_PATH = Path("simulation/artifacts/dashboard/live-telemetry.json")
 DEFAULT_BACKEND = "pymavlink"
 BACKEND_CHOICES = ("pymavlink", "mavsdk")
 
@@ -62,7 +60,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=50051,
         help="gRPC port when --backend mavsdk (server still listens on all interfaces).",
     )
-    parser.add_argument("--snapshot-file", type=Path, default=DEFAULT_SNAPSHOT_PATH)
+    parser.add_argument("--snapshot-file", type=Path, default=None)
     parser.add_argument(
         "--link-lease", type=Path, default=default_lease_path(),
         help="Lease file a flying mission claims; the bridge yields the PX4 link while it exists.",
@@ -86,6 +84,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 
 def main(arguments: Sequence[str] | None = None) -> None:
     parsed = parse_arguments(arguments)
+    parsed.snapshot_file = effective_dashboard_snapshot_path(parsed.snapshot_file)
     try:
         if parsed.backend == "pymavlink":
             require_loopback_udpin_endpoint(parsed.endpoint)

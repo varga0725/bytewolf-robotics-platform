@@ -100,10 +100,7 @@ class CliMissionArtifactTests(unittest.TestCase):
     def test_takeoff_cli_enables_the_local_live_dashboard_by_default(self) -> None:
         arguments = fly_takeoff_hover_land.parse_arguments(())
 
-        self.assertEqual(
-            arguments.dashboard_snapshot,
-            Path("simulation/artifacts/dashboard/live-telemetry.json"),
-        )
+        self.assertIsNone(arguments.dashboard_snapshot)
 
     def test_every_flight_cli_accepts_an_optional_read_only_telemetry_history(self) -> None:
         cases = (
