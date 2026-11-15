@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import unittest
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from brain.mission.demo_point_rtl import DemoPointRtlError
-from brain.mission.sitl_target import require_px4_sitl_indication
+from brain.mission.sitl_target import (
+    TargetClassifier,
+    _DEFAULT_CLASSIFIER_MAVSDK_PORT,
+    default_target_classifier_mavsdk_port,
+    require_px4_sitl_indication,
+)
 
 
 def _drone_with_identity(
@@ -46,6 +53,22 @@ def _drone_with_identity(
     param.get_param_int = AsyncMock(side_effect=read_param)
     drone = MagicMock(info=info, param=param)
     return drone
+
+
+class TargetClassifierPortEnvTests(unittest.TestCase):
+    def test_valid_port_env_is_used(self) -> None:
+        with patch.dict(os.environ, {"BYTEWOLF_TARGET_CLASSIFIER_MAVSDK_PORT": "52001"}, clear=False):
+            self.assertEqual(default_target_classifier_mavsdk_port(), 52001)
+
+    def test_invalid_port_values_fall_back_to_default(self) -> None:
+        for raw in ("abc", "0", "-5", "70000", ""):
+            with self.subTest(raw=raw), patch.dict(
+                os.environ, {"BYTEWOLF_TARGET_CLASSIFIER_MAVSDK_PORT": raw}, clear=False
+            ):
+                self.assertEqual(
+                    default_target_classifier_mavsdk_port(),
+                    _DEFAULT_CLASSIFIER_MAVSDK_PORT,
+                )
 
 
 class SitlTargetTests(unittest.IsolatedAsyncioTestCase):
@@ -98,7 +121,119 @@ class SitlTargetTests(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(DemoPointRtlError) as context:
             await require_px4_sitl_indication(drone, timeout_s=1.0)
-        self.assertIn("DEV", str(context.exception))
+        self.assertIn("simulator-specific", str(context.exception))
+
+    async def test_gz_autostart_without_sim_gz_en_is_refused(self) -> None:
+        drone = _drone_with_identity(
+            product_name="PX4 SITL",
+            release_name="RELEASE",
+            sys_autostart=4001,
+            sim_gz_en=0,
+        )
+        with self.assertRaises(DemoPointRtlError) as context:
+            await require_px4_sitl_indication(drone, timeout_s=1.0)
+        self.assertIn("simulator-specific", str(context.exception))
+
+    async def test_identity_markers_without_simulator_param_are_refused(self) -> None:
+        drone = _drone_with_identity(
+            product_name="PX4 Gazebo SITL",
+            release_name="DEV",
+            sys_autostart=0,
+            sim_gz_en=None,
+        )
+        with self.assertRaises(DemoPointRtlError):
+            await require_px4_sitl_indication(drone, timeout_s=1.0)
+
+
+class TargetClassifierInternalReadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_classify_never_raises_on_identity_timeout(self) -> None:
+        drone = _drone_with_identity()
+        drone.info.get_product = AsyncMock(side_effect=TimeoutError())
+
+        async def fail_indication(*_args, **_kwargs):
+            raise DemoPointRtlError("indicators insufficient")
+
+        with patch(
+            "brain.mission.sitl_target.require_px4_sitl_indication",
+            AsyncMock(side_effect=fail_indication),
+        ):
+            result = await TargetClassifier.classify(drone, timeout_s=0.05)
+
+        self.assertEqual(result.verdict, "unknown")
+        self.assertTrue(result.reason.strip())
+
+    async def test_classify_maps_runtime_error_to_unknown(self) -> None:
+        drone = MagicMock(info=None)
+
+        result = await TargetClassifier.classify(drone, timeout_s=1.0)
+        self.assertEqual(result.verdict, "unknown")
+        self.assertIn("MAVSDK Info", result.reason)
+
+
+class TargetClassifierEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_classify_at_endpoint_returns_unknown_when_connect_fails(self) -> None:
+        system = MagicMock()
+        system.connect = AsyncMock(side_effect=RuntimeError("bind failed"))
+        mavsdk = ModuleType("mavsdk")
+        mavsdk.System = MagicMock(return_value=system)  # type: ignore[attr-defined]
+        with (
+            patch("brain.cli.mavsdk_lifecycle.acquire_px4_link"),
+            patch("brain.cli.mavsdk_lifecycle.stop_owned_mavsdk_server"),
+            patch.dict(sys.modules, {"mavsdk": mavsdk}),
+        ):
+            result = await TargetClassifier.classify_at_endpoint(
+                "udpin://127.0.0.1:14540",
+                connection_timeout_s=1.0,
+            )
+        self.assertEqual(result.verdict, "unknown")
+        self.assertIn("bind failed", result.reason)
+
+    async def test_classify_at_endpoint_times_out_waiting_for_connection_state(self) -> None:
+        async def slow_states():
+            while True:
+                await asyncio.sleep(60)
+                yield MagicMock(is_connected=False)
+
+        system = MagicMock()
+        system.connect = AsyncMock()
+        system.core.connection_state = slow_states
+        mavsdk = ModuleType("mavsdk")
+        mavsdk.System = MagicMock(return_value=system)  # type: ignore[attr-defined]
+        with (
+            patch("brain.cli.mavsdk_lifecycle.acquire_px4_link"),
+            patch("brain.cli.mavsdk_lifecycle.stop_owned_mavsdk_server"),
+            patch.dict(sys.modules, {"mavsdk": mavsdk}),
+        ):
+            result = await TargetClassifier.classify_at_endpoint(
+                "udpin://127.0.0.1:14540",
+                connection_timeout_s=0.05,
+                classify_timeout_s=0.05,
+            )
+        self.assertEqual(result.verdict, "unknown")
+        self.assertTrue(result.reason.strip())
+
+
+class TargetClassifierTests(unittest.IsolatedAsyncioTestCase):
+    async def test_classify_returns_sitl_verified_for_stock_gazebo(self) -> None:
+        result = await TargetClassifier.classify(_drone_with_identity(), timeout_s=1.0)
+        self.assertEqual(result.verdict, "sitl_verified")
+        self.assertIsNotNone(result.proof)
+
+    async def test_classify_marks_pixhawk_like_as_real_suspected(self) -> None:
+        drone = _drone_with_identity(
+            product_name="PX4 Pixhawk 6X",
+            vendor_name="Holybro",
+            sys_autostart=0,
+            sim_gz_en=None,
+        )
+        result = await TargetClassifier.classify(drone, timeout_s=1.0)
+        self.assertEqual(result.verdict, "real_suspected")
+
+    async def test_classify_marks_param_failure_as_unknown(self) -> None:
+        drone = _drone_with_identity(param_timeout="SYS_AUTOSTART")
+        result = await TargetClassifier.classify(drone, timeout_s=0.05)
+        self.assertEqual(result.verdict, "unknown")
+        self.assertIn("SYS_AUTOSTART", result.reason)
 
 
 if __name__ == "__main__":
