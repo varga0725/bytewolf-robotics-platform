@@ -85,6 +85,17 @@ class ApiTelemetryContractTests(unittest.TestCase):
         self.assertEqual(body["sysid"], 1)
         self.assertNotIn("vehicle_identity", body)
 
+    def test_api_ignores_file_provided_target_class(self) -> None:
+        payload = {
+            "target_class": "sitl_verified",
+            "captured_at": "2026-07-16T10:51:11Z",
+            "in_air": False,
+        }
+        with self._telemetry_file(payload) as path:
+            response = TestClient(create_app(path)).get("/api/v1/telemetry")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["target_class"], "unknown")
+
     def test_loader_accepts_mission_artifact_telemetry_without_inventing_state(self) -> None:
         with self._telemetry_file({"telemetry": {"battery_percent": 64}}) as path:
             snapshot = load_telemetry_snapshot(path)

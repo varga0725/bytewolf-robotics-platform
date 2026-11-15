@@ -434,7 +434,7 @@ def _read_vehicle_identity(document: dict[str, object]) -> dict[str, object] | N
     nested = document.get("vehicle_identity")
     if isinstance(nested, dict):
         return nested
-    return document
+    return None
 
 
 def classify_telemetry_document(document: dict[str, object]) -> TargetVerdict:
@@ -470,13 +470,16 @@ def classify_telemetry_document(document: dict[str, object]) -> TargetVerdict:
     unique = list(dict.fromkeys(matched))
     if unique and sitl_verification_passes(unique):
         return "sitl_verified"
-    if product_name or vendor_name or sys_autostart is not None:
-        if _suspects_real_flight_controller(
-            product_name=product_name,
-            vendor_name=vendor_name,
-            release_name=release_name,
-            sys_autostart=sys_autostart or 0,
-            matched_signals=unique,
-        ):
-            return "real_suspected"
+    product = product_name.strip().lower()
+    vendor = vendor_name.strip().lower()
+    if any(marker in product or marker in vendor for marker in _HARDWARE_PRODUCT_MARKERS):
+        return "real_suspected"
+    if sys_autostart is not None and _suspects_real_flight_controller(
+        product_name=product_name,
+        vendor_name=vendor_name,
+        release_name=release_name,
+        sys_autostart=sys_autostart,
+        matched_signals=unique,
+    ):
+        return "real_suspected"
     return "unknown"

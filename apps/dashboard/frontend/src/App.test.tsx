@@ -57,6 +57,39 @@ describe("App telemetry status", () => {
     expect(screen.getAllByText("ÉLŐ MINTA")).toHaveLength(2);
   });
 
+  it("does not keep a verified badge when telemetry is stale", async () => {
+    const capturedAt = new Date(Date.now() - 30_000).toISOString();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              position: {
+                latitude_deg: 47.4979,
+                longitude_deg: 19.0402,
+                absolute_altitude_m: 125.5,
+                relative_altitude_m: 12.3,
+              },
+              battery_percent: 74,
+              in_air: false,
+              heading_deg: 271.4,
+              captured_at: capturedAt,
+              target_class: "sitl_verified",
+            }),
+            { status: 200 },
+          ),
+        ),
+      ),
+    );
+
+    render(<App />);
+
+    expect(await screen.findByRole("alert", { name: "PX4 cél figyelmeztetés" })).toBeInTheDocument();
+    expect(screen.getAllByText("ISMERETLEN CÉL").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("SITL (ellenőrzött)")).toBeNull();
+  });
+
   it("keeps stale measurements visible but explicitly warns they are not current", async () => {
     const capturedAt = new Date(Date.now() - 30_000).toISOString();
     vi.stubGlobal(

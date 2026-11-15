@@ -38,3 +38,16 @@ export function parseTargetClass(value: unknown): TargetClass | null {
   }
   return null;
 }
+
+export type TelemetryConnectionState = "loading" | "ready" | "stale" | "unavailable";
+
+/** Stale or missing telemetry must not keep a green SITL badge from the last API payload. */
+export function effectiveTargetClassForConnection(
+  connectionState: TelemetryConnectionState,
+  targetClass: TargetClass | null | undefined,
+): TargetClass | null {
+  if (connectionState !== "ready") {
+    return null;
+  }
+  return targetClass ?? null;
+}

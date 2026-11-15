@@ -9,6 +9,7 @@ import unittest
 from unittest import mock
 
 from brain.telemetry.mavsdk_relay import DashboardTelemetryState
+from brain.mission.acceptance_inflight_px4_mode import px4_auto_rtl_custom_mode
 from brain.telemetry.pymavlink_relay import (
     apply_mavlink_message,
     core_message_pending_write,
@@ -380,18 +381,22 @@ class PymavlinkHeartbeatTests(unittest.TestCase):
         for message in _complete_core_messages():
             state = apply_mavlink_message(state, message, observed_at=now)
         before = state
+        custom_mode = px4_auto_rtl_custom_mode()
         heartbeat = _Message(
             "HEARTBEAT",
             type=2,
             autopilot=mavutil.mavlink.MAV_AUTOPILOT_PX4,
             base_mode=mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED,
-            custom_mode=0,
+            custom_mode=custom_mode,
         )
         state = apply_mavlink_message(state, heartbeat, observed_at=now)
         self.assertTrue(state.armed)
         self.assertEqual(state.sysid, 1)
         self.assertEqual(state.autopilot, "px4")
+        self.assertEqual(state.flight_mode, "return_to_launch")
+        self.assertEqual(custom_mode, 0x05040000)
         self.assertTrue(heartbeat_pending_write(before, state))
+        self.assertFalse(core_message_pending_write("HEARTBEAT", before, state))
 
     def test_gcs_heartbeat_is_ignored(self) -> None:
         try:
@@ -410,6 +415,73 @@ class PymavlinkHeartbeatTests(unittest.TestCase):
         )
         after = apply_mavlink_message(state, heartbeat, observed_at=now)
         self.assertIs(after, state)
+
+    def test_heartbeat_does_not_schedule_disk_write_without_core_change(self) -> None:
+        try:
+            from pymavlink import mavutil
+        except ModuleNotFoundError:
+            self.skipTest("pymavlink not installed")
+
+        timeline = {"t": 0.0}
+        base = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+        messages = [
+            *_complete_core_messages(),
+            _Message(
+                "HEARTBEAT",
+                type=2,
+                autopilot=mavutil.mavlink.MAV_AUTOPILOT_PX4,
+                base_mode=0,
+                custom_mode=px4_auto_rtl_custom_mode(),
+            ),
+            None,
+        ]
+        message_index = 0
+
+        class FakeMavlink:
+            def recv_match(self, *, blocking: bool, timeout: float) -> object | None:
+                nonlocal message_index
+                if message_index >= len(messages):
+                    timeline["t"] = 5.0
+                    return None
+                message = messages[message_index]
+                message_index += 1
+                timeline["t"] = 0.5 * message_index
+                return message
+
+            def close(self) -> None:
+                return None
+
+        writes: list[str] = []
+
+        def recording_write(destination: Path, document: dict[str, object]) -> None:
+            writes.append(str(document["captured_at"]))
+
+        def monotonic() -> float:
+            return timeline["t"]
+
+        def clock() -> datetime:
+            return base + timedelta(seconds=timeline["t"])
+
+        stop_after = [0]
+
+        def should_stop() -> bool:
+            stop_after[0] += 1
+            return stop_after[0] > 10
+
+        with TemporaryDirectory() as directory:
+            destination = Path(directory) / "live-telemetry.json"
+            with mock.patch("brain.telemetry.pymavlink_relay.write_atomic_json", recording_write):
+                run_pymavlink_relay(
+                    "udpin://127.0.0.1:14540",
+                    destination,
+                    write_interval_s=0.2,
+                    mavlink_factory=lambda _url: FakeMavlink(),
+                    clock=clock,
+                    should_stop=should_stop,
+                    monotonic=monotonic,
+                )
+
+        self.assertEqual(len(writes), 1)
 
 
 class PymavlinkStaleBehaviorTests(unittest.TestCase):

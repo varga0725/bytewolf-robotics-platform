@@ -200,8 +200,6 @@ def core_message_pending_write(
 ) -> bool:
     """Whether an inbound MAVLink message should schedule a throttled core snapshot write."""
 
-    if message_type == "HEARTBEAT":
-        return heartbeat_pending_write(before, after)
     if message_type not in _CORE_MESSAGE_TYPES:
         return False
     if message_type in ("SYS_STATUS", "BATTERY_STATUS"):

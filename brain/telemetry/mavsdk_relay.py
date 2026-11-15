@@ -190,14 +190,15 @@ class DashboardTelemetryState:
 
 
 def dashboard_snapshot_should_write(state: DashboardTelemetryState, event: TelemetryEvent) -> bool:
-    """Whether a telemetry event should refresh the on-disk dashboard snapshot."""
+    """Whether a telemetry event should refresh the on-disk dashboard snapshot.
+
+    Supplemental streams (armed, flight_mode, attitude) update in-memory state but
+    must not advance captured_at on disk without a core position/battery/flight
+    observation — otherwise stale core data can look freshly captured.
+    """
     if not state.complete:
         return False
-    if not isinstance(event, SupplementalTelemetryEvent):
-        return True
-    if event.source.endswith("attitude_euler"):
-        return False
-    return event.source.endswith(".armed") or event.source.endswith(".flight_mode")
+    return not isinstance(event, SupplementalTelemetryEvent)
 
 
 class MavsdkTelemetryRelay:

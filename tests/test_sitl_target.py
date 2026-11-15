@@ -268,6 +268,24 @@ class TelemetryDocumentClassifierTests(unittest.TestCase):
         document = {"autopilot": "px4", "source": "pymavlink"}
         self.assertEqual(classify_telemetry_document(document), "unknown")
 
+    def test_top_level_identity_fields_are_ignored_without_vehicle_identity(self) -> None:
+        document = {
+            "product_name": "PX4 SITL",
+            "sys_autostart": 4001,
+            "sim_gz_en": 1,
+        }
+        self.assertEqual(classify_telemetry_document(document), "unknown")
+
+    def test_partial_release_identity_without_sys_autostart_is_unknown(self) -> None:
+        document = {
+            "vehicle_identity": {
+                "product_name": "undefined",
+                "vendor_name": "undefined",
+                "flight_sw_version_type": "RELEASE",
+            }
+        }
+        self.assertEqual(classify_telemetry_document(document), "unknown")
+
 
 if __name__ == "__main__":
     unittest.main()

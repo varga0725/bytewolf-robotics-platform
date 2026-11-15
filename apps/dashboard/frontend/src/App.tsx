@@ -16,7 +16,7 @@ import { CognitiveRuntimePage } from "./CognitiveRuntimePage";
 import { SettingsPage } from "./SettingsPage";
 import { formatTelemetry, telemetryConnection, type TelemetrySnapshot } from "./telemetry";
 import { TargetClassBadge, TargetClassDangerBanner } from "./TargetClassBadge";
-import { parseTargetClass, type TargetClass } from "./targetClass";
+import { effectiveTargetClassForConnection, parseTargetClass, type TargetClass } from "./targetClass";
 import { WorldPage } from "./WorldPage";
 
 type LoadState = "loading" | "ready" | "unavailable";
@@ -263,7 +263,7 @@ export function App() {
     selectView(views[nextIndex].id, true);
   }
 
-  const targetClass = displayTelemetry.target_class;
+  const targetClass = effectiveTargetClassForConnection(connection.state, displayTelemetry.target_class);
 
   return (
     <main className="control-room">
