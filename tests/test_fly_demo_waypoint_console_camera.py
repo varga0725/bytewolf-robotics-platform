@@ -216,6 +216,16 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("gz_visual_setup_error", result["artifact"])
 
+    async def test_director_timeout_records_error(self) -> None:
+        async def wait_for_stub(coro, timeout):
+            if timeout == 35.0:
+                raise asyncio.TimeoutError()
+            return await coro
+
+        with patch("brain.cli.fly_demo_waypoint_mission.asyncio.wait_for", side_effect=wait_for_stub):
+            result = await self._run_console_mission({"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow"})
+        self.assertIn("gz_visual_setup_error", result["artifact"])
+
 
 async def _home_iter(home: MagicMock):
     yield home
