@@ -199,6 +199,82 @@ describe("MissionPage", () => {
     ));
   });
 
+  it("submits a map-picked point mission as a one-waypoint demo-waypoint-mission", async () => {
+    let pointPosts = 0;
+    let demoPosts = 0;
+    const fetchMock = vi.fn((path: string, init?: RequestInit) => {
+      if (path === "/api/v1/missions/point") {
+        pointPosts += 1;
+        return Promise.resolve(new Response(JSON.stringify({
+          plan_id: "plan-point",
+          summary: "Pont",
+          goal: "Teszt",
+          steps: [],
+        }), { status: 200 }));
+      }
+      if (path === "/api/v1/missions/demo-waypoint-mission") {
+        demoPosts += 1;
+        return Promise.resolve(new Response(JSON.stringify({
+          plan_id: "plan-geo",
+          summary: "Térképi pont",
+          goal: "Teszt",
+          steps: ["TAKEOFF", "GOTO_1", "RTL", "LAND"],
+          waypoints: [],
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify(missionPayload(path)), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MissionPage commandsEnabled />);
+    await screen.findByText(/Aktív korlát/);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/telemetry", expect.anything()));
+    const map = screen.getByRole("img", { name: "Küldetési térkép" });
+    vi.spyOn(map, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, width: 400, height: 400, top: 0, right: 400, bottom: 400, left: 0, toJSON: () => ({}) });
+
+    fireEvent.click(map, { clientX: 220, clientY: 180 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Terv ellenőrzése" }));
+
+    await waitFor(() => expect(demoPosts).toBe(1));
+    expect(pointPosts).toBe(0);
+    const demoCall = fetchMock.mock.calls.find(([path]) => path === "/api/v1/missions/demo-waypoint-mission");
+    expect(demoCall).toBeDefined();
+    const body = JSON.parse((demoCall?.[1] as RequestInit).body as string) as {
+      home: { latitude_deg: number };
+      waypoints: Array<{ latitude_deg: number; longitude_deg: number }>;
+    };
+    expect(body.waypoints).toHaveLength(1);
+    expect(body.waypoints[0].latitude_deg).toBeCloseTo(37.416, 2);
+    expect(body.waypoints[0].longitude_deg).toBeLessThan(-122.04);
+    expect(body).not.toHaveProperty("north_m");
+    expect(body).not.toHaveProperty("east_m");
+    expect(body.home.latitude_deg).toBeCloseTo(37.416, 3);
+  });
+
+  it("keeps manual north/east point missions on the point endpoint without a geographic map marker", async () => {
+    const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === "/api/v1/missions/point"
+        ? { plan_id: "plan-1", summary: "Rövid út", goal: "Teszt", steps: ["TAKEOFF"], waypoints: [] }
+        : missionPayload(path),
+    ), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MissionPage commandsEnabled />);
+    await screen.findByText(/Aktív korlát/);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/telemetry", expect.anything()));
+
+    expect(screen.queryByRole("button", { name: "Függő cél törlése" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Terv ellenőrzése" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/missions/point",
+      expect.objectContaining({ method: "POST", body: expect.stringContaining('"north_m":5') }),
+    ));
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/missions/demo-waypoint-mission", expect.anything());
+  });
+
   it("turns a map click into local north/east mission coordinates", async () => {
     const fetchMock = vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(missionPayload(path)), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
