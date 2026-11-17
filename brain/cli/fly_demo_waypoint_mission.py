@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import time
@@ -40,6 +41,24 @@ from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
 from brain.telemetry.ulog import wait_for_px4_ulog_archive
 from brain.telemetry.persistence import TelemetryHistoryStore
 from shared.safety.execution_gate import require_mission_execution_enabled
+
+CONSOLE_DEMO_GZ_VISUAL_SETUP_TIMEOUT_S = 35.0
+
+
+async def _finalize_console_reaffirm_tasks(tasks: list[asyncio.Task[None]]) -> list[str]:
+    if not tasks:
+        return []
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    errors: list[str] = []
+    for result in results:
+        if isinstance(result, asyncio.CancelledError):
+            continue
+        if isinstance(result, BaseException):
+            errors.append(f"{type(result).__name__}: {result}")
+    return errors
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
@@ -110,6 +129,9 @@ async def run(arguments: argparse.Namespace) -> None:
     flight_capture: DemoFlightScreenCapture | None = None
     screen_capture_result: dict[str, object] | None = None
     gz_visual_director = None
+    console_gz_visual_status: dict[str, object] | None = None
+    console_gz_visual_hooks_active = False
+    console_reaffirm_tasks: list[asyncio.Task[None]] = []
     position_samples: list[dict[str, object]] = []
     mission_started_epoch: float | None = None
     ulog_failure_reason: str | None = None
@@ -199,13 +221,77 @@ async def run(arguments: argparse.Namespace) -> None:
                             screen_capture_result["gz_visual_setup_error"] = (
                                 f"{type(error).__name__}: {error}"
                             )
+        else:
+            from brain.mission.demo_gz_scene import (
+                DemoGzVisualDirector,
+                console_gz_visual_hooks_ready,
+                console_gz_visual_setup_document,
+                console_spawned_demo_gz_visual_eligible,
+                gz_binary,
+            )
+
+            if console_spawned_demo_gz_visual_eligible(
+                sitl_acceptance=sitl_acceptance,
+                deployment_mode=arguments.deployment_mode,
+            ) and gz_binary() is not None:
+                gz_visual_setup_stop = asyncio.Event()
+                gz_visual_director = DemoGzVisualDirector(config=config, setup_stop=gz_visual_setup_stop)
+                console_gz_visual_status = {}
+                setup_exception: Exception | None = None
+                apply_task = asyncio.create_task(gz_visual_director.apply_scene())
+                _done, pending = await asyncio.wait(
+                    {apply_task},
+                    timeout=CONSOLE_DEMO_GZ_VISUAL_SETUP_TIMEOUT_S,
+                )
+                if pending:
+                    gz_visual_setup_stop.set()
+                    apply_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await apply_task
+                    setup_exception = TimeoutError()
+                else:
+                    task_error = apply_task.exception()
+                    if task_error is not None:
+                        gz_visual_setup_stop.set()
+                        setup_exception = (
+                            task_error
+                            if isinstance(task_error, Exception)
+                            else RuntimeError(str(task_error))
+                        )
+                setup_error = (
+                    f"{type(setup_exception).__name__}: {setup_exception}" if setup_exception else None
+                )
+                console_gz_visual_status.update(
+                    console_gz_visual_setup_document(gz_visual_director, setup_error=setup_error)
+                )
+                if console_gz_visual_status.get("gz_visual_setup_error"):
+                    print(
+                        "Console Gazebo visual setup failed (mission continues): "
+                        f"{console_gz_visual_status['gz_visual_setup_error']}",
+                        flush=True,
+                    )
+                if setup_exception is None and console_gz_visual_hooks_ready(gz_visual_director):
+                    console_gz_visual_hooks_active = True
         try:
             mission_started_epoch = time.time()
             on_armed = None
             on_returning = None
             if gz_visual_director is not None:
-                on_armed = gz_visual_director.reaffirm_camera_follow_after_arm
-                on_returning = gz_visual_director.reaffirm_camera_follow_at_rtl
+                if sitl_acceptance:
+                    on_armed = gz_visual_director.reaffirm_camera_follow_after_arm
+                    on_returning = gz_visual_director.reaffirm_camera_follow_at_rtl
+                elif console_gz_visual_hooks_active:
+                    director = gz_visual_director
+
+                    def on_armed() -> None:
+                        console_reaffirm_tasks.append(
+                            asyncio.create_task(director.reaffirm_camera_follow_after_arm())
+                        )
+
+                    def on_returning() -> None:
+                        console_reaffirm_tasks.append(
+                            asyncio.create_task(director.reaffirm_camera_follow_at_rtl())
+                        )
             execution = await execute_demo_waypoint_mission(
                 adapter,
                 config,
@@ -215,6 +301,11 @@ async def run(arguments: argparse.Namespace) -> None:
         finally:
             sampler_stop.set()
             await sampler_task
+            followup_errors = await _finalize_console_reaffirm_tasks(console_reaffirm_tasks)
+            if followup_errors:
+                if console_gz_visual_status is None:
+                    console_gz_visual_status = {}
+                console_gz_visual_status["gz_visual_followup_errors"] = followup_errors
             if flight_capture is not None:
                 screen_capture_result = (await asyncio.to_thread(flight_capture.stop)).as_dict()
                 if gz_visual_director is not None and screen_capture_result is not None and adapter is not None:
@@ -309,6 +400,15 @@ async def run(arguments: argparse.Namespace) -> None:
             arguments.px4_ulog,
             peak,
         )
+        if console_gz_visual_status and artifact_path is not None:
+            try:
+                _merge_run_artifact_supplement(artifact_path, console_gz_visual_status)
+            except Exception as merge_error:
+                print(
+                    "Failed to merge console Gazebo visual status into mission artifact: "
+                    f"{type(merge_error).__name__}: {merge_error}",
+                    flush=True,
+                )
         if sitl_acceptance and safety_decision == "approved" and outcome != "completed":
             if arguments.artifact_dir is not None and mission_started_epoch is not None:
                 (
@@ -335,6 +435,17 @@ async def run(arguments: argparse.Namespace) -> None:
             )
         if relay_error is not None and failure_reason and "mandatory telemetry relay failed" in failure_reason:
             raise relay_error
+
+
+def _merge_run_artifact_supplement(artifact_path: Path, supplement: dict[str, object]) -> None:
+    if not supplement:
+        return
+    document = json.loads(artifact_path.read_text(encoding="utf-8"))
+    document.update(supplement)
+    artifact_path.write_text(
+        json.dumps(document, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _write_acceptance_evidence(
