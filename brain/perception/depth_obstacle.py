@@ -44,15 +44,18 @@ def depth_obstacle_observation(
     sector_count = ceil(horizontal_fov_deg / sector_width_deg)
     buckets: list[list[float]] = [[] for _ in range(sector_count)]
     observed: list[bool] = [False] * sector_count
+    below_min: list[bool] = [False] * sector_count
     for column in range(frame.width):
         yaw_deg = ((column + 0.5) / frame.width - 0.5) * horizontal_fov_deg
         index = min(sector_count - 1, max(0, floor((yaw_deg + horizontal_fov_deg / 2.0) / sector_width_deg)))
         column_values = [values[row * frame.width + column] for row in range(frame.height)]
-        valid = [value for value in column_values if isfinite(value) and value > 0.0]
-        if not valid:
+        positive = [value for value in column_values if isfinite(value) and value > 0.0]
+        if not positive:
             continue
         observed[index] = True
-        buckets[index].extend(valid)
+        buckets[index].extend(positive)
+        if any(0.0 < value < min_range_m for value in positive):
+            below_min[index] = True
     sectors = []
     for index in range(sector_count):
         width = min(sector_width_deg, horizontal_fov_deg - index * sector_width_deg)
@@ -63,7 +66,12 @@ def depth_obstacle_observation(
         else:
             returns = [value for value in buckets[index] if min_range_m <= value < max_range_m]
             if returns:
-                sector.update({"coverage": "measured", "distance_m": round(min(returns), 6)})
+                nearest = min(returns)
+                if below_min[index]:
+                    nearest = max(nearest, min_range_m)
+                sector.update({"coverage": "measured", "distance_m": round(nearest, 6)})
+            elif below_min[index]:
+                sector["coverage"] = "unobserved"
             else:
                 sector["coverage"] = "clear"
         sectors.append(sector)
