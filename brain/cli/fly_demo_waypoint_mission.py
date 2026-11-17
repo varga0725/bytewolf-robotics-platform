@@ -110,6 +110,7 @@ async def run(arguments: argparse.Namespace) -> None:
     flight_capture: DemoFlightScreenCapture | None = None
     screen_capture_result: dict[str, object] | None = None
     gz_visual_director = None
+    console_gz_visual_status: dict[str, object] | None = None
     position_samples: list[dict[str, object]] = []
     mission_started_epoch: float | None = None
     ulog_failure_reason: str | None = None
@@ -199,6 +200,30 @@ async def run(arguments: argparse.Namespace) -> None:
                             screen_capture_result["gz_visual_setup_error"] = (
                                 f"{type(error).__name__}: {error}"
                             )
+        else:
+            from brain.mission.demo_gz_scene import (
+                DemoGzVisualDirector,
+                console_spawned_demo_gz_visual_eligible,
+                gz_binary,
+            )
+
+            if console_spawned_demo_gz_visual_eligible(
+                sitl_acceptance=sitl_acceptance,
+                deployment_mode=arguments.deployment_mode,
+            ) and gz_binary() is not None:
+                gz_visual_director = DemoGzVisualDirector(config=config)
+                console_gz_visual_status = {}
+                try:
+                    await asyncio.wait_for(gz_visual_director.apply_scene(), timeout=35.0)
+                except Exception as error:
+                    console_gz_visual_status["gz_visual_setup_error"] = (
+                        f"{type(error).__name__}: {error}"
+                    )
+                    print(
+                        "Console Gazebo visual setup failed (mission continues): "
+                        f"{console_gz_visual_status['gz_visual_setup_error']}",
+                        flush=True,
+                    )
         try:
             mission_started_epoch = time.time()
             on_armed = None
@@ -309,6 +334,8 @@ async def run(arguments: argparse.Namespace) -> None:
             arguments.px4_ulog,
             peak,
         )
+        if console_gz_visual_status and artifact_path is not None:
+            _merge_run_artifact_supplement(artifact_path, console_gz_visual_status)
         if sitl_acceptance and safety_decision == "approved" and outcome != "completed":
             if arguments.artifact_dir is not None and mission_started_epoch is not None:
                 (
@@ -335,6 +362,17 @@ async def run(arguments: argparse.Namespace) -> None:
             )
         if relay_error is not None and failure_reason and "mandatory telemetry relay failed" in failure_reason:
             raise relay_error
+
+
+def _merge_run_artifact_supplement(artifact_path: Path, supplement: dict[str, object]) -> None:
+    if not supplement:
+        return
+    document = json.loads(artifact_path.read_text(encoding="utf-8"))
+    document.update(supplement)
+    artifact_path.write_text(
+        json.dumps(document, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _write_acceptance_evidence(

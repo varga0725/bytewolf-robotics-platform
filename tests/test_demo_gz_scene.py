@@ -23,6 +23,8 @@ from brain.mission.demo_gz_scene import (
     compute_auto_overview_pose,
     compute_frame_phase_epochs,
     default_demo_gui_config_path,
+    console_spawned_demo_gz_camera_mode_requested,
+    console_spawned_demo_gz_visual_eligible,
     effective_demo_gz_camera_mode,
     extract_review_frames,
     gz_gui_rpy_to_quaternion,
@@ -41,6 +43,22 @@ from brain.mission.demo_gz_scene import (
     waypoint_world_position,
 )
 from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig, default_demo_waypoint_loop
+
+
+class ConsoleSpawnedCameraGatingTests(unittest.TestCase):
+    def test_explicit_follow_or_overview_only(self) -> None:
+        with patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow"}, clear=False):
+            self.assertTrue(console_spawned_demo_gz_camera_mode_requested())
+        with patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "overview"}, clear=False):
+            self.assertTrue(console_spawned_demo_gz_camera_mode_requested())
+        with patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "off"}, clear=False):
+            self.assertFalse(console_spawned_demo_gz_camera_mode_requested())
+
+    def test_unset_env_does_not_request_console_camera(self) -> None:
+        env = dict(os.environ)
+        env.pop("BYTEWOLF_DEMO_GZ_CAMERA_MODE", None)
+        with patch.dict(os.environ, env, clear=True):
+            self.assertFalse(console_spawned_demo_gz_camera_mode_requested())
 
 
 class WaypointWorldConversionTests(unittest.TestCase):

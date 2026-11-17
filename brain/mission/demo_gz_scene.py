@@ -128,6 +128,30 @@ def effective_demo_gz_camera_mode() -> tuple[str, str | None]:
     return parse_demo_gz_camera_mode_env()
 
 
+def console_spawned_demo_gz_camera_mode_requested() -> bool:
+    """True when BYTEWOLF_DEMO_GZ_CAMERA_MODE is explicitly follow or overview (console spawn path)."""
+    raw = os.environ.get("BYTEWOLF_DEMO_GZ_CAMERA_MODE")
+    if raw is None:
+        return False
+    mode = raw.strip().lower()
+    if mode in {"", "off"}:
+        return False
+    return mode in {"follow", "overview"}
+
+
+def console_spawned_demo_gz_visual_eligible(
+    *,
+    sitl_acceptance: bool,
+    deployment_mode: str,
+) -> bool:
+    """Gating predicate for console-spawned demo Gazebo visuals (no gz binary check)."""
+    if sitl_acceptance:
+        return False
+    if deployment_mode != "simulation":
+        return False
+    return console_spawned_demo_gz_camera_mode_requested()
+
+
 def parse_overview_pose_env() -> tuple[OverviewPose6 | Literal["auto"] | None, str | None]:
     raw = os.environ.get("BYTEWOLF_DEMO_GZ_OVERVIEW_POSE", "").strip()
     if not raw:
@@ -954,6 +978,10 @@ class DemoGzVisualDirector:
     camera_follow_history: list[dict[str, object]] = field(default_factory=list)
     camera_setup_history: list[dict[str, object]] = field(default_factory=list)
     markers: WaypointMarkerEvidence | None = None
+
+    async def apply_scene(self) -> None:
+        """Apply follow/overview camera and waypoint markers (console or acceptance visual setup)."""
+        await self.after_gui_recording_start()
 
     async def after_gui_recording_start(self) -> None:
         import asyncio
