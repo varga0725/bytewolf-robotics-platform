@@ -914,6 +914,6 @@ async def connect_adapter(
     system = System(port=mavsdk_server_port)
     adapter = MavsdkMissionAdapter(system, safety_profile=profile, preflight_wait_s=preflight_wait_s)
     await asyncio.wait_for(adapter.connect(endpoint), timeout=connection_timeout_s)
-    await adapter._require_preflight()
+    await adapter._require_preflight(allow_mode_change=True)
     await require_px4_sitl_indication(system, timeout_s=10.0)
     return system, adapter
