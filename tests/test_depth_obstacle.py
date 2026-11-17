@@ -53,16 +53,18 @@ class DepthObstacleTests(unittest.TestCase):
         self.assertEqual(centre["coverage"], "unobserved")
         self.assertNotIn("distance_m", centre)
 
-    def test_below_minimum_with_valid_return_stays_measured_at_or_above_min(self) -> None:
-        document = depth_obstacle_observation(
-            _frame([0.1, 1.5, 0.05]), vehicle_id="x500", horizontal_fov_deg=90,
-            min_range_m=0.2, max_range_m=30, sector_width_deg=30,
-        )
-        load_observation(document)
-        centre = next(item for item in document["payload"]["sectors"] if item["yaw_deg"] == 0.0)
-        self.assertEqual(centre["coverage"], "measured")
-        self.assertEqual(centre["distance_m"], 1.5)
-        self.assertGreaterEqual(centre["distance_m"], 0.2)
+    def test_below_minimum_mixed_with_return_reports_min_range_not_farther_return(self) -> None:
+        for width, height in ((1, 2), (2, 1)):
+            values = [0.1, 1.5]
+            frame = CameraFrame("depth-front", FrameEncoding.DEPTH32F, width, height, struct.pack("<ff", *values), NOW)
+            document = depth_obstacle_observation(
+                frame, vehicle_id="x500", horizontal_fov_deg=30,
+                min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+            )
+            load_observation(document)
+            (sector,) = document["payload"]["sectors"]
+            self.assertEqual(sector["coverage"], "measured")
+            self.assertEqual(sector["distance_m"], 0.2)
 
     def test_in_range_only_keeps_measured_clear_behavior(self) -> None:
         measured = depth_obstacle_observation(

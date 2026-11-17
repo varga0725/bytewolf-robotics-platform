@@ -37,7 +37,10 @@ def depth_obstacle_observation(
 
     Invalid/no-return pixels never become ``clear``.  They mark their bearing
     ``unobserved``; only finite positive ranges at or beyond sensor max range
-    can establish clear coverage.
+    can establish clear coverage.  Samples below ``min_range_m`` make a sector
+    ``unobserved`` when nothing else is in range; if in-range returns also
+    exist, ``distance_m`` is ``min_range_m`` because the nearer hit is inside
+    the sensor blind zone.
     """
     _validate(frame, horizontal_fov_deg, min_range_m, max_range_m, sector_width_deg, max_age_s)
     values = _depth_values_m(frame)
@@ -66,9 +69,10 @@ def depth_obstacle_observation(
         else:
             returns = [value for value in buckets[index] if min_range_m <= value < max_range_m]
             if returns:
-                nearest = min(returns)
-                if below_min[index]:
-                    nearest = max(nearest, min_range_m)
+                # A below-minimum sample is an obstacle nearer than the sensor can
+                # range. Reporting min(returns) would overstate the clearance, so
+                # the sector reads the closest distance the sensor can claim.
+                nearest = min_range_m if below_min[index] else min(returns)
                 sector.update({"coverage": "measured", "distance_m": round(nearest, 6)})
             elif below_min[index]:
                 sector["coverage"] = "unobserved"
