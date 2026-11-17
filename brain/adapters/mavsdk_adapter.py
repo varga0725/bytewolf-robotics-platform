@@ -193,14 +193,14 @@ class MavsdkMissionAdapter:
 
     async def verify_preflight(self) -> MissionTelemetrySnapshot:
         """Capture pre-arm telemetry evidence without issuing a flight command."""
-        await self._require_preflight()
+        await self._require_preflight(allow_mode_change=False)
         if self._preflight_telemetry is None:
             raise AssertionError("A successful preflight check must capture telemetry evidence.")
         return self._preflight_telemetry
 
     async def execute(self, mission: TakeoffHoverLandMission) -> MissionExecution:
         """Execute takeoff-hover-land and confirm the normal landing by telemetry."""
-        await self._require_preflight()
+        await self._require_preflight(allow_mode_change=True)
         execution = self._begin_execution()
         airborne = False
         await self._start_peak_altitude_tracking()
@@ -236,7 +236,7 @@ class MavsdkMissionAdapter:
         not a terminal state in this harness: after its bounded observation
         interval the adapter sends exactly one normal LAND command.
         """
-        await self._require_preflight()
+        await self._require_preflight(allow_mode_change=True)
         execution = self._begin_execution()
         airborne = False
         await self._start_peak_altitude_tracking()
@@ -430,7 +430,7 @@ class MavsdkMissionAdapter:
         self, mission: TakeoffWaypointLandMission
     ) -> MissionExecution:
         """Take off, visit one waypoint, then land with telemetry confirmation."""
-        await self._require_preflight()
+        await self._require_preflight(allow_mode_change=True)
         execution = self._begin_execution()
         airborne = False
         try:
@@ -472,7 +472,7 @@ class MavsdkMissionAdapter:
         and lands either way. The single airborne-land fallback still covers any
         failure after takeoff, as in every other mission here.
         """
-        await self._require_preflight()
+        await self._require_preflight(allow_mode_change=True)
         execution = self._begin_execution()
         airborne = False
         try:
@@ -503,7 +503,7 @@ class MavsdkMissionAdapter:
 
     async def execute_waypoints_mission(self, mission: TakeoffWaypointsLandMission) -> MissionExecution:
         """Visit every approved local route point; one failure lands immediately."""
-        await self._require_preflight()
+        await self._require_preflight(allow_mode_change=True)
         execution = self._begin_execution()
         airborne = False
         try:
@@ -532,7 +532,7 @@ class MavsdkMissionAdapter:
         There is intentionally no retry or skip path: any navigation or arrival
         failure causes one bounded landing fallback and propagates the error.
         """
-        await self._require_preflight()
+        await self._require_preflight(allow_mode_change=True)
         execution = self._begin_execution()
         airborne = False
         try:
@@ -620,7 +620,7 @@ class MavsdkMissionAdapter:
         self, mission: TakeoffReturnToHomeMission
     ) -> MissionExecution:
         """Delegate return-and-land to PX4; use one land fallback only on failure."""
-        await self._require_preflight()
+        await self._require_preflight(allow_mode_change=True)
         home = await self._global_position_sample("home")
         execution = self._begin_execution()
         airborne = False
@@ -670,7 +670,7 @@ class MavsdkMissionAdapter:
         There is no retry and no skip. A waypoint that cannot be reached is one
         bounded landing and a raised error, exactly as on the landing route.
         """
-        await self._require_preflight()
+        await self._require_preflight(allow_mode_change=True)
         home = await self._global_position_sample("home")
         execution = self._begin_execution()
         airborne = False
@@ -719,7 +719,7 @@ class MavsdkMissionAdapter:
         action_timeout_s: float = 45.0,
     ) -> MissionExecution:
         """Bounded one-point demo with bounded awaits and terminal recovery."""
-        await self._require_preflight()
+        await self._require_preflight(allow_mode_change=True)
         sitl_proof = await self._require_px4_sitl_before_arm(timeout_s=action_timeout_s)
         self._demo_sitl_proof = sitl_proof
         home = await self._global_position_sample("home")
@@ -952,11 +952,23 @@ class MavsdkMissionAdapter:
 
         await asyncio.wait_for(self._drone.action.disarm(), timeout=action_timeout_s)
 
-    async def _require_preflight(self) -> None:
+    async def _require_preflight(self, *, allow_mode_change: bool = False) -> None:
         """Verify PX4 telemetry before issuing any configuration or flight command."""
         # Before the wait: in Land/RTL PX4 reports is_armable false, so the wait below
         # would run out its whole budget on a vehicle that only needs a mode change.
-        await leave_arm_preventing_mode(self._drone)
+        # Read-only checks must never send hold; only real mission entry points may.
+        if allow_mode_change:
+            await leave_arm_preventing_mode(self._drone)
+        else:
+            mode = await _current_flight_mode(self._drone, 2.0)
+            if (
+                mode in _ARM_PREVENTING_FLIGHT_MODES
+                and await _is_on_ground(self._drone, 2.0)
+            ):
+                raise MissionPreflightError(
+                    f"Preflight rejected: vehicle in {mode} mode; "
+                    "read-only check sends no mode change."
+                )
         deadline = asyncio.get_running_loop().time() + self._preflight_wait_s
         health_stream = self._drone.telemetry.health()
         # A missing refresh is not alone a reason to reject a vehicle: PX4 can

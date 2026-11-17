@@ -64,7 +64,7 @@ class _Adapter(MavsdkMissionAdapter):
     async def _sleep(self, seconds: float) -> None:
         self.sleeps.append(seconds)
 
-    async def _require_preflight(self) -> None:
+    async def _require_preflight(self, *, allow_mode_change: bool = False) -> None:
         return None
 
     async def _require_px4_sitl_before_arm(self, *, timeout_s: float = 10.0) -> None:
