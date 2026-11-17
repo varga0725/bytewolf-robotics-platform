@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal
 
+StopCheck = Callable[[], bool]
+
 from brain.mission.commands import WaypointCommand
 from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig
 
@@ -633,9 +635,12 @@ def wait_for_service(
     *,
     timeout_s: float = 15.0,
     poll_s: float = 0.25,
+    stop_check: StopCheck | None = None,
 ) -> bool:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
+        if stop_check is not None and stop_check():
+            return False
         if service in cli.service_list(timeout_s=min(3.0, timeout_s)):
             return True
         time.sleep(poll_s)
@@ -648,10 +653,13 @@ def wait_for_model_spawned(
     *,
     world: str | None = None,
     timeout_s: float = 30.0,
+    stop_check: StopCheck | None = None,
 ) -> bool:
     resolved_world = world or resolve_gz_world_name()
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
+        if stop_check is not None and stop_check():
+            return False
         if cli.pose_has_model(resolved_world, model_name, timeout_s=3.0):
             return True
         time.sleep(0.5)
@@ -762,6 +770,7 @@ def apply_overview_camera(
     pose_source: str,
     wait_for_services_s: float = 15.0,
     mode_config_error: str | None = None,
+    stop_check: StopCheck | None = None,
 ) -> CameraSetupEvidence:
     evidence = CameraSetupEvidence(
         camera_mode="overview",
@@ -772,7 +781,9 @@ def apply_overview_camera(
     if gz_binary() is None:
         evidence.error = "gz binary not available"
         return evidence
-    if not wait_for_service(cli, _MOVE_TO_POSE_SERVICE, timeout_s=wait_for_services_s):
+    if not wait_for_service(
+        cli, _MOVE_TO_POSE_SERVICE, timeout_s=wait_for_services_s, stop_check=stop_check
+    ):
         evidence.error = f"{_MOVE_TO_POSE_SERVICE} not advertised before timeout"
         return evidence
     evidence.requested = True
@@ -796,15 +807,18 @@ def apply_camera_follow(
     model_name: str,
     offset: tuple[float, float, float],
     wait_for_services_s: float = 15.0,
+    stop_check: StopCheck | None = None,
 ) -> CameraFollowEvidence:
     evidence = CameraFollowEvidence(model=model_name, offset={"x": offset[0], "y": offset[1], "z": offset[2]})
     if gz_binary() is None:
         evidence.error = "gz binary not available"
         return evidence
-    if not wait_for_service(cli, "/gui/follow", timeout_s=wait_for_services_s):
+    if not wait_for_service(cli, "/gui/follow", timeout_s=wait_for_services_s, stop_check=stop_check):
         evidence.error = "/gui/follow not advertised before timeout"
         return evidence
-    if not wait_for_service(cli, "/gui/follow/offset", timeout_s=min(5.0, wait_for_services_s)):
+    if not wait_for_service(
+        cli, "/gui/follow/offset", timeout_s=min(5.0, wait_for_services_s), stop_check=stop_check
+    ):
         evidence.error = "/gui/follow/offset not advertised before timeout"
         return evidence
     evidence.requested = True
@@ -1008,8 +1022,16 @@ class DemoGzVisualDirector:
         mode, mode_err = effective_demo_gz_camera_mode()
         world = resolve_gz_world_name()
         model, _model_err = resolve_follow_model_name()
+        stop_check = self._setup_stopped
         if mode != "off":
-            await asyncio.to_thread(wait_for_model_spawned, self.cli, model, world=world, timeout_s=30.0)
+            await asyncio.to_thread(
+                wait_for_model_spawned,
+                self.cli,
+                model,
+                world=world,
+                timeout_s=30.0,
+                stop_check=stop_check,
+            )
         if self._setup_stopped():
             return
         if mode == "overview":
@@ -1020,6 +1042,7 @@ class DemoGzVisualDirector:
                 pose,
                 pose_source=pose_source,
                 mode_config_error=mode_err or pose_err,
+                stop_check=stop_check,
             )
             self.camera_setup_history.append(setup.as_dict())
         elif mode == "follow":
@@ -1030,7 +1053,13 @@ class DemoGzVisualDirector:
                 )
                 return
             assert offset is not None
-            follow = await asyncio.to_thread(apply_camera_follow, self.cli, model_name=model, offset=offset)
+            follow = await asyncio.to_thread(
+                apply_camera_follow,
+                self.cli,
+                model_name=model,
+                offset=offset,
+                stop_check=stop_check,
+            )
             self.camera_follow_history.append(follow.as_dict())
             self.camera_setup_history.append(
                 {
@@ -1063,8 +1092,19 @@ class DemoGzVisualDirector:
         offset, offset_err = parse_follow_offset_env()
         if model_err or offset is None or offset_err:
             return
-        follow = await asyncio.to_thread(apply_camera_follow, self.cli, model_name=model, offset=offset, wait_for_services_s=5.0)
-        self.camera_follow_history.append({"phase": "post_arm", **follow.as_dict()})
+        try:
+            follow = await asyncio.to_thread(
+                apply_camera_follow,
+                self.cli,
+                model_name=model,
+                offset=offset,
+                wait_for_services_s=5.0,
+            )
+            self.camera_follow_history.append({"phase": "post_arm", **follow.as_dict()})
+        except Exception as error:
+            self.camera_follow_history.append(
+                {"phase": "post_arm", "ok": False, "error": f"{type(error).__name__}: {error}"}
+            )
 
     async def reaffirm_camera_follow_at_rtl(self) -> None:
         import asyncio

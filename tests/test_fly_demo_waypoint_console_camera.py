@@ -118,6 +118,7 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
         gz_binary: str | None = "/usr/bin/gz",
         use_real_director: bool = False,
         director: MagicMock | None = None,
+        execute_stub=None,
     ) -> dict[str, object]:
         artifact_dir = Path(arguments.artifact_dir)
         run_id = "console-camera-run"
@@ -131,9 +132,13 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
 
         hook_capture: dict[str, object] = {}
 
-        async def execute_stub(_adapter, _config, *, on_armed=None, on_returning=None, **_kwargs):
+        default_execute = execute_stub
+
+        async def execute_wrapper(_adapter, _config, *, on_armed=None, on_returning=None, **_kwargs):
             hook_capture["on_armed"] = on_armed
             hook_capture["on_returning"] = on_returning
+            if default_execute is not None:
+                return await default_execute(_adapter, _config, on_armed=on_armed, on_returning=on_returning, **_kwargs)
             return execution
 
         artifact_paths: list[Path] = []
@@ -179,7 +184,7 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
             patch("brain.cli.fly_demo_waypoint_mission.stop_owned_mavsdk_server"),
             patch("brain.cli.fly_demo_waypoint_mission.MavsdkMissionAdapter", return_value=adapter),
             patch.object(adapter, "connect", AsyncMock()),
-            patch("brain.cli.fly_demo_waypoint_mission.execute_demo_waypoint_mission", side_effect=execute_stub),
+            patch("brain.cli.fly_demo_waypoint_mission.execute_demo_waypoint_mission", side_effect=execute_wrapper),
             patch("brain.cli.fly_demo_waypoint_mission.validate_demo_waypoint_mission_progress"),
             patch("brain.cli.fly_demo_waypoint_mission.sample_positions_while", side_effect=fake_sample),
             patch("brain.cli.fly_demo_waypoint_mission.MavsdkTelemetryRelay", _FakeTelemetryRelay),
@@ -231,7 +236,13 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
         )
         return arguments, config
 
-    async def _run_console_mission(self, env_overrides: dict[str, str] | None, **kwargs) -> dict[str, object]:
+    async def _run_console_mission(
+        self,
+        env_overrides: dict[str, str] | None,
+        *,
+        execute_stub=None,
+        **kwargs,
+    ) -> dict[str, object]:
         artifact_dir = Path(self.tmp.name) / "artifacts"
         artifact_dir.mkdir(parents=True, exist_ok=True)
         arguments, config = self._console_arguments(artifact_dir)
@@ -241,7 +252,7 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
         if env_overrides is not None:
             merged_env.update(env_overrides)
         with patch.dict(os.environ, merged_env, clear=True):
-            return await self._run_mission(arguments, config, **kwargs)
+            return await self._run_mission(arguments, config, execute_stub=execute_stub, **kwargs)
 
     async def test_follow_mode_creates_director_without_capture(self) -> None:
         result = await self._run_console_mission({"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow"})
@@ -341,6 +352,64 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("gz_visual_setup_error", result["artifact"])
         self.assertIsNone(result["hooks"].get("on_armed"))
         hang.set()
+
+    async def test_reaffirm_task_error_recorded_without_failing_mission(self) -> None:
+        flaky = MagicMock()
+        flaky.camera_setup_history = []
+        flaky.markers = None
+
+        async def _apply_ok() -> None:
+            flaky.camera_setup_history.append({"camera_mode": "follow", "ok": True})
+
+        async def _reaffirm_fail() -> None:
+            raise RuntimeError("reaffirm broke")
+
+        flaky.apply_scene = _apply_ok
+        flaky.reaffirm_camera_follow_after_arm = _reaffirm_fail
+        flaky.reaffirm_camera_follow_at_rtl = MagicMock()
+
+        async def _execute_with_hook(_adapter, _config, *, on_armed=None, on_returning=None, **_kwargs):
+            if on_armed is not None:
+                on_armed()
+            await asyncio.sleep(0)
+            return self._completed_execution()
+
+        result = await self._run_console_mission(
+            {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow"},
+            director=flaky,
+            execute_stub=_execute_with_hook,
+        )
+        self.assertEqual(result["artifact"].get("outcome"), "completed")
+        self.assertIn("gz_visual_followup_errors", result["artifact"])
+        self.assertIn("reaffirm broke", str(result["artifact"]["gz_visual_followup_errors"]))
+
+    async def test_reaffirm_task_error_does_not_mask_mission_failure(self) -> None:
+        flaky = MagicMock()
+        flaky.camera_setup_history = []
+        flaky.markers = None
+
+        async def _apply_ok() -> None:
+            flaky.camera_setup_history.append({"camera_mode": "follow", "ok": True})
+
+        async def _reaffirm_fail() -> None:
+            raise RuntimeError("reaffirm broke")
+
+        flaky.apply_scene = _apply_ok
+        flaky.reaffirm_camera_follow_after_arm = _reaffirm_fail
+        flaky.reaffirm_camera_follow_at_rtl = MagicMock()
+
+        async def _execute_fail_after_hook(_adapter, _config, *, on_armed=None, on_returning=None, **_kwargs):
+            if on_armed is not None:
+                on_armed()
+            raise RuntimeError("primary mission failure")
+
+        with self.assertRaises(RuntimeError) as raised:
+            await self._run_console_mission(
+                {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow"},
+                director=flaky,
+                execute_stub=_execute_fail_after_hook,
+            )
+        self.assertIn("primary mission failure", str(raised.exception))
 
     async def test_sitl_acceptance_skip_capture_does_not_use_console_director(self) -> None:
         artifact_dir = Path(self.tmp.name) / "acceptance-artifacts"

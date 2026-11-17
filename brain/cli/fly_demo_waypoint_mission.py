@@ -45,6 +45,22 @@ from shared.safety.execution_gate import require_mission_execution_enabled
 CONSOLE_DEMO_GZ_VISUAL_SETUP_TIMEOUT_S = 35.0
 
 
+async def _finalize_console_reaffirm_tasks(tasks: list[asyncio.Task[None]]) -> list[str]:
+    if not tasks:
+        return []
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    errors: list[str] = []
+    for result in results:
+        if isinstance(result, asyncio.CancelledError):
+            continue
+        if isinstance(result, BaseException):
+            errors.append(f"{type(result).__name__}: {result}")
+    return errors
+
+
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the demo-waypoint-mission SITL route through the MAVSDK Mission plugin."
@@ -222,14 +238,26 @@ async def run(arguments: argparse.Namespace) -> None:
                 gz_visual_director = DemoGzVisualDirector(config=config, setup_stop=gz_visual_setup_stop)
                 console_gz_visual_status = {}
                 setup_exception: Exception | None = None
-                try:
-                    await asyncio.wait_for(
-                        gz_visual_director.apply_scene(),
-                        timeout=CONSOLE_DEMO_GZ_VISUAL_SETUP_TIMEOUT_S,
-                    )
-                except Exception as error:
+                apply_task = asyncio.create_task(gz_visual_director.apply_scene())
+                _done, pending = await asyncio.wait(
+                    {apply_task},
+                    timeout=CONSOLE_DEMO_GZ_VISUAL_SETUP_TIMEOUT_S,
+                )
+                if pending:
                     gz_visual_setup_stop.set()
-                    setup_exception = error
+                    apply_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await apply_task
+                    setup_exception = TimeoutError()
+                else:
+                    task_error = apply_task.exception()
+                    if task_error is not None:
+                        gz_visual_setup_stop.set()
+                        setup_exception = (
+                            task_error
+                            if isinstance(task_error, Exception)
+                            else RuntimeError(str(task_error))
+                        )
                 setup_error = (
                     f"{type(setup_exception).__name__}: {setup_exception}" if setup_exception else None
                 )
@@ -273,11 +301,11 @@ async def run(arguments: argparse.Namespace) -> None:
         finally:
             sampler_stop.set()
             await sampler_task
-            for task in console_reaffirm_tasks:
-                task.cancel()
-            for task in console_reaffirm_tasks:
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+            followup_errors = await _finalize_console_reaffirm_tasks(console_reaffirm_tasks)
+            if followup_errors:
+                if console_gz_visual_status is None:
+                    console_gz_visual_status = {}
+                console_gz_visual_status["gz_visual_followup_errors"] = followup_errors
             if flight_capture is not None:
                 screen_capture_result = (await asyncio.to_thread(flight_capture.stop)).as_dict()
                 if gz_visual_director is not None and screen_capture_result is not None and adapter is not None:
