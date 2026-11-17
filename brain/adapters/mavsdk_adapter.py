@@ -959,6 +959,16 @@ class MavsdkMissionAdapter:
         # Read-only checks must never send hold; only real mission entry points may.
         if allow_mode_change:
             await leave_arm_preventing_mode(self._drone)
+        else:
+            mode = await _current_flight_mode(self._drone, 2.0)
+            if (
+                mode in _ARM_PREVENTING_FLIGHT_MODES
+                and await _is_on_ground(self._drone, 2.0)
+            ):
+                raise MissionPreflightError(
+                    f"Preflight rejected: vehicle in {mode} mode; "
+                    "read-only check sends no mode change."
+                )
         deadline = asyncio.get_running_loop().time() + self._preflight_wait_s
         health_stream = self._drone.telemetry.health()
         # A missing refresh is not alone a reason to reject a vehicle: PX4 can
