@@ -37,22 +37,28 @@ def depth_obstacle_observation(
 
     Invalid/no-return pixels never become ``clear``.  They mark their bearing
     ``unobserved``; only finite positive ranges at or beyond sensor max range
-    can establish clear coverage.
+    can establish clear coverage.  Samples below ``min_range_m`` make a sector
+    ``unobserved`` when nothing else is in range; if in-range returns also
+    exist, ``distance_m`` is ``min_range_m`` because the nearer hit is inside
+    the sensor blind zone.
     """
     _validate(frame, horizontal_fov_deg, min_range_m, max_range_m, sector_width_deg, max_age_s)
     values = _depth_values_m(frame)
     sector_count = ceil(horizontal_fov_deg / sector_width_deg)
     buckets: list[list[float]] = [[] for _ in range(sector_count)]
     observed: list[bool] = [False] * sector_count
+    below_min: list[bool] = [False] * sector_count
     for column in range(frame.width):
         yaw_deg = ((column + 0.5) / frame.width - 0.5) * horizontal_fov_deg
         index = min(sector_count - 1, max(0, floor((yaw_deg + horizontal_fov_deg / 2.0) / sector_width_deg)))
         column_values = [values[row * frame.width + column] for row in range(frame.height)]
-        valid = [value for value in column_values if isfinite(value) and value > 0.0]
-        if not valid:
+        positive = [value for value in column_values if isfinite(value) and value > 0.0]
+        if not positive:
             continue
         observed[index] = True
-        buckets[index].extend(valid)
+        buckets[index].extend(positive)
+        if any(0.0 < value < min_range_m for value in positive):
+            below_min[index] = True
     sectors = []
     for index in range(sector_count):
         width = min(sector_width_deg, horizontal_fov_deg - index * sector_width_deg)
@@ -63,7 +69,13 @@ def depth_obstacle_observation(
         else:
             returns = [value for value in buckets[index] if min_range_m <= value < max_range_m]
             if returns:
-                sector.update({"coverage": "measured", "distance_m": round(min(returns), 6)})
+                # A below-minimum sample is an obstacle nearer than the sensor can
+                # range. Reporting min(returns) would overstate the clearance, so
+                # the sector reads the closest distance the sensor can claim.
+                nearest = min_range_m if below_min[index] else min(returns)
+                sector.update({"coverage": "measured", "distance_m": round(nearest, 6)})
+            elif below_min[index]:
+                sector["coverage"] = "unobserved"
             else:
                 sector["coverage"] = "clear"
         sectors.append(sector)
