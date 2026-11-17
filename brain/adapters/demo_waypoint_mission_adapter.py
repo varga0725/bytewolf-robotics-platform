@@ -28,7 +28,7 @@ async def execute_demo_waypoint_mission(
 ) -> MissionExecution:
     from mavsdk.mission import MissionItem, MissionPlan
 
-    await adapter._require_preflight()
+    await adapter._require_preflight(allow_mode_change=True)
     sitl_proof = await require_px4_sitl_indication(adapter._drone, timeout_s=action_timeout_s)
     adapter._demo_sitl_proof = sitl_proof
     home = await adapter._global_position_sample("home")

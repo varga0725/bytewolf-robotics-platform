@@ -48,7 +48,7 @@ class _RecordingAdapter(MavsdkMissionAdapter):
     async def _sleep(self, _seconds: float) -> None:
         return None
 
-    async def _require_preflight(self) -> None:
+    async def _require_preflight(self, *, allow_mode_change: bool = False) -> None:
         return None
 
     async def _require_px4_sitl_before_arm(self, *, timeout_s: float = 10.0) -> None:

@@ -111,6 +111,8 @@ async def run(arguments: argparse.Namespace) -> None:
         if safety_decision == "not-evaluated":
             safety_decision = "rejected"
         failure_reason = f"{type(error).__name__}: {error}"
+        print(failure_reason)
+        print("No flight command was sent.")
         raise
     finally:
         stop_owned_mavsdk_server(system)
