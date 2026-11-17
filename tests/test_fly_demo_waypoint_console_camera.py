@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
@@ -13,8 +14,15 @@ from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from brain.cli import fly_demo_waypoint_mission
-from brain.mission.demo_gz_scene import console_spawned_demo_gz_visual_eligible
+from brain.mission import demo_gz_scene
+from brain.mission.demo_gz_scene import (
+    DemoGzVisualDirector,
+    GzCli,
+    console_gz_visual_setup_document,
+    console_spawned_demo_gz_visual_eligible,
+)
 from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig, default_demo_waypoint_loop
+from brain.mission.demo_waypoint_reviewed_plan import write_reviewed_demo_waypoint_plan
 from brain.mission.execution import MissionExecution, MissionPhase
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
 
@@ -36,6 +44,46 @@ class ConsoleDemoGzVisualEligibilityTests(unittest.TestCase):
                     deployment_mode="simulation",
                 )
             )
+
+    def test_demo_gz_visual_kill_switch(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow", "BYTEWOLF_DEMO_GZ_VISUAL": "0"},
+            clear=False,
+        ):
+            self.assertFalse(
+                console_spawned_demo_gz_visual_eligible(
+                    sitl_acceptance=False,
+                    deployment_mode="simulation",
+                )
+            )
+
+
+class ConsoleGzVisualSetupDocumentTests(unittest.TestCase):
+    def test_service_unavailable_records_setup_error(self) -> None:
+        import asyncio as aio
+
+        def service_unavailable(*_args, **_kwargs):
+            return MagicMock(returncode=1, stdout="", stderr="service not available")
+
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=default_demo_waypoint_loop(altitude_m=8.0, leg_m=5.0)[:1],
+            max_mission_items=4,
+        )
+        cli = GzCli(run=service_unavailable)
+        director = DemoGzVisualDirector(config=config, cli=cli)
+        with (
+            patch.dict(os.environ, {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow"}, clear=False),
+            patch.object(demo_gz_scene, "gz_binary", return_value="/usr/bin/gz"),
+            patch.object(demo_gz_scene, "wait_for_model_spawned", return_value=True),
+            patch.object(demo_gz_scene, "wait_for_service", return_value=False),
+        ):
+            aio.run(director.apply_scene())
+        document = console_gz_visual_setup_document(director)
+        self.assertIn("gz_visual_setup", document)
+        self.assertIn("gz_visual_setup_error", document)
+        self.assertFalse(document["gz_visual_setup"]["ok"])  # type: ignore[index]
 
 
 class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
@@ -62,30 +110,16 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
             execution = execution.transition(phase, timestamp=datetime.now(UTC))
         return execution
 
-    async def _run_console_mission(
+    async def _run_mission(
         self,
-        env_overrides: dict[str, str] | None,
+        arguments: argparse.Namespace,
+        config: DemoWaypointMissionConfig,
         *,
         gz_binary: str | None = "/usr/bin/gz",
+        use_real_director: bool = False,
         director: MagicMock | None = None,
-        clear_camera_mode: bool = False,
     ) -> dict[str, object]:
-        artifact_dir = Path(self.tmp.name) / "artifacts"
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        config = DemoWaypointMissionConfig(
-            takeoff_altitude_m=8.0,
-            waypoints=default_demo_waypoint_loop(altitude_m=8.0, leg_m=5.0)[:2],
-        )
-        arguments = fly_demo_waypoint_mission.parse_arguments(
-            [
-                "--endpoint",
-                "udpin://127.0.0.1:14540",
-                "--deployment-mode",
-                "simulation",
-                "--artifact-dir",
-                str(artifact_dir),
-            ]
-        )
+        artifact_dir = Path(arguments.artifact_dir)
         run_id = "console-camera-run"
         adapter = MagicMock()
         adapter._demo_sitl_proof = {"status": "verified"}
@@ -95,11 +129,6 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
         adapter.preflight_telemetry = None
         execution = self._completed_execution()
 
-        fake_director = director or MagicMock()
-        if director is None:
-            fake_director.apply_scene = AsyncMock()
-            fake_director.reaffirm_camera_follow_after_arm = MagicMock()
-            fake_director.reaffirm_camera_follow_at_rtl = MagicMock()
         hook_capture: dict[str, object] = {}
 
         async def execute_stub(_adapter, _config, *, on_armed=None, on_returning=None, **_kwargs):
@@ -119,22 +148,29 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         capture_construct = MagicMock()
-        ulog_wait = AsyncMock()
-        director_ctor = MagicMock(return_value=fake_director)
+        ulog_wait = AsyncMock(return_value=(None, "missing", None))
+        director_ctor = MagicMock()
+        if director is not None:
+            director_ctor.return_value = director
+        elif not use_real_director:
+            fake = MagicMock()
 
-        merged_env = dict(os.environ)
-        merged_env.pop("BYTEWOLF_SITL_ACCEPTANCE", None)
-        if clear_camera_mode:
-            merged_env.pop("BYTEWOLF_DEMO_GZ_CAMERA_MODE", None)
-        if env_overrides is not None:
-            merged_env.update(env_overrides)
+            async def _apply_ok() -> None:
+                fake.camera_setup_history.append({"camera_mode": "follow", "ok": True})
+
+            fake.apply_scene = _apply_ok
+            fake.reaffirm_camera_follow_after_arm = MagicMock()
+            fake.reaffirm_camera_follow_at_rtl = MagicMock()
+            fake.camera_setup_history = []
+            fake.markers = None
+            director_ctor.return_value = fake
+            director = fake
 
         system = MagicMock()
         home = MagicMock(latitude_deg=47.0, longitude_deg=8.0, absolute_altitude_m=500.0)
         system.telemetry.home = MagicMock(side_effect=lambda: _home_iter(home))
 
         patches = [
-            patch.dict(os.environ, merged_env, clear=True),
             patch("brain.cli.fly_demo_waypoint_mission.load_safety_profile", return_value=load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH)),
             patch("brain.cli.fly_demo_waypoint_mission.file_sha256", return_value="abc"),
             patch("brain.cli.fly_demo_waypoint_mission.authorize_demo_waypoint_mission", return_value=config),
@@ -155,9 +191,10 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
             patch("brain.cli.fly_demo_waypoint_mission.DemoFlightScreenCapture", capture_construct),
             patch("brain.cli.fly_demo_waypoint_mission.wait_for_px4_ulog_archive", ulog_wait),
             patch("brain.mission.demo_gz_scene.gz_binary", return_value=gz_binary),
-            patch("brain.mission.demo_gz_scene.DemoGzVisualDirector", director_ctor),
             patch("mavsdk.System", return_value=system),
         ]
+        if not use_real_director:
+            patches.append(patch("brain.mission.demo_gz_scene.DemoGzVisualDirector", director_ctor))
 
         with ExitStack() as stack:
             for item in patches:
@@ -170,32 +207,67 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
 
         return {
             "director_ctor": director_ctor,
-            "director": fake_director,
+            "director": director,
             "capture_construct": capture_construct,
             "ulog_wait": ulog_wait,
             "hooks": hook_capture,
             "artifact": artifact_document,
         }
 
+    def _console_arguments(self, artifact_dir: Path) -> tuple[argparse.Namespace, DemoWaypointMissionConfig]:
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=default_demo_waypoint_loop(altitude_m=8.0, leg_m=5.0)[:2],
+        )
+        arguments = fly_demo_waypoint_mission.parse_arguments(
+            [
+                "--endpoint",
+                "udpin://127.0.0.1:14540",
+                "--deployment-mode",
+                "simulation",
+                "--artifact-dir",
+                str(artifact_dir),
+            ]
+        )
+        return arguments, config
+
+    async def _run_console_mission(self, env_overrides: dict[str, str] | None, **kwargs) -> dict[str, object]:
+        artifact_dir = Path(self.tmp.name) / "artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        arguments, config = self._console_arguments(artifact_dir)
+        merged_env = dict(os.environ)
+        merged_env.update({"BYTEWOLF_MISSION_EXECUTION_ENABLED": "true"})
+        merged_env.pop("BYTEWOLF_SITL_ACCEPTANCE", None)
+        if env_overrides is not None:
+            merged_env.update(env_overrides)
+        with patch.dict(os.environ, merged_env, clear=True):
+            return await self._run_mission(arguments, config, **kwargs)
+
     async def test_follow_mode_creates_director_without_capture(self) -> None:
         result = await self._run_console_mission({"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow"})
         result["director_ctor"].assert_called_once()
-        result["director"].apply_scene.assert_awaited_once()
         result["capture_construct"].assert_not_called()
         result["ulog_wait"].assert_not_called()
         self.assertIsNotNone(result["hooks"].get("on_armed"))
+        self.assertIn("gz_visual_setup", result["artifact"])
         self.assertNotIn("gz_visual_setup_error", result["artifact"])
 
     async def test_unset_camera_mode_skips_director(self) -> None:
-        result = await self._run_console_mission(None, clear_camera_mode=True)
+        env = dict(os.environ)
+        env.pop("BYTEWOLF_DEMO_GZ_CAMERA_MODE", None)
+        env.pop("BYTEWOLF_SITL_ACCEPTANCE", None)
+        with patch.dict(os.environ, env, clear=True):
+            result = await self._run_console_mission(None)
         result["director_ctor"].assert_not_called()
 
     async def test_off_camera_mode_skips_director(self) -> None:
         result = await self._run_console_mission({"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "off"})
         result["director_ctor"].assert_not_called()
 
-    async def test_invalid_camera_mode_skips_director(self) -> None:
-        result = await self._run_console_mission({"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "bogus"})
+    async def test_demo_gz_visual_zero_skips_director(self) -> None:
+        result = await self._run_console_mission(
+            {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow", "BYTEWOLF_DEMO_GZ_VISUAL": "0"}
+        )
         result["director_ctor"].assert_not_called()
 
     async def test_missing_gz_skips_director(self) -> None:
@@ -205,26 +277,113 @@ class FlyDemoWaypointConsoleCameraTests(unittest.IsolatedAsyncioTestCase):
         )
         result["director_ctor"].assert_not_called()
 
-    async def test_director_failure_records_error_and_mission_completes(self) -> None:
-        failing_director = MagicMock()
-        failing_director.apply_scene = AsyncMock(side_effect=RuntimeError("gz follow unavailable"))
-        failing_director.reaffirm_camera_follow_after_arm = MagicMock()
-        failing_director.reaffirm_camera_follow_at_rtl = MagicMock()
+    async def test_director_failure_records_error_and_no_hooks(self) -> None:
+        failing = MagicMock()
+        failing.camera_setup_history = []
+        failing.markers = None
+
+        async def _fail() -> None:
+            raise RuntimeError("gz follow unavailable")
+
+        failing.apply_scene = _fail
         result = await self._run_console_mission(
             {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "overview"},
-            director=failing_director,
+            director=failing,
         )
         self.assertIn("gz_visual_setup_error", result["artifact"])
+        self.assertIsNone(result["hooks"].get("on_armed"))
+
+    async def test_soft_setup_failure_records_error_and_no_hooks(self) -> None:
+        soft_fail = MagicMock()
+
+        async def _soft_fail() -> None:
+            soft_fail.camera_setup_history.append(
+                {"camera_mode": "follow", "ok": False, "error": "/gui/follow not advertised"}
+            )
+
+        soft_fail.camera_setup_history = []
+        soft_fail.markers = None
+        soft_fail.apply_scene = _soft_fail
+        result = await self._run_console_mission(
+            {"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow"},
+            director=soft_fail,
+        )
+        self.assertIn("gz_visual_setup_error", result["artifact"])
+        self.assertIn("gz_visual_setup", result["artifact"])
+        self.assertIsNone(result["hooks"].get("on_armed"))
 
     async def test_director_timeout_records_error(self) -> None:
-        async def wait_for_stub(coro, timeout):
-            if timeout == 35.0:
-                raise asyncio.TimeoutError()
-            return await coro
+        hang = asyncio.Event()
 
-        with patch("brain.cli.fly_demo_waypoint_mission.asyncio.wait_for", side_effect=wait_for_stub):
-            result = await self._run_console_mission({"BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow"})
+        async def never_finish_scene(self) -> None:  # type: ignore[no-untyped-def]
+            await hang.wait()
+
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=default_demo_waypoint_loop(altitude_m=8.0, leg_m=5.0)[:2],
+        )
+        artifact_dir = Path(self.tmp.name) / "timeout-artifacts"
+        artifact_dir.mkdir(parents=True)
+        arguments, _ = self._console_arguments(artifact_dir)
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "BYTEWOLF_MISSION_EXECUTION_ENABLED": "true",
+                    "BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow",
+                },
+                clear=True,
+            ),
+            patch.object(fly_demo_waypoint_mission, "CONSOLE_DEMO_GZ_VISUAL_SETUP_TIMEOUT_S", 0.05),
+            patch.object(DemoGzVisualDirector, "apply_scene", never_finish_scene),
+        ):
+            result = await self._run_mission(arguments, config, use_real_director=True)
         self.assertIn("gz_visual_setup_error", result["artifact"])
+        self.assertIsNone(result["hooks"].get("on_armed"))
+        hang.set()
+
+    async def test_sitl_acceptance_skip_capture_does_not_use_console_director(self) -> None:
+        artifact_dir = Path(self.tmp.name) / "acceptance-artifacts"
+        artifact_dir.mkdir(parents=True)
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=default_demo_waypoint_loop(altitude_m=8.0, leg_m=5.0)[:2],
+        )
+        plan_path = artifact_dir / "plan.json"
+        write_reviewed_demo_waypoint_plan(plan_path, config, mission_id="regression-plan")
+        arguments = fly_demo_waypoint_mission.parse_arguments(
+            [
+                "--endpoint",
+                "udpin://127.0.0.1:14540",
+                "--deployment-mode",
+                "simulation",
+                "--skip-optional-screen-capture",
+                "--artifact-dir",
+                str(artifact_dir),
+                "--plan-file",
+                str(plan_path),
+            ]
+        )
+        director_ctor = MagicMock()
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "BYTEWOLF_MISSION_EXECUTION_ENABLED": "true",
+                    "BYTEWOLF_SITL_ACCEPTANCE": "1",
+                    "BYTEWOLF_DEMO_GZ_CAMERA_MODE": "follow",
+                },
+                clear=True,
+            ),
+            patch(
+                "brain.cli.fly_demo_waypoint_mission.load_demo_waypoint_plan_config",
+                return_value=config,
+            ),
+            patch("brain.cli.fly_demo_waypoint_mission.require_matching_demo_waypoint_approval"),
+            patch("brain.mission.demo_gz_scene.DemoGzVisualDirector", director_ctor),
+        ):
+            await self._run_mission(arguments, config)
+        director_ctor.assert_not_called()
 
 
 async def _home_iter(home: MagicMock):
