@@ -144,6 +144,59 @@ class UsbBenchCliTests(unittest.TestCase):
         system.action.assert_not_called()
         system._stop_mavsdk_server.assert_called_once()
 
+    def test_transient_disconnection_waits_until_connected(self) -> None:
+        class _Disconnected:
+            is_connected = False
+
+        class _Connected:
+            is_connected = True
+
+        system = MagicMock()
+        system.connect = AsyncMock()
+        system.core.connection_state.return_value = _samples(_Disconnected(), _Connected())
+        system.telemetry = _Telemetry()
+        system.info.get_identification = AsyncMock(return_value=_Identification())
+        system.info.get_product = AsyncMock(return_value=_Product())
+        system.info.get_version = AsyncMock(return_value=_Version())
+        mavsdk = ModuleType("mavsdk")
+        mavsdk.System = MagicMock(return_value=system)  # type: ignore[attr-defined]
+
+        with TemporaryDirectory() as directory:
+            arguments = check_usb_bench.parse_arguments((
+                "--artifact-dir", directory,
+                "--connection-timeout", "5",
+            ))
+            with patch.dict(sys.modules, {"mavsdk": mavsdk}):
+                asyncio.run(check_usb_bench.run(arguments))
+
+        self.assertEqual(
+            [call.kwargs.get("system_address") or call.args[0] for call in system.connect.await_args_list],
+            ["serial:///dev/cu.usbmodem01:57600"],
+        )
+
+    def test_artifact_write_failure_still_tears_down_mavsdk(self) -> None:
+        system = MagicMock()
+        system.connect = AsyncMock()
+        system.core.connection_state.return_value = _samples(_Connected())
+        system.telemetry = _Telemetry()
+        system.info.get_identification = AsyncMock(return_value=_Identification())
+        system.info.get_product = AsyncMock(return_value=_Product())
+        system.info.get_version = AsyncMock(return_value=_Version())
+        mavsdk = ModuleType("mavsdk")
+        mavsdk.System = MagicMock(return_value=system)  # type: ignore[attr-defined]
+
+        with TemporaryDirectory() as directory:
+            arguments = check_usb_bench.parse_arguments(("--artifact-dir", directory))
+            with (
+                patch.dict(sys.modules, {"mavsdk": mavsdk}),
+                patch.object(check_usb_bench, "_write_artifact", side_effect=OSError("disk full")),
+                patch.object(check_usb_bench, "stop_owned_mavsdk_server") as teardown,
+                self.assertRaises(OSError),
+            ):
+                asyncio.run(check_usb_bench.run(arguments))
+        teardown.assert_called_once_with(system)
+        system.action.assert_not_called()
+
     def test_connection_failure_writes_a_failed_artifact_and_still_never_commands(self) -> None:
         system = MagicMock()
         system.connect = AsyncMock(side_effect=TimeoutError("link unavailable"))

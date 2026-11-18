@@ -66,6 +66,39 @@ class DepthObstacleTests(unittest.TestCase):
             self.assertEqual(sector["coverage"], "measured")
             self.assertEqual(sector["distance_m"], 0.2)
 
+    def test_invalid_with_beyond_max_is_unobserved_not_clear(self) -> None:
+        for values in ((math.nan, 40.0), (0.0, 40.0)):
+            with self.subTest(values=values):
+                frame = CameraFrame(
+                    "depth-front", FrameEncoding.DEPTH32F, 1, 2,
+                    struct.pack("<ff", *values), NOW,
+                )
+                document = depth_obstacle_observation(
+                    frame, vehicle_id="x500", horizontal_fov_deg=30,
+                    min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+                )
+                (sector,) = document["payload"]["sectors"]
+                self.assertEqual(sector["coverage"], "unobserved")
+
+    def test_depth16_saturation_is_unobserved(self) -> None:
+        frame = CameraFrame(
+            "depth-front", FrameEncoding.DEPTH16, 1, 1, struct.pack("<H", 65535), NOW,
+        )
+        document = depth_obstacle_observation(
+            frame, vehicle_id="x500", horizontal_fov_deg=30,
+            min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+        )
+        (sector,) = document["payload"]["sectors"]
+        self.assertEqual(sector["coverage"], "unobserved")
+
+    def test_exactly_max_range_stays_clear(self) -> None:
+        document = depth_obstacle_observation(
+            _frame([30.0, 30.0, 30.0]), vehicle_id="x500", horizontal_fov_deg=90,
+            min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+        )
+        centre = next(item for item in document["payload"]["sectors"] if item["yaw_deg"] == 0.0)
+        self.assertEqual(centre["coverage"], "clear")
+
     def test_in_range_only_keeps_measured_clear_behavior(self) -> None:
         measured = depth_obstacle_observation(
             _frame([2.0, 2.0, 2.0]), vehicle_id="x500", horizontal_fov_deg=90,
@@ -83,6 +116,58 @@ class DepthObstacleTests(unittest.TestCase):
         load_observation(clear)
         centre_clear = next(item for item in clear["payload"]["sectors"] if item["yaw_deg"] == 0.0)
         self.assertEqual(centre_clear["coverage"], "clear")
+
+    def test_invalid_only_samples_stay_unobserved(self) -> None:
+        for value in (float("inf"), float("-inf"), -1.0, 0.0):
+            with self.subTest(value=value):
+                frame = CameraFrame(
+                    "depth-front", FrameEncoding.DEPTH32F, 1, 1,
+                    struct.pack("<f", value), NOW,
+                )
+                document = depth_obstacle_observation(
+                    frame, vehicle_id="x500", horizontal_fov_deg=30,
+                    min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+                )
+                (sector,) = document["payload"]["sectors"]
+                self.assertEqual(sector["coverage"], "unobserved")
+
+    def test_invalid_with_in_range_stays_measured(self) -> None:
+        for values in ((float("inf"), 5.0), (float("-inf"), 5.0), (-1.0, 5.0)):
+            with self.subTest(values=values):
+                frame = CameraFrame(
+                    "depth-front", FrameEncoding.DEPTH32F, 1, 2,
+                    struct.pack("<ff", *values), NOW,
+                )
+                document = depth_obstacle_observation(
+                    frame, vehicle_id="x500", horizontal_fov_deg=30,
+                    min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+                )
+                (sector,) = document["payload"]["sectors"]
+                self.assertEqual(sector["coverage"], "measured")
+                self.assertEqual(sector["distance_m"], 5.0)
+
+    def test_single_pixel_frame_leaves_unsampled_sectors_unobserved(self) -> None:
+        frame = CameraFrame(
+            "depth-front", FrameEncoding.DEPTH32F, 1, 1, struct.pack("<f", 2.0), NOW,
+        )
+        document = depth_obstacle_observation(
+            frame, vehicle_id="x500", horizontal_fov_deg=90,
+            min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+        )
+        sectors = document["payload"]["sectors"]
+        self.assertEqual(len(sectors), 3)
+        self.assertEqual(sum(1 for item in sectors if item["coverage"] == "measured"), 1)
+        self.assertEqual(sum(1 for item in sectors if item["coverage"] == "unobserved"), 2)
+
+    def test_unobserved_columns_leave_sector_empty(self) -> None:
+        document = depth_obstacle_observation(
+            _frame([math.nan, 2.0, math.nan]), vehicle_id="x500", horizontal_fov_deg=90,
+            min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+        )
+        measured = [item for item in document["payload"]["sectors"] if item["coverage"] == "measured"]
+        unobserved = [item for item in document["payload"]["sectors"] if item["coverage"] == "unobserved"]
+        self.assertEqual(len(measured), 1)
+        self.assertEqual(len(unobserved), 2)
 
     def test_rgb_is_refused_not_misread_as_depth(self) -> None:
         frame = CameraFrame("front-rgb", FrameEncoding.RGB8, 1, 1, b"\x00\x00\x00", NOW)

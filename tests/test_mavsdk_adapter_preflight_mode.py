@@ -48,6 +48,12 @@ _MISSION_ENTRY_METHODS = (
     "execute_demo_point_rtl_mission",
 )
 
+_SITL_HOLD_ENTRY_POINTS = (
+    ("brain.adapters.mavsdk_adapter", "MavsdkMissionAdapter", "execute_demo_point_rtl_mission"),
+    ("brain.adapters.demo_waypoint_mission_adapter", None, "execute_demo_waypoint_mission"),
+    ("brain.mission.acceptance_inflight_runner", None, "connect_adapter"),
+)
+
 
 def _assert_no_flight_actions(events: list[object]) -> None:
     for event in events:
@@ -217,6 +223,42 @@ class PreflightModeTests(unittest.IsolatedAsyncioTestCase):
                     f"{method_name} must request mode change before flight",
                 )
 
+    async def test_sitl_only_entry_points_request_hold_after_sitl_proof(self) -> None:
+        for module_name, class_name, symbol in _SITL_HOLD_ENTRY_POINTS:
+            with self.subTest(symbol=symbol):
+                module = __import__(module_name, fromlist=[symbol])
+                target = getattr(module if class_name is None else getattr(module, class_name), symbol)
+                source = inspect.getsource(target)
+                self.assertIn("_require_preflight(allow_mode_change=True)", source)
+                self.assertLess(source.index("require_px4_sitl"), source.index("_require_preflight(allow_mode_change=True)"))
+
+    async def test_connect_adapter_entry_hold_before_arm_path(self) -> None:
+        from brain.mission.acceptance_inflight_runner import connect_adapter
+
+        drone = _LandModeDrone("LAND")
+        adapter = MagicMock()
+        adapter.connect = AsyncMock()
+        adapter._require_preflight = MagicMock(side_effect=adapter._require_preflight)
+        real = MavsdkMissionAdapter(drone, preflight_wait_s=0.0)
+
+        async def preflight(*, allow_mode_change: bool) -> None:
+            await real._require_preflight(allow_mode_change=allow_mode_change)
+
+        adapter._require_preflight = preflight
+        mavsdk = ModuleType("mavsdk")
+        mavsdk.System = MagicMock(return_value=drone)  # type: ignore[attr-defined]
+        with (
+            patch.dict(sys.modules, {"mavsdk": mavsdk}),
+            patch(
+                "brain.mission.acceptance_inflight_runner.require_px4_sitl_indication",
+                new_callable=AsyncMock,
+                return_value={"status": "verified", "matched_signals": []},
+            ),
+            patch("brain.mission.acceptance_inflight_runner.MavsdkMissionAdapter", return_value=adapter),
+        ):
+            await connect_adapter("udpin://127.0.0.1:14540", connection_timeout_s=1.0, preflight_wait_s=0.0, mavsdk_server_port=51099)
+        self.assertEqual(drone.events, ["hold"])
+
     async def test_check_boot_prearm_succeeds_in_hold_mode_without_flight_actions(self) -> None:
         drone = _LandModeDrone("HOLD")
         drone._stop_mavsdk_server = MagicMock()  # type: ignore[attr-defined]
@@ -265,6 +307,14 @@ class PreflightModeTests(unittest.IsolatedAsyncioTestCase):
         output = stdout.getvalue()
         self.assertIn("vehicle in LAND mode; read-only check sends no mode change", output)
         self.assertIn("No flight command was sent", output)
+
+    async def test_first_telemetry_sample_timeout_raises_preflight_error(self) -> None:
+        async def slow_stream():
+            await asyncio.sleep(10)
+            yield SimpleNamespace(latitude_deg=0.0, longitude_deg=0.0, absolute_altitude_m=0.0)
+
+        with self.assertRaisesRegex(MissionPreflightError, "no sample within"):
+            await MavsdkMissionAdapter._first_telemetry_sample(slow_stream(), "home", timeout_s=0.05)
 
 
 if __name__ == "__main__":

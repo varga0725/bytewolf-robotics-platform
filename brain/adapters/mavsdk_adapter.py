@@ -719,8 +719,8 @@ class MavsdkMissionAdapter:
         action_timeout_s: float = 45.0,
     ) -> MissionExecution:
         """Bounded one-point demo with bounded awaits and terminal recovery."""
-        await self._require_preflight(allow_mode_change=True)
         sitl_proof = await self._require_px4_sitl_before_arm(timeout_s=action_timeout_s)
+        await self._require_preflight(allow_mode_change=True)
         self._demo_sitl_proof = sitl_proof
         home = await self._global_position_sample("home")
         execution = self._begin_execution()
@@ -1023,15 +1023,27 @@ class MavsdkMissionAdapter:
                 f"Preflight rejected: battery is {remaining_percent:.1f}%, below the required {required:.1f}%."
             )
 
-    async def _global_position_sample(self, label: str) -> GlobalPosition:
-        sample = await self._first_telemetry_sample(self._drone.telemetry.position(), label)
+    async def _global_position_sample(self, label: str, *, timeout_s: float = 5.0) -> GlobalPosition:
+        sample = await self._first_telemetry_sample(
+            self._drone.telemetry.position(), label, timeout_s=timeout_s
+        )
         self._require_global_position(sample, label)
         return GlobalPosition(sample.latitude_deg, sample.longitude_deg, sample.absolute_altitude_m)
 
     @staticmethod
-    async def _first_telemetry_sample(stream: AsyncIterator[object], label: str) -> object:
+    async def _first_telemetry_sample(
+        stream: AsyncIterator[object],
+        label: str,
+        *,
+        timeout_s: float = 5.0,
+    ) -> object:
         try:
-            return await anext(stream)
+            return await asyncio.wait_for(anext(stream), timeout=timeout_s)
+        except TimeoutError as error:
+            raise MissionPreflightError(
+                f"Preflight rejected: {label} telemetry is unavailable "
+                f"(no sample within {timeout_s:g} s)."
+            ) from error
         except StopAsyncIteration as error:
             raise MissionPreflightError(
                 f"Preflight rejected: {label} telemetry is unavailable."

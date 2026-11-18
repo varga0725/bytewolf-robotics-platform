@@ -8,6 +8,8 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from apps.api.map_mission_home import MapHomeReference, assert_home_matches
+
 from brain.adapters.mavsdk_adapter import arm_from_ground
 from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig
 from brain.mission.execution import MissionExecution, MissionPhase
@@ -18,20 +20,61 @@ if TYPE_CHECKING:
     from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
 
 
+async def _px4_home_reference(
+    adapter: "MavsdkMissionAdapter",
+    *,
+    timeout_s: float,
+) -> MapHomeReference:
+    from brain.adapters.mavsdk_adapter import MavsdkMissionAdapter
+
+    sample = await MavsdkMissionAdapter._first_telemetry_sample(
+        adapter._drone.telemetry.home(),
+        "PX4 home",
+        timeout_s=timeout_s,
+    )
+    MavsdkMissionAdapter._require_global_position(sample, "PX4 home")
+    return MapHomeReference(
+        latitude_deg=float(sample.latitude_deg),
+        longitude_deg=float(sample.longitude_deg),
+        absolute_altitude_m=float(sample.absolute_altitude_m),
+        captured_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    )
+
+
+def _map_home_from_global(position: GlobalPosition) -> MapHomeReference:
+    return MapHomeReference(
+        latitude_deg=position.latitude_deg,
+        longitude_deg=position.longitude_deg,
+        absolute_altitude_m=position.absolute_altitude_m,
+        captured_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    )
+
+
 async def execute_demo_waypoint_mission(
     adapter: MavsdkMissionAdapter,
     config: DemoWaypointMissionConfig,
     *,
+    plan_map_home: MapHomeReference | None = None,
     action_timeout_s: float = 45.0,
     on_armed: "callable[[], object] | None" = None,
     on_returning: "callable[[], object] | None" = None,
 ) -> MissionExecution:
     from mavsdk.mission import MissionItem, MissionPlan
 
-    await adapter._require_preflight(allow_mode_change=True)
     sitl_proof = await require_px4_sitl_indication(adapter._drone, timeout_s=action_timeout_s)
     adapter._demo_sitl_proof = sitl_proof
-    home = await adapter._global_position_sample("home")
+    home_read_timeout_s = min(action_timeout_s, config.upload_timeout_s)
+    home: GlobalPosition | None = None
+    if plan_map_home is not None:
+        px4_home = await _px4_home_reference(adapter, timeout_s=home_read_timeout_s)
+        assert_home_matches(plan_map_home, authority=px4_home)
+        home = await adapter._global_position_sample(
+            "mission origin", timeout_s=home_read_timeout_s
+        )
+        assert_home_matches(plan_map_home, authority=_map_home_from_global(home))
+    await adapter._require_preflight(allow_mode_change=True)
+    if home is None:
+        home = await adapter._global_position_sample("home", timeout_s=home_read_timeout_s)
     execution = adapter._begin_execution()
     mission_uploaded = False
     armed = False
