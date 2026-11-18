@@ -232,12 +232,6 @@ class PreflightModeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("_require_preflight(allow_mode_change=True)", source)
                 self.assertLess(source.index("require_px4_sitl"), source.index("_require_preflight(allow_mode_change=True)"))
 
-    async def test_demo_waypoint_entry_hold_before_arm_path(self) -> None:
-        drone = _LandModeDrone("LAND")
-        adapter = MavsdkMissionAdapter(drone, preflight_wait_s=0.0)
-        await adapter._require_preflight(allow_mode_change=True)
-        self.assertEqual(drone.events, ["hold"])
-
     async def test_connect_adapter_entry_hold_before_arm_path(self) -> None:
         from brain.mission.acceptance_inflight_runner import connect_adapter
 
@@ -313,6 +307,14 @@ class PreflightModeTests(unittest.IsolatedAsyncioTestCase):
         output = stdout.getvalue()
         self.assertIn("vehicle in LAND mode; read-only check sends no mode change", output)
         self.assertIn("No flight command was sent", output)
+
+    async def test_first_telemetry_sample_timeout_raises_preflight_error(self) -> None:
+        async def slow_stream():
+            await asyncio.sleep(10)
+            yield SimpleNamespace(latitude_deg=0.0, longitude_deg=0.0, absolute_altitude_m=0.0)
+
+        with self.assertRaisesRegex(MissionPreflightError, "no sample within"):
+            await MavsdkMissionAdapter._first_telemetry_sample(slow_stream(), "home", timeout_s=0.05)
 
 
 if __name__ == "__main__":

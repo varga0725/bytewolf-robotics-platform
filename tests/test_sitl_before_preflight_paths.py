@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import sys
 import unittest
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,21 +24,30 @@ from tests.test_mavsdk_adapter_preflight_mode import (
 
 
 class SitlBeforePreflightSourceOrderTests(unittest.TestCase):
-  _PATHS = (
-      ("brain.adapters.mavsdk_adapter", "MavsdkMissionAdapter", "execute_demo_point_rtl_mission"),
-      ("brain.adapters.demo_waypoint_mission_adapter", None, "execute_demo_waypoint_mission"),
-      ("brain.mission.acceptance_inflight_runner", None, "connect_adapter"),
-  )
+    _PATHS = (
+        ("brain.adapters.mavsdk_adapter", "MavsdkMissionAdapter", "execute_demo_point_rtl_mission"),
+        ("brain.adapters.demo_waypoint_mission_adapter", None, "execute_demo_waypoint_mission"),
+        ("brain.mission.acceptance_inflight_runner", None, "connect_adapter"),
+    )
 
-  def test_sitl_gate_precedes_preflight_in_source(self) -> None:
-      for module_name, class_name, symbol in self._PATHS:
-          with self.subTest(symbol=symbol):
-              module = __import__(module_name, fromlist=[symbol])
-              target = getattr(module if class_name is None else getattr(module, class_name), symbol)
-              source = inspect.getsource(target)
-              sitl_index = source.index("require_px4_sitl")
-              preflight_index = source.index("_require_preflight(allow_mode_change=True)")
-              self.assertLess(sitl_index, preflight_index, source)
+    def test_sitl_gate_precedes_preflight_in_source(self) -> None:
+        for module_name, class_name, symbol in self._PATHS:
+            with self.subTest(symbol=symbol):
+                module = __import__(module_name, fromlist=[symbol])
+                target = getattr(module if class_name is None else getattr(module, class_name), symbol)
+                source = inspect.getsource(target)
+                sitl_index = source.index("require_px4_sitl")
+                preflight_index = source.index("_require_preflight(allow_mode_change=True)")
+                self.assertLess(sitl_index, preflight_index, source)
+
+    def test_drift_check_precedes_preflight_in_demo_waypoint_source(self) -> None:
+        source = inspect.getsource(execute_demo_waypoint_mission)
+        preflight_index = source.index("await adapter._require_preflight(allow_mode_change=True)")
+        drift_markers = ("_px4_home_reference", "assert_home_matches")
+        self.assertTrue(
+            all(source.index(marker) < preflight_index for marker in drift_markers),
+            source,
+        )
 
 
 class SitlBeforePreflightBehaviourTests(unittest.IsolatedAsyncioTestCase):
@@ -204,6 +213,43 @@ class SitlBeforePreflightBehaviourTests(unittest.IsolatedAsyncioTestCase):
             await connect_adapter("udpin://127.0.0.1:14540", connection_timeout_s=1.0, preflight_wait_s=0.0, mavsdk_server_port=51000)
         self.assertEqual(order, ["sitl"])
         self.assertEqual(drone.events, ["hold"])
+
+
+    async def test_plan_home_drift_refusal_sends_no_hold(self) -> None:
+        from apps.api.map_mission_home import MapHomeReference
+        from brain.mission.demo_errors import DemoWaypointMissionError
+        from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig
+
+        plan_home = MapHomeReference(
+            latitude_deg=47.0,
+            longitude_deg=8.0,
+            absolute_altitude_m=500.0,
+            captured_at="2026-01-01T00:00:00Z",
+        )
+        config = DemoWaypointMissionConfig(takeoff_altitude_m=8.0, waypoints=())
+        drone = _LandModeDrone("LAND")
+        position = SimpleNamespace(latitude_deg=47.0, longitude_deg=8.0, absolute_altitude_m=500.0)
+        px4_home = SimpleNamespace(latitude_deg=47.0, longitude_deg=8.00003, absolute_altitude_m=500.0)
+
+        async def position_stream():
+            yield position
+
+        async def home_stream():
+            yield px4_home
+
+        drone.telemetry.position = MagicMock(return_value=position_stream())  # type: ignore[method-assign]
+        drone.telemetry.home = MagicMock(return_value=home_stream())  # type: ignore[method-assign]
+        adapter = MavsdkMissionAdapter(MagicMock(), preflight_wait_s=0.0)
+        adapter._drone = drone
+        adapter._start_peak_altitude_tracking = AsyncMock()  # type: ignore[method-assign]
+        adapter._stop_peak_altitude_tracking = AsyncMock()  # type: ignore[method-assign]
+        with patch(
+            "brain.adapters.demo_waypoint_mission_adapter.require_px4_sitl_indication",
+            AsyncMock(return_value={"status": "verified", "matched_signals": []}),
+        ):
+            with self.assertRaises(DemoWaypointMissionError):
+                await execute_demo_waypoint_mission(adapter, config, plan_map_home=plan_home, action_timeout_s=2.0)
+        _assert_no_flight_actions(drone.events)
 
 
 if __name__ == "__main__":

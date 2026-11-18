@@ -1023,15 +1023,27 @@ class MavsdkMissionAdapter:
                 f"Preflight rejected: battery is {remaining_percent:.1f}%, below the required {required:.1f}%."
             )
 
-    async def _global_position_sample(self, label: str) -> GlobalPosition:
-        sample = await self._first_telemetry_sample(self._drone.telemetry.position(), label)
+    async def _global_position_sample(self, label: str, *, timeout_s: float = 5.0) -> GlobalPosition:
+        sample = await self._first_telemetry_sample(
+            self._drone.telemetry.position(), label, timeout_s=timeout_s
+        )
         self._require_global_position(sample, label)
         return GlobalPosition(sample.latitude_deg, sample.longitude_deg, sample.absolute_altitude_m)
 
     @staticmethod
-    async def _first_telemetry_sample(stream: AsyncIterator[object], label: str) -> object:
+    async def _first_telemetry_sample(
+        stream: AsyncIterator[object],
+        label: str,
+        *,
+        timeout_s: float = 5.0,
+    ) -> object:
         try:
-            return await anext(stream)
+            return await asyncio.wait_for(anext(stream), timeout=timeout_s)
+        except TimeoutError as error:
+            raise MissionPreflightError(
+                f"Preflight rejected: {label} telemetry is unavailable "
+                f"(no sample within {timeout_s:g} s)."
+            ) from error
         except StopAsyncIteration as error:
             raise MissionPreflightError(
                 f"Preflight rejected: {label} telemetry is unavailable."

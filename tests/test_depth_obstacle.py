@@ -117,6 +117,45 @@ class DepthObstacleTests(unittest.TestCase):
         centre_clear = next(item for item in clear["payload"]["sectors"] if item["yaw_deg"] == 0.0)
         self.assertEqual(centre_clear["coverage"], "clear")
 
+    def test_invalid_only_samples_stay_unobserved(self) -> None:
+        for value in (float("inf"), float("-inf"), -1.0, 0.0):
+            with self.subTest(value=value):
+                frame = CameraFrame(
+                    "depth-front", FrameEncoding.DEPTH32F, 1, 1,
+                    struct.pack("<f", value), NOW,
+                )
+                document = depth_obstacle_observation(
+                    frame, vehicle_id="x500", horizontal_fov_deg=30,
+                    min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+                )
+                (sector,) = document["payload"]["sectors"]
+                self.assertEqual(sector["coverage"], "unobserved")
+
+    def test_invalid_with_in_range_stays_measured(self) -> None:
+        for values in ((float("inf"), 5.0), (float("-inf"), 5.0), (-1.0, 5.0)):
+            with self.subTest(values=values):
+                frame = CameraFrame(
+                    "depth-front", FrameEncoding.DEPTH32F, 1, 2,
+                    struct.pack("<ff", *values), NOW,
+                )
+                document = depth_obstacle_observation(
+                    frame, vehicle_id="x500", horizontal_fov_deg=30,
+                    min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+                )
+                (sector,) = document["payload"]["sectors"]
+                self.assertEqual(sector["coverage"], "measured")
+                self.assertEqual(sector["distance_m"], 5.0)
+
+    def test_unobserved_columns_leave_sector_empty(self) -> None:
+        document = depth_obstacle_observation(
+            _frame([math.nan, 2.0, math.nan]), vehicle_id="x500", horizontal_fov_deg=90,
+            min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+        )
+        measured = [item for item in document["payload"]["sectors"] if item["coverage"] == "measured"]
+        unobserved = [item for item in document["payload"]["sectors"] if item["coverage"] == "unobserved"]
+        self.assertEqual(len(measured), 1)
+        self.assertEqual(len(unobserved), 2)
+
     def test_rgb_is_refused_not_misread_as_depth(self) -> None:
         frame = CameraFrame("front-rgb", FrameEncoding.RGB8, 1, 1, b"\x00\x00\x00", NOW)
         with self.assertRaisesRegex(DepthObstacleError, "never RGB"):
