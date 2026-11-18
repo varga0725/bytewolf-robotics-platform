@@ -146,6 +146,19 @@ class DepthObstacleTests(unittest.TestCase):
                 self.assertEqual(sector["coverage"], "measured")
                 self.assertEqual(sector["distance_m"], 5.0)
 
+    def test_single_pixel_frame_leaves_unsampled_sectors_unobserved(self) -> None:
+        frame = CameraFrame(
+            "depth-front", FrameEncoding.DEPTH32F, 1, 1, struct.pack("<f", 2.0), NOW,
+        )
+        document = depth_obstacle_observation(
+            frame, vehicle_id="x500", horizontal_fov_deg=90,
+            min_range_m=0.2, max_range_m=30, sector_width_deg=30,
+        )
+        sectors = document["payload"]["sectors"]
+        self.assertEqual(len(sectors), 3)
+        self.assertEqual(sum(1 for item in sectors if item["coverage"] == "measured"), 1)
+        self.assertEqual(sum(1 for item in sectors if item["coverage"] == "unobserved"), 2)
+
     def test_unobserved_columns_leave_sector_empty(self) -> None:
         document = depth_obstacle_observation(
             _frame([math.nan, 2.0, math.nan]), vehicle_id="x500", horizontal_fov_deg=90,
