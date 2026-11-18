@@ -11,11 +11,13 @@ from unittest import mock
 from brain.telemetry.mavsdk_relay import DashboardTelemetryState
 from brain.mission.acceptance_inflight_px4_mode import px4_auto_rtl_custom_mode
 from brain.telemetry.pymavlink_relay import (
+    _clear_identity_bound_telemetry,
     apply_mavlink_message,
     core_message_pending_write,
     heartbeat_pending_write,
     run_pymavlink_relay,
 )
+from brain.telemetry.mavsdk_relay import DashboardHomePosition
 
 
 class _Message:
@@ -123,6 +125,113 @@ class PymavlinkMappingTests(unittest.TestCase):
         self.assertTrue(document["in_air"])
         self.assertIn("heading_deg", document)
         self.assertEqual(document["captured_at"], "2026-07-22T09:00:00Z")
+
+
+class PymavlinkIdentityResetTests(unittest.TestCase):
+    def test_identity_reset_clears_home_and_geofence(self) -> None:
+        now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+        home = DashboardHomePosition(37.4, 19.05, 12.0, observed_at=now)
+        state = DashboardTelemetryState(
+            relay_source="pymavlink",
+            sysid=1,
+            home=home,
+            px4_geofence_max_horizontal_m=100.0,
+        )
+        cleared = _clear_identity_bound_telemetry(state)
+        self.assertIsNone(cleared.home)
+        self.assertIsNone(cleared.px4_geofence_max_horizontal_m)
+
+    def test_link_quiet_clears_bound_telemetry_in_relay(self) -> None:
+        try:
+            from pymavlink import mavutil
+        except ModuleNotFoundError:
+            self.skipTest("pymavlink not installed")
+
+        timeline = {"t": 0.0}
+        base = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+
+        class _Hb:
+            type = 2
+            autopilot = mavutil.mavlink.MAV_AUTOPILOT_PX4
+            base_mode = 0
+            custom_mode = 0
+
+            def get_type(self) -> str:
+                return "HEARTBEAT"
+
+            def get_srcSystem(self) -> int:
+                return 1
+
+            def get_srcComponent(self) -> int:
+                return 1
+
+        messages: list[object] = [
+            _Hb(),
+            *_complete_core_messages(),
+            _Message("PARAM_VALUE", param_id="GF_MAX_HOR_DIST", param_value=80.0, param_type=6),
+            _Message("HOME_POSITION", latitude=474000000, longitude=190500000, altitude=500),
+            *_complete_core_messages(),
+        ]
+        message_index = 0
+
+        class FakeMavlink:
+            class _Mav:
+                @staticmethod
+                def param_request_read_send(*_args: object, **_kwargs: object) -> None:
+                    return None
+
+            mav = _Mav()
+
+            def recv_match(self, *, blocking: bool, timeout: float) -> object | None:
+                nonlocal message_index
+                if message_index < len(messages):
+                    message = messages[message_index]
+                    message_index += 1
+                    timeline["t"] = min(1.0 + 0.2 * message_index, 2.0)
+                    return message
+                timeline["t"] = 10.0
+                return None
+
+            def close(self) -> None:
+                return None
+
+        def monotonic() -> float:
+            return timeline["t"]
+
+        def clock() -> datetime:
+            return base + timedelta(seconds=timeline["t"])
+
+        writes: list[dict[str, object]] = []
+
+        def recording_write(_destination: Path, document: dict[str, object]) -> None:
+            writes.append(dict(document))
+
+        stop_after = [0]
+
+        def should_stop() -> bool:
+            stop_after[0] += 1
+            return stop_after[0] > 30
+
+        with TemporaryDirectory() as directory:
+            destination = Path(directory) / "live-telemetry.json"
+            with mock.patch("brain.telemetry.pymavlink_relay.write_atomic_json", recording_write):
+                run_pymavlink_relay(
+                    "udpin://127.0.0.1:14540",
+                    destination,
+                    write_interval_s=0.01,
+                    mavlink_factory=lambda _url: FakeMavlink(),
+                    clock=clock,
+                    monotonic=monotonic,
+                    should_stop=should_stop,
+                )
+
+        with_home = next(doc for doc in writes if isinstance(doc.get("home"), dict))
+        self.assertIn("px4_geofence", with_home)
+        cleared = next(
+            doc for doc in reversed(writes) if "home" not in doc and "px4_geofence" not in doc
+        )
+        self.assertNotIn("home", cleared)
+        self.assertNotIn("px4_geofence", cleared)
 
 
 class PymavlinkInvalidBatteryTests(unittest.TestCase):

@@ -200,6 +200,11 @@ def _apply_geofence_param(state: DashboardTelemetryState, message: object) -> Da
     return replace(state, px4_geofence_max_horizontal_m=value)
 
 
+def _clear_identity_bound_telemetry(state: DashboardTelemetryState) -> DashboardTelemetryState:
+    """Drop home and PX4 fence reads tied to a previous autopilot identity."""
+    return replace(state, home=None, px4_geofence_max_horizontal_m=None)
+
+
 def _apply_vehicle_heartbeat(
     state: DashboardTelemetryState,
     message: object,
@@ -408,12 +413,14 @@ def run_pymavlink_relay(
                     if lock is not None:
                         sysid, compid = lock
                         if identity_collector.observe_autopilot_heartbeat(sysid, compid, monotonic=now):
-                            state = sync_identity_snapshot(state)
+                            last_geofence_request = None
+                            state = _clear_identity_bound_telemetry(sync_identity_snapshot(state))
                         issue_identity_requests()
                 elif message_type == "SYSTEM_TIME":
                     time_boot_ms = int(getattr(message, "time_boot_ms", -1))
                     if time_boot_ms >= 0 and identity_collector.observe_system_time(time_boot_ms):
-                        state = sync_identity_snapshot(state)
+                        last_geofence_request = None
+                        state = _clear_identity_bound_telemetry(sync_identity_snapshot(state))
                         issue_identity_requests()
                 elif message_type == "PARAM_VALUE":
                     if identity_collector.apply_param_value(message):
@@ -426,7 +433,8 @@ def run_pymavlink_relay(
                 continue
 
             if identity_collector.observe_link_quiet(monotonic=now):
-                state = sync_identity_snapshot(state)
+                last_geofence_request = None
+                state = _clear_identity_bound_telemetry(sync_identity_snapshot(state))
             else:
                 identity_collector.maybe_schedule_refresh(monotonic=now)
                 issue_identity_requests()

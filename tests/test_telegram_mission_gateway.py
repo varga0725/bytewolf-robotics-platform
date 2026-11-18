@@ -1,8 +1,19 @@
 """Telegram must stay outside the deterministic flight-control boundary."""
 
+import os
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from apps.gateway.telegram_mission_gateway import _converse_with_nim, ConversationReply, TelegramMissionGateway
+from apps.gateway import telegram_mission_gateway
+from apps.gateway.telegram_mission_gateway import (
+    TelegramGatewayError,
+    _converse_with_nim,
+    _execute_with_cli,
+    ConversationReply,
+    TelegramMissionGateway,
+)
 
 
 class TelegramMissionGatewayTests(unittest.TestCase):
@@ -68,6 +79,33 @@ class TelegramMissionGatewayTests(unittest.TestCase):
 
         self.assertTrue(reply.requests_drone_action)
         self.assertIn("biztonságos tervet", reply.text)
+
+    def test_execute_forwards_configured_telemetry_path(self) -> None:
+        plan = "a3b9c777-4860-4b6d-bf59-1a4a98c31ea3.mission-spec.json"
+        with TemporaryDirectory() as directory:
+            telemetry = Path(directory) / "live-telemetry.json"
+            telemetry.write_text("{}", encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"BYTEWOLF_DASHBOARD_TELEMETRY_FILE": str(telemetry)}, clear=False),
+                patch("apps.gateway.plan_execution.execute_reviewed_plan", return_value="started") as execute,
+                patch.dict(
+                    os.environ,
+                    {
+                        "BYTEWOLF_COMMANDS_ENABLED": "true",
+                        "BYTEWOLF_MISSION_EXECUTION_ENABLED": "true",
+                    },
+                    clear=False,
+                ),
+            ):
+                result = _execute_with_cli(plan)
+        self.assertEqual(result, "started")
+        execute.assert_called_once_with(plan, telemetry_path=telemetry)
+
+    def test_execute_refuses_without_configured_telemetry_path(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(TelegramGatewayError) as error:
+                _execute_with_cli("a3b9c777-4860-4b6d-bf59-1a4a98c31ea3.mission-spec.json")
+        self.assertIn("BYTEWOLF_DASHBOARD_TELEMETRY_FILE", str(error.exception))
 
 
 def _update(

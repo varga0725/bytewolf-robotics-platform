@@ -30,6 +30,7 @@ class HomePosition:
     longitude_deg: float
     absolute_altitude_m: float
     captured_at: str
+    observed_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -188,7 +189,17 @@ def _parse_home(value: Any) -> HomePosition | None:
         longitude_deg=_required_bounded_number(value, "longitude_deg", minimum=-180.0, maximum=180.0),
         absolute_altitude_m=_required_number(value, "absolute_altitude_m"),
         captured_at=_required_iso_timestamp(value, "captured_at"),
+        observed_at=_optional_home_observed_at(value.get("observed_at")),
     )
+
+
+def _optional_home_observed_at(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise TelemetryFormatError("home.observed_at must be a non-empty string when present.")
+    _validate_capture_time(value.strip())
+    return value.strip()
 
 
 def _required_iso_timestamp(document: dict[str, Any], field: str) -> str:
