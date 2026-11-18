@@ -30,6 +30,7 @@ from brain.mission_spec.reviewed_plan import (
     require_matching_review_approval as _require_matching_review_approval,
     write_reviewed_plan as _write_reviewed_plan,
 )
+from brain.mission.commands import WaypointCommand
 from brain.mission_spec.validation import (
     CompiledMission,
     MissionSafetyProfile,
@@ -187,7 +188,9 @@ async def run(arguments: argparse.Namespace) -> None:
         acquire_px4_link("agent-mission")
         await asyncio.wait_for(adapter.connect(arguments.endpoint), timeout=arguments.connection_timeout)
         await require_sitl_before_arm(system, timeout_s=min(10.0, arguments.connection_timeout))
-        if protected_waypoint is not None:
+        if protected_waypoint is not None and any(
+            isinstance(command, WaypointCommand) for command in mission.commands
+        ):
             await protected_waypoint.require_lidar_scans()
         relay_stop = asyncio.Event()
         # The same relay the hand-written CLIs use, with the same history sink.

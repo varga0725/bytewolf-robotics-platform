@@ -295,6 +295,26 @@ class OverviewCameraTests(unittest.TestCase):
 
 
 class MarkerPlacementTests(unittest.TestCase):
+    def test_stop_check_abandons_marker_placement(self) -> None:
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=default_demo_waypoint_loop(),
+            max_mission_items=12,
+        )
+        calls: list[str] = []
+
+        def fake_run(argv, **_kwargs):  # type: ignore[no-untyped-def]
+            if "-l" not in argv and "--req" in argv:
+                calls.append(argv[argv.index("--req") + 1])
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        cli = GzCli(run=fake_run)
+        with unittest.mock.patch("brain.mission.demo_gz_scene.gz_binary", return_value="/usr/bin/gz"):
+            evidence = place_waypoint_markers(cli, config, stop_check=lambda: True)
+        self.assertEqual(evidence.requested, len(config.waypoints))
+        self.assertEqual(evidence.placed, 0)
+        self.assertEqual(calls, [])
+
     def test_markers_best_effort(self) -> None:
         config = DemoWaypointMissionConfig(
             takeoff_altitude_m=8.0,

@@ -141,7 +141,11 @@ class ExecutionGateApiTests(unittest.TestCase):
 
 
 class TelegramExecutionGateTests(unittest.TestCase):
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(
+        os.environ,
+        {"BYTEWOLF_DASHBOARD_TELEMETRY_FILE": "var/dashboard/live-telemetry.json"},
+        clear=True,
+    )
     def test_telegram_execute_refuses_when_quarantined(self) -> None:
         with self.assertRaises(TelegramGatewayError) as error:
             telegram_mission_gateway._execute_with_cli("missing-plan.json")

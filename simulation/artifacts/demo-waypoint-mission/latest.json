@@ -1,0 +1,83 @@
+{
+  "schema_version": "demo-waypoint-mission-evidence.v0.1",
+  "mission_type": "demo-waypoint-mission",
+  "started_at": "2026-11-18T10:51:07.770913+00:00",
+  "overall_status": "failed",
+  "mavlink_endpoint": {
+    "transport": "udp-loopback",
+    "port": 14540
+  },
+  "mission_items": [
+    {
+      "index": 0,
+      "kind": "takeoff",
+      "north_m": 0.0,
+      "east_m": 0.0,
+      "relative_altitude_m": 8.0
+    },
+    {
+      "index": 1,
+      "kind": "waypoint",
+      "north_m": 5.0,
+      "east_m": 0.0,
+      "relative_altitude_m": 8.0
+    },
+    {
+      "index": 2,
+      "kind": "waypoint",
+      "north_m": 5.0,
+      "east_m": 5.0,
+      "relative_altitude_m": 8.0
+    }
+  ],
+  "items_reached": [
+    {
+      "index": 2,
+      "total": 2
+    }
+  ],
+  "phase_transitions": [
+    {
+      "phase": "arming",
+      "timestamp": "2026-11-18T10:51:07.770913+00:00"
+    },
+    {
+      "phase": "taking_off",
+      "timestamp": "2026-11-18T10:51:07.770918+00:00"
+    },
+    {
+      "phase": "navigating",
+      "timestamp": "2026-11-18T10:51:07.770920+00:00"
+    },
+    {
+      "phase": "returning",
+      "timestamp": "2026-11-18T10:51:07.770921+00:00"
+    },
+    {
+      "phase": "completed",
+      "timestamp": "2026-11-18T10:51:07.770922+00:00"
+    }
+  ],
+  "position_samples_hz": 1.0,
+  "positions": [],
+  "peak_relative_altitude_m": 8.0,
+  "disarm_reason": null,
+  "px4_version": "v1.17.0",
+  "simulator": {
+    "name": "gz_x500",
+    "gazebo_version": "8.12.0"
+  },
+  "sitl_verification": {
+    "status": "verified"
+  },
+  "baseline": {
+    "profile": "macos",
+    "px4_commit": "d6f12ad1c4f70ad3230afd7d86e971421e02fef4",
+    "gazebo_sim_version": "8.12.0"
+  },
+  "px4_ulog_relative_path": null,
+  "trajectory_png_relative_path": "trajectory-20261118T105107Z.png",
+  "ulog_status": "missing",
+  "failure_reason": "PX4 ULog was not archived before evidence was written.",
+  "evidence_run_filename": "demo-waypoint-mission-20261118T105107Z.json"
+}
