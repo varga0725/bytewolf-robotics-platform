@@ -865,12 +865,15 @@ def place_waypoint_markers(
     spawn_world_x_m: float = BAYLANDS_DEMO_SPAWN_WORLD_X_M,
     spawn_world_y_m: float = BAYLANDS_DEMO_SPAWN_WORLD_Y_M,
     ground_z_offset_m: float = BAYLANDS_DEMO_GROUND_Z_OFFSET_M,
+    stop_check: StopCheck | None = None,
 ) -> WaypointMarkerEvidence:
     evidence = WaypointMarkerEvidence(requested=len(config.waypoints))
     if gz_binary() is None:
         evidence.errors.append("gz binary not available")
         return evidence
     for index, waypoint in enumerate(config.waypoints, start=1):
+        if stop_check is not None and stop_check():
+            return evidence
         wx, wy, wz = waypoint_world_position(
             waypoint,
             spawn_world_x_m=spawn_world_x_m,
@@ -1080,7 +1083,12 @@ class DemoGzVisualDirector:
         if self._setup_stopped():
             return
         if mode != "off":
-            self.markers = await asyncio.to_thread(place_waypoint_markers, self.cli, self.config)
+            self.markers = await asyncio.to_thread(
+                place_waypoint_markers,
+                self.cli,
+                self.config,
+                stop_check=stop_check,
+            )
 
     async def reaffirm_camera_follow_after_arm(self) -> None:
         import asyncio

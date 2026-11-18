@@ -61,20 +61,21 @@ def load_snapshot_home(telemetry_path: Path, *, now: datetime | None = None) -> 
         snapshot = load_telemetry_snapshot(telemetry_path)
     except (TelemetryFormatError, OSError) as error:
         raise DemoWaypointMissionError("Telemetry snapshot is unavailable; PX4 home is unknown.") from error
-    if snapshot.captured_at is None:
-        raise DemoWaypointMissionError("Telemetry snapshot has no captured_at; PX4 home freshness is unknown.")
-    captured = datetime.fromisoformat(snapshot.captured_at.replace("Z", "+00:00"))
+    home = snapshot.home
+    if home is None:
+        raise DemoWaypointMissionError(
+            "PX4 HOME_POSITION is not in the telemetry snapshot; map planning is disabled."
+        )
+    freshness_raw = home.observed_at or home.captured_at or snapshot.captured_at
+    if freshness_raw is None:
+        raise DemoWaypointMissionError("Telemetry snapshot has no home freshness timestamp; PX4 home is unknown.")
+    captured = datetime.fromisoformat(freshness_raw.replace("Z", "+00:00"))
     age_s = ((now or datetime.now(UTC)) - captured).total_seconds()
     # A future timestamp is a broken clock, not freshness.
     if not -HOME_SNAPSHOT_MAX_AGE_S <= age_s <= HOME_SNAPSHOT_MAX_AGE_S:
         raise DemoWaypointMissionError(
             f"Telemetry snapshot is {age_s:.0f} s old (limit {HOME_SNAPSHOT_MAX_AGE_S:g} s); "
             "the relay is not live, so PX4 home cannot be trusted."
-        )
-    home = snapshot.home
-    if home is None:
-        raise DemoWaypointMissionError(
-            "PX4 HOME_POSITION is not in the telemetry snapshot; map planning is disabled."
         )
     return MapHomeReference(
         latitude_deg=home.latitude_deg,
@@ -144,9 +145,11 @@ def waypoint_commands_from_geographic(
         latitude = item["latitude_deg"]
         longitude = item["longitude_deg"]
         altitude = item.get("relative_altitude_m", default_altitude_m)
+        if not isinstance(altitude, (int, float)) or not isfinite(float(altitude)) or float(altitude) <= 0:
+            raise DemoWaypointMissionError("Waypoint relative_altitude_m must be a positive finite number.")
         point = GlobalPosition(latitude_deg=latitude, longitude_deg=longitude, absolute_altitude_m=0.0)
         north_m, east_m = global_position_to_local_offset(origin, point)
-        commands.append((north_m, east_m, altitude))
+        commands.append((north_m, east_m, float(altitude)))
     return commands
 
 

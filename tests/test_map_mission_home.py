@@ -179,6 +179,44 @@ class MapMissionHomeTests(unittest.TestCase):
                     load_snapshot_home(path, now=_CAPTURED + timedelta(seconds=offset_s))
                 self.assertIn("relay is not live", str(error.exception))
 
+    def test_stale_home_observed_at_rejected_despite_fresh_snapshot_captured_at(self) -> None:
+        fresh = "2026-11-15T10:00:00+00:00"
+        stale = "2026-11-15T09:49:00+00:00"
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "telemetry.json"
+            document = _telemetry_document()
+            document["captured_at"] = fresh
+            document["home"] = {
+                "latitude_deg": 37.416,
+                "longitude_deg": -122.049,
+                "absolute_altitude_m": 0.0,
+                "captured_at": fresh,
+                "observed_at": stale,
+            }
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaises(DemoWaypointMissionError) as error:
+                load_snapshot_home(path, now=_CAPTURED)
+            self.assertIn("relay is not live", str(error.exception))
+
+    def test_waypoint_commands_reject_non_positive_altitude(self) -> None:
+        captured_at = "2026-11-15T10:00:00+00:00"
+        home = parse_map_home_reference(
+            {
+                "home": {
+                    "latitude_deg": 37.416,
+                    "longitude_deg": -122.049,
+                    "absolute_altitude_m": 0.0,
+                    "captured_at": captured_at,
+                },
+            },
+        )
+        with self.assertRaises(DemoWaypointMissionError):
+            waypoint_commands_from_geographic(
+                home=home,
+                waypoints=({"latitude_deg": 37.41609, "longitude_deg": -122.0489, "relative_altitude_m": 0.0},),
+                default_altitude_m=8.0,
+            )
+
     def test_effective_radius_combines_twin_and_px4_fence(self) -> None:
         self.assertEqual(effective_max_radius_m(2000.0, 100.0), 100.0 - PX4_GEOFENCE_MARGIN_M)
         self.assertEqual(effective_max_radius_m(50.0, 100.0), 50.0)

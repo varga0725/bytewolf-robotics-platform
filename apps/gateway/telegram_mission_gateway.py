@@ -24,12 +24,15 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from apps.gateway.nim_mission_agent import DEFAULT_NIM_BASE_URL, NIMMissionAgent
+from brain.telemetry.dashboard_snapshot_path import default_dashboard_snapshot_path
 from brain.telemetry.link_lease import (
     claim_link,
     default_lease_path,
     release_link,
     wait_for_free_link,
 )
+
+_ENV_DASHBOARD_TELEMETRY_FILE = "BYTEWOLF_DASHBOARD_TELEMETRY_FILE"
 
 
 _TELEGRAM_API = "https://api.telegram.org"
@@ -311,13 +314,21 @@ def _converse_with_nim(text: str) -> ConversationReply:
     return ConversationReply(reply[:_MAX_MESSAGE_CHARS], requested)
 
 
+def _execution_telemetry_path() -> Path:
+    if not os.environ.get(_ENV_DASHBOARD_TELEMETRY_FILE, "").strip():
+        raise TelegramGatewayError(
+            f"{_ENV_DASHBOARD_TELEMETRY_FILE} must be configured before SITL execution."
+        )
+    return default_dashboard_snapshot_path()
+
+
 def _execute_with_cli(plan_name: str) -> str:
     from apps.gateway.plan_execution import execute_reviewed_plan
 
     from shared.safety.execution_gate import MissionExecutionQuarantinedError
 
     try:
-        return execute_reviewed_plan(plan_name)
+        return execute_reviewed_plan(plan_name, telemetry_path=_execution_telemetry_path())
     except MissionExecutionQuarantinedError as error:
         raise TelegramGatewayError(error.refusal.message) from error
     except RuntimeError as error:
