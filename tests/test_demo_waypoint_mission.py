@@ -269,6 +269,80 @@ class _MissionStub:
         return _stream()
 
 
+class DemoWaypointHomeDriftTests(unittest.IsolatedAsyncioTestCase):
+    async def test_plan_home_drift_refuses_upload_and_arm(self) -> None:
+        from apps.api.map_mission_home import MapHomeReference
+        from brain.mission.demo_errors import DemoWaypointMissionError
+        from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig
+
+        plan_home = MapHomeReference(
+            latitude_deg=47.0,
+            longitude_deg=8.0,
+            absolute_altitude_m=500.0,
+            captured_at="2026-01-01T00:00:00Z",
+        )
+        config = DemoWaypointMissionConfig(takeoff_altitude_m=8.0, waypoints=())
+        drone = MagicMock()
+        drone.mission.upload_mission = AsyncMock()
+        drone.action.arm = AsyncMock()
+        adapter = MavsdkMissionAdapter(drone, safety_profile=load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH))
+        adapter._require_preflight = AsyncMock()
+        adapter._global_position_sample = AsyncMock(
+            return_value=SimpleNamespace(latitude_deg=47.0, longitude_deg=8.00003, absolute_altitude_m=500.0)
+        )
+        adapter._start_peak_altitude_tracking = AsyncMock()
+        adapter._stop_peak_altitude_tracking = AsyncMock()
+        with patch(
+            "brain.adapters.demo_waypoint_mission_adapter.require_px4_sitl_indication",
+            AsyncMock(return_value={"status": "verified", "matched_signals": []}),
+        ):
+            with self.assertRaises(DemoWaypointMissionError):
+                await execute_demo_waypoint_mission(adapter, config, plan_map_home=plan_home, action_timeout_s=1.0)
+        drone.mission.upload_mission.assert_not_awaited()
+        drone.action.arm.assert_not_awaited()
+
+    async def test_plan_home_within_tolerance_allows_upload(self) -> None:
+        from apps.api.map_mission_home import MapHomeReference
+        from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig
+
+        plan_home = MapHomeReference(
+            latitude_deg=47.0,
+            longitude_deg=8.0,
+            absolute_altitude_m=500.0,
+            captured_at="2026-01-01T00:00:00Z",
+        )
+        config = DemoWaypointMissionConfig(
+            takeoff_altitude_m=8.0,
+            waypoints=(),
+            upload_timeout_s=2.0,
+            mission_timeout_s=1.0,
+            progress_stall_timeout_s=1.0,
+        )
+        drone = MagicMock()
+        mission_stub = _MissionStub()
+
+        async def stop_after_upload(*_args, **_kwargs) -> None:
+            raise RuntimeError("stop after upload")
+
+        mission_stub.upload_mission = AsyncMock(side_effect=stop_after_upload)
+        drone.mission = mission_stub
+        adapter = MavsdkMissionAdapter(drone, safety_profile=load_safety_profile(DEFAULT_SAFETY_PROFILE_PATH))
+        adapter._require_preflight = AsyncMock()
+        adapter._global_position_sample = AsyncMock(
+            return_value=SimpleNamespace(latitude_deg=47.0, longitude_deg=8.000005, absolute_altitude_m=500.0)
+        )
+        adapter._record = lambda execution, phase: execution.transition(phase, timestamp=datetime.now(UTC))
+        adapter._start_peak_altitude_tracking = AsyncMock()
+        adapter._stop_peak_altitude_tracking = AsyncMock()
+        with patch(
+            "brain.adapters.demo_waypoint_mission_adapter.require_px4_sitl_indication",
+            AsyncMock(return_value={"status": "verified", "matched_signals": []}),
+        ):
+            with self.assertRaises(RuntimeError):
+                await execute_demo_waypoint_mission(adapter, config, plan_map_home=plan_home, action_timeout_s=1.0)
+        mission_stub.upload_mission.assert_awaited_once()
+
+
 class DemoWaypointMissionAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_happy_path_records_progress_and_disarms(self) -> None:
         from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig

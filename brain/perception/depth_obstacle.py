@@ -9,7 +9,6 @@ unobserved.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from math import ceil, floor, isfinite
 import struct
 
@@ -35,49 +34,69 @@ def depth_obstacle_observation(
 ) -> dict:
     """Return a body-FRD obstacle observation from a metric depth frame.
 
-    Invalid/no-return pixels never become ``clear``.  They mark their bearing
-    ``unobserved``; only finite positive ranges at or beyond sensor max range
-    can establish clear coverage.  Samples below ``min_range_m`` make a sector
-    ``unobserved`` when nothing else is in range; if in-range returns also
-    exist, ``distance_m`` is ``min_range_m`` because the nearer hit is inside
-    the sensor blind zone.
+    Per-sector policy (conservative, fail-closed):
+
+    +---------------------------+------------------------------------------+
+    | Samples in sector         | coverage                                 |
+    +---------------------------+------------------------------------------+
+    | none valid                | unobserved                               |
+    | only invalid (see below)  | unobserved                               |
+    | below min only              | unobserved                               |
+    | below min + in-range       | measured at ``min_range_m``                |
+    | in-range only              | measured at nearest in-range distance    |
+    | invalid + beyond-max only  | unobserved (not clear)                   |
+    | beyond-max only (incl.     | clear                                    |
+    |   exactly ``max_range_m``) |                                          |
+    +---------------------------+------------------------------------------+
+
+  Invalid depth: non-finite values, zero, negative, ``DEPTH16`` saturation
+  (raw 65535), and any other non-positive raw sample. Beyond-max means
+  finite range ``>= max_range_m``; exactly ``max_range_m`` counts as beyond-max.
     """
     _validate(frame, horizontal_fov_deg, min_range_m, max_range_m, sector_width_deg, max_age_s)
     values = _depth_values_m(frame)
+    raw16 = _depth16_raw(frame)
     sector_count = ceil(horizontal_fov_deg / sector_width_deg)
-    buckets: list[list[float]] = [[] for _ in range(sector_count)]
-    observed: list[bool] = [False] * sector_count
-    below_min: list[bool] = [False] * sector_count
+    any_in_range: list[bool] = [False] * sector_count
+    any_below_min: list[bool] = [False] * sector_count
+    any_beyond_max: list[bool] = [False] * sector_count
+    any_invalid: list[bool] = [False] * sector_count
+    in_range_returns: list[list[float]] = [[] for _ in range(sector_count)]
     for column in range(frame.width):
         yaw_deg = ((column + 0.5) / frame.width - 0.5) * horizontal_fov_deg
         index = min(sector_count - 1, max(0, floor((yaw_deg + horizontal_fov_deg / 2.0) / sector_width_deg)))
-        column_values = [values[row * frame.width + column] for row in range(frame.height)]
-        positive = [value for value in column_values if isfinite(value) and value > 0.0]
-        if not positive:
-            continue
-        observed[index] = True
-        buckets[index].extend(positive)
-        if any(0.0 < value < min_range_m for value in positive):
-            below_min[index] = True
+        for row in range(frame.height):
+            linear = row * frame.width + column
+            value = values[linear]
+            if frame.encoding is FrameEncoding.DEPTH16 and raw16 is not None and raw16[linear] == 65535:
+                any_invalid[index] = True
+                continue
+            if not isfinite(value) or value <= 0.0:
+                any_invalid[index] = True
+                continue
+            if value >= max_range_m:
+                any_beyond_max[index] = True
+            elif value < min_range_m:
+                any_below_min[index] = True
+            else:
+                any_in_range[index] = True
+                in_range_returns[index].append(value)
     sectors = []
     for index in range(sector_count):
         width = min(sector_width_deg, horizontal_fov_deg - index * sector_width_deg)
         yaw = -horizontal_fov_deg / 2.0 + index * sector_width_deg + width / 2.0
         sector: dict[str, object] = {"yaw_deg": round(yaw, 6), "width_deg": width}
-        if not observed[index]:
+        if any_in_range[index]:
+            nearest = min_range_m if any_below_min[index] else min(in_range_returns[index])
+            sector.update({"coverage": "measured", "distance_m": round(nearest, 6)})
+        elif any_below_min[index]:
             sector["coverage"] = "unobserved"
+        elif any_beyond_max[index] and any_invalid[index]:
+            sector["coverage"] = "unobserved"
+        elif any_beyond_max[index]:
+            sector["coverage"] = "clear"
         else:
-            returns = [value for value in buckets[index] if min_range_m <= value < max_range_m]
-            if returns:
-                # A below-minimum sample is an obstacle nearer than the sensor can
-                # range. Reporting min(returns) would overstate the clearance, so
-                # the sector reads the closest distance the sensor can claim.
-                nearest = min_range_m if below_min[index] else min(returns)
-                sector.update({"coverage": "measured", "distance_m": round(nearest, 6)})
-            elif below_min[index]:
-                sector["coverage"] = "unobserved"
-            else:
-                sector["coverage"] = "clear"
+            sector["coverage"] = "unobserved"
         sectors.append(sector)
     return {
         "contract_version": "v0.1", "kind": "obstacle", "vehicle_id": vehicle_id,
@@ -101,6 +120,12 @@ def _validate(frame: CameraFrame, fov: float, minimum: float, maximum: float, wi
             raise DepthObstacleError(f"{name} must be positive and finite.")
     if fov > 360.0 or width > fov or minimum >= maximum:
         raise DepthObstacleError("Depth FOV, sector width, or range bounds are invalid.")
+
+
+def _depth16_raw(frame: CameraFrame) -> tuple[int, ...] | None:
+    if frame.encoding is not FrameEncoding.DEPTH16:
+        return None
+    return tuple(value for (value,) in struct.iter_unpack("<H", frame.data))
 
 
 def _depth_values_m(frame: CameraFrame) -> tuple[float, ...]:

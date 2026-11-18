@@ -36,6 +36,8 @@ from brain.navigation.waypoints import GlobalPosition
 from brain.safety.deployment import actuation_request_sha256, add_deployment_arguments, file_sha256
 from brain.safety.gate import SafetyGate
 from brain.safety.profile import DEFAULT_SAFETY_PROFILE_PATH, load_safety_profile
+from apps.api.map_mission_home import home_reference_from_plan_document
+
 from brain.cli.live_telemetry_snapshot import effective_dashboard_snapshot_path
 from brain.telemetry.mavsdk_relay import MavsdkTelemetryRelay
 from brain.telemetry.ulog import wait_for_px4_ulog_archive
@@ -112,9 +114,12 @@ async def run(arguments: argparse.Namespace) -> None:
             "SITL acceptance requires --plan-file with a matching reviewed approval record."
         )
     profile = load_safety_profile(arguments.safety_profile)
+    plan_map_home = None
     if arguments.plan_file is not None:
         require_matching_demo_waypoint_approval(arguments.plan_file)
+        plan_document = json.loads(arguments.plan_file.read_text(encoding="utf-8"))
         config = load_demo_waypoint_plan_config(arguments.plan_file)
+        plan_map_home = home_reference_from_plan_document(plan_document)
     else:
         config = load_demo_waypoint_mission_config(profile=profile)
     recording = prepare_flight_run_recording(arguments.artifact_dir, arguments.telemetry_history)
@@ -295,6 +300,7 @@ async def run(arguments: argparse.Namespace) -> None:
             execution = await execute_demo_waypoint_mission(
                 adapter,
                 config,
+                plan_map_home=plan_map_home,
                 on_armed=on_armed,
                 on_returning=on_returning,
             )

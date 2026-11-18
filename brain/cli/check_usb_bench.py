@@ -61,6 +61,23 @@ async def _sample(stream: AsyncIterator[object], timeout_s: float) -> object | N
         return None
 
 
+async def _wait_for_mavlink_connected(system: object, timeout_s: float) -> None:
+    """Sample connection_state until PX4 reports connected or the bounded wait expires."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    stream = system.core.connection_state().__aiter__()
+    while True:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise RuntimeError("PX4 did not report a connected MAVLink state.")
+        try:
+            connected = await asyncio.wait_for(stream.__anext__(), timeout=remaining)
+        except StopAsyncIteration:
+            raise RuntimeError("PX4 connection_state stream ended before connecting.") from None
+        if bool(getattr(connected, "is_connected", False)):
+            return
+
+
 def _finite_number(value: object) -> float | None:
     if isinstance(value, bool):
         return None
@@ -166,6 +183,7 @@ def _write_artifact(directory: Path, document: dict[str, object]) -> Path:
 async def run(arguments: argparse.Namespace) -> Path:
     """Connect, take bounded observation samples, and persist evidence."""
     system = None
+    artifact_path: Path | None = None
     document: dict[str, object] = {
         "version": "usb_bench_diagnostics.v1",
         "captured_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -185,9 +203,7 @@ async def run(arguments: argparse.Namespace) -> Path:
         acquire_px4_link("usb-bench-check")
         print(f"Reading PX4 USB bench telemetry at {arguments.endpoint}...")
         await asyncio.wait_for(system.connect(system_address=arguments.endpoint), timeout=arguments.connection_timeout)
-        connected = await _sample(system.core.connection_state(), arguments.sample_timeout)
-        if connected is None or not bool(getattr(connected, "is_connected", False)):
-            raise RuntimeError("PX4 did not report a connected MAVLink state.")
+        await _wait_for_mavlink_connected(system, arguments.connection_timeout)
         telemetry = system.telemetry
         identity_task = asyncio.create_task(_px4_identity_observation(system, arguments.sample_timeout))
         health, position, gps, battery, armed, in_air = await asyncio.gather(
@@ -215,8 +231,10 @@ async def run(arguments: argparse.Namespace) -> Path:
         document["failure_reason"] = f"{type(error).__name__}: {error}"
         raise
     finally:
-        artifact_path = _write_artifact(arguments.artifact_dir, document)
-        stop_owned_mavsdk_server(system)
+        try:
+            artifact_path = _write_artifact(arguments.artifact_dir, document)
+        finally:
+            stop_owned_mavsdk_server(system)
     print(f"USB bench evidence written to {artifact_path}")
     return artifact_path
 

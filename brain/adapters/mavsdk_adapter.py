@@ -719,8 +719,8 @@ class MavsdkMissionAdapter:
         action_timeout_s: float = 45.0,
     ) -> MissionExecution:
         """Bounded one-point demo with bounded awaits and terminal recovery."""
-        await self._require_preflight(allow_mode_change=True)
         sitl_proof = await self._require_px4_sitl_before_arm(timeout_s=action_timeout_s)
+        await self._require_preflight(allow_mode_change=True)
         self._demo_sitl_proof = sitl_proof
         home = await self._global_position_sample("home")
         execution = self._begin_execution()

@@ -8,6 +8,8 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from apps.api.map_mission_home import MapHomeReference, assert_home_matches
+
 from brain.adapters.mavsdk_adapter import arm_from_ground
 from brain.mission.demo_waypoint_mission import DemoWaypointMissionConfig
 from brain.mission.execution import MissionExecution, MissionPhase
@@ -22,16 +24,25 @@ async def execute_demo_waypoint_mission(
     adapter: MavsdkMissionAdapter,
     config: DemoWaypointMissionConfig,
     *,
+    plan_map_home: MapHomeReference | None = None,
     action_timeout_s: float = 45.0,
     on_armed: "callable[[], object] | None" = None,
     on_returning: "callable[[], object] | None" = None,
 ) -> MissionExecution:
     from mavsdk.mission import MissionItem, MissionPlan
 
-    await adapter._require_preflight(allow_mode_change=True)
     sitl_proof = await require_px4_sitl_indication(adapter._drone, timeout_s=action_timeout_s)
     adapter._demo_sitl_proof = sitl_proof
+    await adapter._require_preflight(allow_mode_change=True)
     home = await adapter._global_position_sample("home")
+    if plan_map_home is not None:
+        live_home = MapHomeReference(
+            latitude_deg=home.latitude_deg,
+            longitude_deg=home.longitude_deg,
+            absolute_altitude_m=home.absolute_altitude_m,
+            captured_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
+        assert_home_matches(plan_map_home, authority=live_home)
     execution = adapter._begin_execution()
     mission_uploaded = False
     armed = False
